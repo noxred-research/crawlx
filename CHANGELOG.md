@@ -8,6 +8,34 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- AI-native features, off by default and advisory only (see `docs/ai.md`):
+  - A uniform untrusted-content and model-egress policy (`intel.policy`): an operator switch for
+    external processing, approved providers per purpose with a retention capability, typed input and
+    output envelopes, projection of secrets out of every prompt and reply, bounded schemas without
+    remote references, finite per-call and per-run budgets, tenant- and revision-keyed caching, and
+    digest-only audit rows. `GET /v1/capabilities/ai` reports the policy in force.
+  - Natural-language specifications compiled to native configurations: `POST /v1/crawl-specs/validate`,
+    `/compile`, `GET /v1/crawl-specs/{id}`, operator approval (`/approve`) and creation from an
+    approved spec (`/create`), with a deterministic narrowing-only compiler, diff, unsupported-intent
+    reporting, native admission and a single-use digest-bound approval token.
+  - Plan-first research agent: `POST /v1/agent-plans`, approval, cancel and `/execute`. Plans are
+    validated deterministically, approved by an operator and executed confined to the plan's tools and
+    URLs; deviations are recorded on the job result and the plan.
+  - Schema extraction with exact field evidence (`POST /v1/crawls/{id}/extractions`): byte spans
+    computed by CrawlX, observed, inferred, conflicting, rejected and unknown field states, and no
+    ungrounded value in the result.
+  - Passive endpoint and vulnerability-surface triage (`POST|GET /v1/crawls/{id}/triage`) from retained
+    pages, static forms and traffic, with evidence ids, name-only hypotheses and an optional cited
+    explanation.
+  - Grounded run and findings summaries (`POST|GET /v1/crawls/{id}/summaries`) with a deterministic
+    fallback, claim validation against the evidence, and operator-reviewed findings
+    (`PUT|GET /v1/crawls/{id}/findings`) as the only source of confirmed status.
+- A native, capability-scoped MCP surface (`crawlx mcp --surface native`) with read-only inspection by
+  default, explicit control, create, export, interact, erase and operator capabilities, structured
+  results, untrusted-content labelling, resources and operator-granted upload handles; see `docs/mcp.md`.
+
 ## [0.1.0] - 2026-11-12
 
 First public source release. Distribution is the GitHub repository and the tagged

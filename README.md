@@ -262,8 +262,10 @@ integration calls and what is not served: [docs/integrations.md](docs/integratio
 
 ### MCP
 
-`crawlx mcp` exposes MCP tools over stdio as a thin client of a CrawlX API. The client
-configuration is in the [reference](docs/reference.md#mcp-server).
+`crawlx mcp` exposes MCP tools over stdio as a thin client of a CrawlX API. The compatibility surface is
+configured in the [reference](docs/reference.md#mcp-server); `--surface native` serves a capability-scoped
+inspection and control catalog ([MCP server](docs/mcp.md)). Model-assisted specifications, plans,
+evidence extraction, surface triage and summaries are described in [AI-native features](docs/ai.md).
 
 ## Output
 

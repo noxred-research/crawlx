@@ -43,6 +43,29 @@ crates.io packages are not part of the initial distribution.
   the egress policy denies and logs. A patched build exists under `ci/chromium-patches/`; validating it
   and making it the pinned browser would remove the attempts.
 
+## AI-native work
+
+The shipped AI features are described in [AI-native features](ai.md) and the native [MCP surface](mcp.md).
+Open items:
+
+- **Coverage-aware guided exploration.** Agent proposals over the live driver's candidate handles, compiled
+  into the existing constrained action plan and executed one step per actor epoch through the arbiter and
+  safety kernel; progress reported as uncovered, blocked, attempted, verified or unknown outcome.
+- **Cross-page semantic grouping and retrieval.** A run-scoped index over approved text and surface records
+  whose grouping is reversible advisory metadata and never suppresses distinct methods, roles, parameters
+  or trust-lane evidence.
+- **Browser-session and proxy-exchange interoperability.** Negotiated, tenant- and run-bound handles to
+  external browser sessions and captured exchanges, with one mutating owner per session and a fenced handoff.
+- **Schema induction.** A model proposes selectors once, a deterministic validator checks them on held-out
+  pages, and later runs extract with no model call.
+- **Session capability ledger and signed scope grants.** Per-engagement flags for untrusted input, sensitive
+  context and consequential capability, and operator-signed grants over origin sets and approved plans. Today
+  approval is a server-side, single-use, digest-bound token and plan execution is confined to the approved
+  tools and URLs.
+- **Model qualification workbench.** Read-only model status, decision and evaluation views over
+  provenance-complete outcome data, evaluated against the unchanged promotion criteria; promotion stays a
+  signed operator workflow and is never an agent tool.
+
 ## Good places to start
 
 Documentation fixes, tests for a documented behavior, a new fixture for the CrawlerGym server, and

@@ -199,6 +199,8 @@ Existing client environment variables are also read as a fallback: `FIRECRAWL_AP
 
 The parse tool (`firecrawl_parse`) reads the file path it is given on the machine running `crawlx mcp` and uploads the bytes to the API, so point `--api-url` only at an API you trust. <!-- wire-compat -->
 
+The default surface above is the compatibility surface. `--surface native` serves a capability-scoped catalog over the native API (inspection by default; control, create, export, interact, erase and operator tools only behind explicit operator configuration), with structured results and resources; see [MCP server](mcp.md). Model-assisted operations and their policy are described in [AI-native features](ai.md).
+
 ## Compatibility clients
 
 Existing client libraries and command-line clients that speak the compatible v2 routes use the same API: `crawlx serve --compat-keys --api-key acme=fc-<32 hex>` accepts an `fc-` key on `/compat`, and Python and Node client libraries, a command-line client and a document-loader integration run against it in `cargo test -p crawlx-cli --test sdk_python` (installs the packages from PyPI and npm, skips when they are unreachable). Base URLs per client (the Python client drops a path prefix and needs a `/v2/*` rewrite), the endpoints each integration calls and what does not work (tools that only speak the `/v1` routes): [`docs/integrations.md`](integrations.md).
