@@ -167,15 +167,36 @@ fn create_admitted_run<'a>(
     ))
 }
 
-async fn create_admitted_run_inner(
+/// A crawl request that passed every native admission check, with what admission produced.
+pub(crate) struct Admission {
+    pub crawl: CreateCrawl,
+    pub admitted: crawlx_policy::Admitted,
+    pub warnings: Vec<Warning>,
+}
+
+/// `crawl` without the fields only the server assigns, so the result is a valid request body
+/// again (`parse_create` refuses those fields).
+pub(crate) fn client_form(mut crawl: CreateCrawl) -> CreateCrawl {
+    crawl.cache_principal = None;
+    if let Some(scrape) = &mut crawl.scrape {
+        scrape.options.cache_principal = None;
+        scrape.options.cache_header_identity = None;
+        scrape.options.cache_execution_context = None;
+    }
+    crawl
+}
+
+/// Run the whole native admission (references, quota, validation policy, authorization record,
+/// URL and scope policy, worker capability, retention) without persisting anything. Creation
+/// and the dry-run endpoints share this one path, so a previewed configuration is admitted by
+/// exactly the code that would admit it at start.
+pub(crate) async fn admit_crawl(
     state: &AppState,
     principal: &Principal,
     mut crawl: CreateCrawl,
     mut details: Vec<Detail>,
     mut warnings: Vec<Warning>,
-    id: CrawlRunId,
-    replay_spec: Option<&Value>,
-) -> ApiResult<Created> {
+) -> ApiResult<Admission> {
     crate::routes::login_flows::validate_references(state, principal, &crawl).await?;
     crawl.cache_principal = Some(principal.key_id);
     if let Some(scrape) = &mut crawl.scrape {
@@ -274,6 +295,28 @@ async fn create_admitted_run_inner(
             format!("clamped from {} to plan maximum {}", c.requested, c.applied),
         ));
     }
+    Ok(Admission {
+        crawl,
+        admitted,
+        warnings,
+    })
+}
+
+async fn create_admitted_run_inner(
+    state: &AppState,
+    principal: &Principal,
+    crawl: CreateCrawl,
+    details: Vec<Detail>,
+    warnings: Vec<Warning>,
+    id: CrawlRunId,
+    replay_spec: Option<&Value>,
+) -> ApiResult<Created> {
+    let Admission {
+        crawl,
+        admitted,
+        mut warnings,
+    } = admit_crawl(state, principal, crawl, details, warnings).await?;
+    let api = &state.repos.api;
     let run = CrawlRun {
         id,
         tenant: principal.tenant,

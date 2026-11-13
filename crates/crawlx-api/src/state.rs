@@ -495,6 +495,8 @@ pub struct Shared {
     pub job_webhooks: JobWebhookSink,
     /// Toolkit provider behind the agent's `exchange` tools, when one is plugged in.
     pub exchange: Option<Arc<dyn crate::intel::exchange::ExchangeProvider>>,
+    /// Model-egress governor and proposal settings of the native AI endpoints (`intel.policy`).
+    pub ai: crate::intel::govern::AiPolicy,
     /// Background `extract`/`agent`/`monitor` jobs of this process.
     pub jobs: Arc<JobRegistry>,
     /// Documentation search index, built on first use (`/support/*`).
@@ -540,6 +542,7 @@ pub struct AppStateBuilder {
     tools: Option<Arc<dyn PageTools>>,
     job_webhooks: Option<JobWebhookSink>,
     exchange: Option<Arc<dyn crate::intel::exchange::ExchangeProvider>>,
+    ai: crate::intel::govern::AiPolicy,
 }
 
 impl AppStateBuilder {
@@ -665,6 +668,14 @@ impl AppStateBuilder {
         self
     }
 
+    /// The model-egress governor and proposal settings of the native AI endpoints. Without one
+    /// those endpoints answer their deterministic results and refuse model-assisted work.
+    #[must_use]
+    pub fn ai_policy(mut self, ai: crate::intel::govern::AiPolicy) -> Self {
+        self.ai = ai;
+        self
+    }
+
     /// Finish the state: builds the rate limiter and SSE limiter from the configuration.
     #[must_use]
     pub fn build(self) -> AppState {
@@ -703,6 +714,7 @@ impl AppStateBuilder {
             tools: self.tools,
             job_webhooks,
             exchange: self.exchange,
+            ai: self.ai,
             jobs,
             docs_index: tokio::sync::OnceCell::new(),
             agent_vault: Arc::new(crate::intel::zdr_vault::ZdrVault::new()),
@@ -737,6 +749,7 @@ impl AppState {
             tools: None,
             job_webhooks: None,
             exchange: None,
+            ai: crate::intel::govern::AiPolicy::default(),
         }
     }
 

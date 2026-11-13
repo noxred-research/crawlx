@@ -93,6 +93,8 @@ pub fn status_body(
         body.insert("pendingApproval".to_owned(), p);
     }
     put(&mut body, "exchange", e("exchange"));
+    // present only on runs started from an approved plan (`POST /v1/agent-plans/{id}/execute`)
+    put(&mut body, "plan", e("plan"));
     if let Some(w) = req
         .get("warnings")
         .filter(|w| w.as_array().is_some_and(|a| !a.is_empty()))

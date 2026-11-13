@@ -2,12 +2,13 @@
 //! every call is recorded, and token usage is a deterministic estimate (one token per four
 //! characters, rounded up).
 
-use super::extractor::{Completion, LlmError, LlmExtractor, TokenUsage};
+use super::extractor::{Completion, CompletionLimits, LlmError, LlmExtractor, TokenUsage};
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 /// One recorded call to [`LlmExtractor::complete`].
 #[derive(Clone, PartialEq, Debug)]
@@ -45,6 +46,8 @@ pub struct MockLlm {
     transcript: Option<Result<String, LlmError>>,
     transcriptions: Mutex<Vec<TranscribeCall>>,
     max_input: usize,
+    bounded: bool,
+    invalid_usage: bool,
 }
 
 impl std::fmt::Debug for MockLlm {
@@ -70,7 +73,26 @@ impl MockLlm {
             transcript: None,
             transcriptions: Mutex::new(Vec::new()),
             max_input: super::extractor::DEFAULT_MAX_INPUT_CHARS,
+            bounded: false,
+            invalid_usage: false,
         }
+    }
+
+    /// As [`Self::scripted`], and the mock supports [`LlmExtractor::complete_bounded`] (limits and
+    /// usage are checked against the scripted reply).
+    #[must_use]
+    pub fn bounded_scripted(replies: Vec<Result<Value, LlmError>>) -> Self {
+        let mut mock = Self::scripted(replies);
+        mock.bounded = true;
+        mock
+    }
+
+    /// As [`Self::from_fn`], and the mock supports [`LlmExtractor::complete_bounded`].
+    #[must_use]
+    pub fn bounded_from_fn(f: impl Fn(&LlmCall) -> Result<Value, LlmError> + Send + Sync + 'static) -> Self {
+        let mut mock = Self::from_fn(f);
+        mock.bounded = true;
+        mock
     }
 
     /// A mock whose reply is a function of the call (agent loops, per-page answers).
@@ -82,6 +104,8 @@ impl MockLlm {
             transcript: None,
             transcriptions: Mutex::new(Vec::new()),
             max_input: super::extractor::DEFAULT_MAX_INPUT_CHARS,
+            bounded: false,
+            invalid_usage: false,
         }
     }
 
@@ -89,6 +113,14 @@ impl MockLlm {
     #[must_use]
     pub const fn with_max_input_chars(mut self, max: usize) -> Self {
         self.max_input = max;
+        self
+    }
+
+    /// Make a bounded mock's [`LlmExtractor::complete_bounded`] fail with [`LlmError::InvalidUsage`],
+    /// as a provider that reports no token usage does.
+    #[must_use]
+    pub const fn with_invalid_usage(mut self) -> Self {
+        self.invalid_usage = true;
         self
     }
 
@@ -148,6 +180,37 @@ impl LlmExtractor for MockLlm {
             completion_tokens: estimate(value.to_string().chars().count()),
         };
         Ok(Completion { value, usage })
+    }
+
+    async fn complete_bounded(
+        &self,
+        system: &str,
+        user: &str,
+        schema: Option<&Value>,
+        limits: CompletionLimits,
+        cancel: &CancellationToken,
+    ) -> Result<Completion<Value>, LlmError> {
+        if cancel.is_cancelled() {
+            return Err(LlmError::Cancelled);
+        }
+        if !self.bounded {
+            return Err(LlmError::UnsupportedOutputBudget);
+        }
+        let completion = self.complete(system, user, schema).await?;
+        if self.invalid_usage {
+            return Err(LlmError::InvalidUsage);
+        }
+        let max_tokens = u64::from(limits.max_output_tokens().get());
+        if completion.usage.completion_tokens > max_tokens {
+            return Err(LlmError::OutputTokenLimitExceeded {
+                max: limits.max_output_tokens().get(),
+            });
+        }
+        let max_bytes = limits.max_response_bytes();
+        if completion.value.to_string().len() > max_bytes {
+            return Err(LlmError::ResponseBytesExceeded { max: max_bytes });
+        }
+        Ok(completion)
     }
 
     fn max_input_chars(&self) -> usize {

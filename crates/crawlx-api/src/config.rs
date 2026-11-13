@@ -458,6 +458,84 @@ pub struct IntelConfig {
     /// profile as the markup heuristics produced it.
     #[serde(default)]
     pub branding: Option<BrandingSettings>,
+    /// Model-processing policy of the native AI endpoints (`/v1/crawl-specs`, `/v1/agent-plans`,
+    /// `/v1/crawls/{id}/{extractions,triage,summaries}`). `None` keeps external model processing
+    /// off: those endpoints answer their deterministic results only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<PolicySettings>,
+}
+
+/// `intel.policy`: what the native AI endpoints may send to which model provider.
+///
+/// Every key is operator configuration. Nothing here can be set by a request, a page or a model.
+#[derive(Clone, PartialEq, Eq, Default, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PolicySettings {
+    /// Master switch; `false` (the default) refuses every model call of the native AI endpoints.
+    #[serde(default)]
+    pub external_processing: bool,
+    /// Approved providers by id.
+    #[serde(default)]
+    pub providers: std::collections::BTreeMap<String, PolicyProviderSettings>,
+    /// Largest rendered model input in bytes (default 131072).
+    #[serde(default)]
+    pub max_input_bytes: Option<usize>,
+    /// Completion-token ceiling of one call (default 2048).
+    #[serde(default)]
+    pub max_output_tokens: Option<u32>,
+    /// Decoded response-byte ceiling of one call (default 1 MiB).
+    #[serde(default)]
+    pub max_response_bytes: Option<usize>,
+    /// Model calls one run, plan or spec may make (default 16).
+    #[serde(default)]
+    pub max_run_calls: Option<u32>,
+    /// Tokens one run, plan or spec may use (default 200000).
+    #[serde(default)]
+    pub max_run_tokens: Option<u64>,
+    /// Wall-clock deadline of one call in milliseconds (default 60000).
+    #[serde(default)]
+    pub deadline_ms: Option<u64>,
+    /// Seconds a compiled spec or agent plan stays approvable (default 900, at most 86400).
+    #[serde(default)]
+    pub proposal_ttl_secs: Option<u64>,
+    /// Whether the API key that proposed a spec or plan may also approve it (default `false`:
+    /// approval needs a different key, so one hijacked agent key cannot approve itself).
+    #[serde(default)]
+    pub allow_self_approval: bool,
+}
+
+/// One approved provider of [`PolicySettings`].
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PolicyProviderSettings {
+    /// chat-completions compatible endpoint; `None` uses the `intel.llm` endpoint and key.
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    /// Model name; `None` uses the `intel.llm` model.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// `env:NAME` / `file:/path` reference to the key; `None` uses the `intel.llm` key reference.
+    #[serde(default)]
+    pub api_key_ref: Option<String>,
+    /// Time budget of one HTTP request, milliseconds.
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+    /// Operator label of the model revision; part of cache keys and audit digests (default `1`).
+    #[serde(default)]
+    pub revision: Option<String>,
+    /// What the provider promises about retaining content; zero-data-retention runs reach only
+    /// providers marked `zdr`.
+    #[serde(default = "PolicyProviderSettings::default_retention")]
+    pub retention_capability: crawlx_model::policy::RetentionCapability,
+    /// Purposes the provider may serve; empty approves none.
+    #[serde(default)]
+    pub allowed_purposes: Vec<crawlx_model::policy::Purpose>,
+}
+
+impl PolicyProviderSettings {
+    const fn default_retention() -> crawlx_model::policy::RetentionCapability {
+        crawlx_model::policy::RetentionCapability::None
+    }
 }
 
 /// Failure to turn configured references into credentials.

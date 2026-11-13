@@ -12,8 +12,9 @@
 //! (circuit breaker, concurrency cap, time budget), [`rollout`] (modes, G3
 //! token, rollout share), [`decision_http`] (HTTP adapter), [`bundle`] (model artifact
 //! bundle: manifest, digests, calibration), [`onnx_ranker`] (ONNX adapter),
-//! [`llm`] (`ActionPlan` DSL and planner client) and [`llm_cache`] (record, replay
-//! and call cap around any `LlmExtractor`).
+//! [`llm`] (`ActionPlan` DSL and planner client), [`llm_cache`] (record, replay
+//! and call cap around any `LlmExtractor`) and [`policy`] (the uniform model-egress policy of the
+//! native AI endpoints).
 
 pub mod article_language;
 pub mod breaker;
@@ -27,6 +28,7 @@ pub mod llm_cache;
 pub mod mock;
 pub mod onnx_ranker;
 pub mod planner_http;
+pub mod policy;
 pub mod provenance;
 pub mod rollout;
 pub mod typed;
