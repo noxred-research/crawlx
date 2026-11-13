@@ -36,7 +36,7 @@ env:
 jobs:
   # Workflow gate (see the header comment). Every other job depends on this one.
   authorize:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, noxred]
     permissions:
       contents: read
     timeout-minutes: 5
@@ -92,7 +92,7 @@ jobs:
           echo "ok=true" >> "$GITHUB_OUTPUT"
 
   release-checklist:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, noxred]
     timeout-minutes: 30
     needs: authorize
     if: needs.authorize.outputs.ok == 'true'
