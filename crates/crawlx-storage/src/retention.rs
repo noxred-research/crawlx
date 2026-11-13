@@ -531,6 +531,21 @@ impl<B: Sql> RetentionSweeper<B> {
             .uuid(run.0)
             .execute_write(pool)
             .await?;
+        // records the AI endpoints keep per run (extractions, triage, findings, summaries)
+        let key_col = if B::KIND == BackendKind::MariaDb {
+            "`key`"
+        } else {
+            "key"
+        };
+        for kind in crate::intel::RUN_SETTING_KINDS {
+            total += Stmt::<B>::dynamic(&format!(
+                "DELETE FROM tenant_settings WHERE tenant_id = $1 AND {key_col} = $2"
+            ))
+            .uuid(tenant)
+            .text(&crate::intel::run_setting_key(kind, run))
+            .execute_write(pool)
+            .await?;
+        }
         total += stmt!(B, "DELETE FROM crawl_runs WHERE run_id = $1")
             .uuid(run.0)
             .execute_write(pool)

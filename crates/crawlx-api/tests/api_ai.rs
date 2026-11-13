@@ -12,7 +12,7 @@ use crawlx_api::intel::govern::AiPolicy;
 use crawlx_api::intel::tools::MockPageTools;
 use crawlx_api::{ApiConfig, ApiStore, AppState, MemoryApiStore, Repos, Scope, Settings};
 use crawlx_core::hash::Digest;
-use crawlx_core::repo::{PageRecord, PageRepo, Sensitivity};
+use crawlx_core::repo::{PageRecord, PageRepo, RunRepo, Sensitivity};
 use crawlx_core::time::ManualClock;
 use crawlx_core::{Clock, CrawlRunId, TrustLane};
 use crawlx_model::llm::{LlmError, LlmExtractor, MockLlm};
@@ -47,14 +47,23 @@ struct Parts {
 }
 
 fn governor(llm: &Arc<MockLlm>, budgets: Budgets) -> Arc<ModelGovernor> {
+    governor_for(llm, budgets, RetentionCapability::None, &Purpose::ALL)
+}
+
+fn governor_for(
+    llm: &Arc<MockLlm>,
+    budgets: Budgets,
+    retention: RetentionCapability,
+    purposes: &[Purpose],
+) -> Arc<ModelGovernor> {
     let mut providers = BTreeMap::new();
     providers.insert(
         "main".to_owned(),
         ProviderPolicy {
             model: "test-model".to_owned(),
             revision: "r1".to_owned(),
-            retention: RetentionCapability::None,
-            purposes: Purpose::ALL.into_iter().collect::<BTreeSet<_>>(),
+            retention,
+            purposes: purposes.iter().copied().collect::<BTreeSet<_>>(),
         },
     );
     let policy = ModelProcessingPolicyV1 {
@@ -95,6 +104,18 @@ fn build(
 }
 
 async fn rig(llm: Arc<MockLlm>, with_ai: bool) -> Rig {
+    let ai = if with_ai {
+        AiPolicy {
+            governor: Some(governor(&llm, Budgets::default())),
+            ..AiPolicy::default()
+        }
+    } else {
+        AiPolicy::default()
+    };
+    rig_with_ai(llm, ai).await
+}
+
+async fn rig_with_ai(llm: Arc<MockLlm>, ai: AiPolicy) -> Rig {
     let clock = ManualClock::new(Utc::now());
     let dyn_clock: Arc<dyn Clock> = Arc::new(clock.clone());
     let store = Arc::new(MemoryStore::with_clock(dyn_clock.clone()));
@@ -112,14 +133,6 @@ async fn rig(llm: Arc<MockLlm>, with_ai: bool) -> Rig {
         repos,
         api: api.clone(),
         zdr,
-    };
-    let ai = if with_ai {
-        AiPolicy {
-            governor: Some(governor(&llm, Budgets::default())),
-            ..AiPolicy::default()
-        }
-    } else {
-        AiPolicy::default()
     };
     let tools = Arc::new(MockPageTools::new());
     let state = build(&parts, &llm, ai, &clock, &tools);
@@ -158,6 +171,11 @@ impl Rig {
     async fn post(&self, key: &str, uri: &str, body: &Value) -> (StatusCode, Value) {
         let (s, _, b) = self.env.send(Method::POST, uri, Some(key), &[], Some(body)).await;
         (s, common::json(&b))
+    }
+
+    /// As [`Rig::post`] with owned arguments, for futures that run side by side.
+    async fn post_owned(&self, key: &str, uri: String, body: Value) -> (StatusCode, Value) {
+        self.post(key, &uri, &body).await
     }
 
     async fn get(&self, key: &str, uri: &str) -> (StatusCode, Value) {
@@ -1507,4 +1525,608 @@ async fn injected_instructions_in_evidence_change_no_scope_or_tool() {
     assert_eq!(run_doc["status"], "queued");
     let (_, approvals) = r.get(&r.agent, &format!("/v1/crawls/{run}/approvals")).await;
     assert!(approvals["data"].as_array().is_none_or(|a| a.is_empty()));
+}
+
+// ---- review regressions ----------------------------------------------------------------------
+
+const CANARY: &str = "cx-secret-canary-7f3a91d2";
+
+fn secret_base() -> Value {
+    json!({
+        "seedUrl": "https://app.example.test/",
+        "seed": 7,
+        "fetch": {
+            "extraHeaders": {"x-tenant-token": CANARY},
+            "cookies": [{"name": "sid", "value": CANARY}],
+        },
+        "extract": {"formFill": {"enabled": true, "password": CANARY}},
+    })
+}
+
+#[tokio::test]
+async fn specs_never_return_or_digest_secrets_but_create_with_them() {
+    let r = rig(Arc::new(MockLlm::bounded_scripted(vec![])), false).await;
+    let body = json!({"baseConfig": secret_base(), "intent": {"version": 1, "maxPages": 5}});
+    let (s, spec) = r.post(&r.agent, "/v1/crawl-specs/compile", &body).await;
+    assert_eq!(s, StatusCode::CREATED, "{spec}");
+    assert!(!spec.to_string().contains(CANARY), "compile response: {spec}");
+    assert!(spec.to_string().to_lowercase().contains("[redacted]"), "{spec}");
+    let id = spec["specId"].as_str().unwrap().to_owned();
+    let (_, shown) = r.get(&r.agent, &format!("/v1/crawl-specs/{id}")).await;
+    assert!(!shown.to_string().contains(CANARY), "GET spec: {shown}");
+    let (s, valid) = r.post(&r.agent, "/v1/crawl-specs/validate", &secret_base()).await;
+    assert_eq!(s, StatusCode::OK, "{valid}");
+    assert!(!valid.to_string().contains(CANARY), "validate: {valid}");
+    // the digest covers the redacted view: two specs differing only in a secret value share it
+    let other = secret_base()
+        .to_string()
+        .replace(CANARY, "another-secret-value-0001");
+    let other: Value = serde_json::from_str(&other).unwrap();
+    let (_, spec2) = r
+        .post(
+            &r.agent,
+            "/v1/crawl-specs/compile",
+            &json!({"baseConfig": other, "intent": {"version": 1, "maxPages": 5}}),
+        )
+        .await;
+    assert_eq!(spec["configDigest"], spec2["configDigest"]);
+    // creating still uses the real values, kept server-side
+    let (_, approved) = r
+        .post(&r.operator, &format!("/v1/crawl-specs/{id}/approve"), &json!({}))
+        .await;
+    let token = approved["approvalToken"].as_str().unwrap().to_owned();
+    assert!(!approved.to_string().contains(CANARY));
+    let (s, run) = r
+        .post(
+            &r.agent,
+            &format!("/v1/crawl-specs/{id}/create"),
+            &json!({"approvalToken": token}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{run}");
+    assert!(!run.to_string().contains(CANARY), "{run}");
+    // the run is the one a direct create of the same body makes: the real configuration was used
+    // (the store itself keeps no literal secret, so both rows hold the same durable form)
+    let stored = r
+        .env
+        .store
+        .get(run["id"].as_str().unwrap().parse().unwrap())
+        .await
+        .unwrap();
+    let direct_id = r
+        .env
+        .create_run(&{
+            let mut direct = secret_base();
+            direct["seed"] = json!(stored.config.seed.unwrap());
+            direct["extract"]["formFill"]["password"] = json!(CANARY);
+            direct
+        })
+        .await;
+    let direct = r.env.store.get(direct_id.parse().unwrap()).await.unwrap();
+    assert_eq!(stored.config.fetch.cookies.len(), 1);
+    assert_eq!(
+        stored.config.fetch.cookies[0].name,
+        direct.config.fetch.cookies[0].name
+    );
+    assert_eq!(
+        stored.config.fetch.extra_headers.len(),
+        direct.config.fetch.extra_headers.len()
+    );
+    assert_eq!(stored.config.extract.form_fill, direct.config.extract.form_fill);
+    assert_eq!(stored.config.limits.urls, 5);
+    // the volatile execution copy holds the real values: the server-side configuration was used
+    let executing = r
+        .env
+        .store
+        .get_for_execution(run["id"].as_str().unwrap().parse().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(executing.config.fetch.cookies[0].value, CANARY);
+    assert!(executing
+        .config
+        .fetch
+        .extra_headers
+        .iter()
+        .any(|(_, v)| v == CANARY));
+    // MCP-style reads of the stored record carry nothing either
+    let (_, after) = r.get(&r.agent, &format!("/v1/crawl-specs/{id}")).await;
+    assert!(!after.to_string().contains(CANARY));
+}
+
+#[tokio::test]
+async fn compile_and_create_validate_native_extraction_options() {
+    let r = rig(Arc::new(MockLlm::bounded_scripted(vec![])), false).await;
+    let bad =
+        json!({"seedUrl": "https://app.example.test/", "seed": 7, "extract": {"outputs": {"bogus": 1}}});
+    let (s, v) = r
+        .post(
+            &r.agent,
+            "/v1/crawl-specs/compile",
+            &json!({"baseConfig": bad, "intent": {"version": 1}}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    let (s, _) = r.post(&r.agent, "/v1/crawls", &bad).await;
+    assert_eq!(
+        s,
+        StatusCode::BAD_REQUEST,
+        "the native create refuses the same body"
+    );
+    // a spec whose stored configuration turned invalid is refused at create as well
+    let (_, spec) = r
+        .post(
+            &r.agent,
+            "/v1/crawl-specs/compile",
+            &json!({"baseConfig": simple(), "intent": {"version": 1}}),
+        )
+        .await;
+    let id = spec["specId"].as_str().unwrap().to_owned();
+    let (_, approved) = r
+        .post(&r.operator, &format!("/v1/crawl-specs/{id}/approve"), &json!({}))
+        .await;
+    let secret_key = format!("proposal-secret:spec:{id}");
+    let mut full = r
+        .parts
+        .repos
+        .intel
+        .setting_get(r.env.tenant, &secret_key)
+        .await
+        .unwrap()
+        .unwrap();
+    full["extract"] = json!({"outputs": {"bogus": 1}});
+    r.parts
+        .repos
+        .intel
+        .setting_put(r.env.tenant, &secret_key, full, Utc::now())
+        .await
+        .unwrap();
+    let (s, v) = r
+        .post(
+            &r.agent,
+            &format!("/v1/crawl-specs/{id}/create"),
+            &json!({"approvalToken": approved["approvalToken"]}),
+        )
+        .await;
+    assert!(
+        s == StatusCode::BAD_REQUEST || s == StatusCode::FORBIDDEN,
+        "{s}: {v}"
+    );
+}
+
+#[tokio::test]
+async fn concurrent_spends_of_one_token_start_exactly_one_crawl() {
+    let r = rig(Arc::new(MockLlm::bounded_scripted(vec![])), false).await;
+    let (_, spec) = r
+        .post(
+            &r.agent,
+            "/v1/crawl-specs/compile",
+            &json!({"baseConfig": simple(), "intent": {"version": 1}}),
+        )
+        .await;
+    let id = spec["specId"].as_str().unwrap().to_owned();
+    let (_, approved) = r
+        .post(&r.operator, &format!("/v1/crawl-specs/{id}/approve"), &json!({}))
+        .await;
+    let body = json!({"approvalToken": approved["approvalToken"]});
+    let uri = format!("/v1/crawl-specs/{id}/create");
+    let replies =
+        futures::future::join_all((0..12).map(|_| r.post_owned(&r.agent, uri.clone(), body.clone()))).await;
+    let accepted: Vec<&Value> = replies
+        .iter()
+        .filter(|(s, _)| *s == StatusCode::ACCEPTED)
+        .map(|(_, v)| v)
+        .collect();
+    assert_eq!(accepted.len(), 1, "{replies:?}");
+    assert!(
+        replies
+            .iter()
+            .filter(|(s, _)| *s != StatusCode::ACCEPTED)
+            .all(|(s, _)| *s == StatusCode::CONFLICT),
+        "{replies:?}"
+    );
+    // exactly one run came from the spec (the rig created none other)
+    let runs = r.parts.api.active_run_count(r.env.tenant).await.unwrap();
+    assert_eq!(runs, 1);
+    // two approvers racing: one token only
+    let (_, spec) = r
+        .post(
+            &r.agent,
+            "/v1/crawl-specs/compile",
+            &json!({"baseConfig": simple(), "intent": {"version": 1}}),
+        )
+        .await;
+    let id = spec["specId"].as_str().unwrap().to_owned();
+    let uri = format!("/v1/crawl-specs/{id}/approve");
+    let approvals =
+        futures::future::join_all((0..6).map(|_| r.post_owned(&r.operator, uri.clone(), json!({})))).await;
+    assert_eq!(
+        approvals.iter().filter(|(s, _)| *s == StatusCode::OK).count(),
+        1,
+        "{approvals:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_spend_and_a_cancel_cannot_both_win() {
+    let llm = Arc::new(MockLlm::bounded_from_fn(|_| Ok(act_finish())));
+    let racing = rig(llm, true).await;
+    for _ in 0..4 {
+        let (_, plan) = racing
+            .post(&racing.agent, "/v1/agent-plans", &plan_request())
+            .await;
+        let id = plan["planId"].as_str().unwrap().to_owned();
+        let (_, approved) = racing
+            .post(
+                &racing.operator,
+                &format!("/v1/agent-plans/{id}/approve"),
+                &json!({}),
+            )
+            .await;
+        let token = json!({"approvalToken": approved["approvalToken"]});
+        let (cancel, execute) = tokio::join!(
+            racing.post_owned(&racing.agent, format!("/v1/agent-plans/{id}/cancel"), json!({})),
+            racing.post_owned(
+                &racing.agent,
+                format!("/v1/agent-plans/{id}/execute"),
+                token.clone()
+            ),
+        );
+        let (_, shown) = racing.get(&racing.agent, &format!("/v1/agent-plans/{id}")).await;
+        match (cancel.0, execute.0) {
+            (StatusCode::OK, StatusCode::CONFLICT) => assert_eq!(shown["status"], "cancelled", "{shown}"),
+            (StatusCode::CONFLICT, StatusCode::ACCEPTED) => {
+                assert_eq!(shown["status"], "consumed", "{shown}")
+            }
+            other => panic!("both or neither won: {other:?} {cancel:?} {execute:?}"),
+        }
+        // a second spend or cancel never flips the outcome
+        let (again, _) = racing
+            .post(&racing.agent, &format!("/v1/agent-plans/{id}/execute"), &token)
+            .await;
+        assert_eq!(again, StatusCode::CONFLICT);
+    }
+}
+
+fn act_finish() -> Value {
+    json!({"reasoning": "done", "action": "finish", "args": {"message": "done", "data": {"ok": true}}})
+}
+
+#[tokio::test]
+async fn plan_execution_is_governed_like_every_other_model_call() {
+    // a provider approved for another purpose only
+    let llm = Arc::new(MockLlm::bounded_from_fn(|_| Ok(act_finish())));
+    let ai = AiPolicy {
+        governor: Some(governor_for(
+            &llm,
+            Budgets::default(),
+            RetentionCapability::None,
+            &[Purpose::CrawlSpec],
+        )),
+        ..AiPolicy::default()
+    };
+    let r = rig_with_ai(llm.clone(), ai).await;
+    let (_, plan) = r.post(&r.agent, "/v1/agent-plans", &plan_request()).await;
+    let id = plan["planId"].as_str().unwrap().to_owned();
+    let (_, approved) = r
+        .post(&r.operator, &format!("/v1/agent-plans/{id}/approve"), &json!({}))
+        .await;
+    let body = json!({"approvalToken": approved["approvalToken"]});
+    let (s, v) = r
+        .post(&r.agent, &format!("/v1/agent-plans/{id}/execute"), &body)
+        .await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "{v}");
+    assert_eq!(v["error"]["code"], "purpose_not_allowed");
+    assert!(llm.calls().is_empty());
+    let (_, shown) = r.get(&r.agent, &format!("/v1/agent-plans/{id}")).await;
+    assert_eq!(
+        shown["status"], "approved",
+        "a refused execution does not spend the token"
+    );
+
+    // a tenant that forces zero-data-retention only reaches zdr-capable providers
+    let llm = Arc::new(MockLlm::bounded_from_fn(|_| Ok(act_finish())));
+    let ai = AiPolicy {
+        governor: Some(governor(&llm, Budgets::default())),
+        ..AiPolicy::default()
+    };
+    let r = rig_with_ai(llm.clone(), ai).await;
+    r.parts
+        .repos
+        .intel
+        .setting_put(
+            r.env.tenant,
+            "zero-data-retention",
+            json!({"forced": true}),
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+    let (_, plan) = r.post(&r.agent, "/v1/agent-plans", &plan_request()).await;
+    let id = plan["planId"].as_str().unwrap().to_owned();
+    let (_, approved) = r
+        .post(&r.operator, &format!("/v1/agent-plans/{id}/approve"), &json!({}))
+        .await;
+    let calls_before = llm.calls().len();
+    let (s, v) = r
+        .post(
+            &r.agent,
+            &format!("/v1/agent-plans/{id}/execute"),
+            &json!({"approvalToken": approved["approvalToken"]}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "{v}");
+    assert_eq!(v["error"]["code"], "zdr_incompatible");
+    assert_eq!(
+        llm.calls().len(),
+        calls_before,
+        "zero requests reached the provider"
+    );
+
+    // the call budget bounds the run: with one call allowed the second decision is refused
+    let llm = Arc::new(MockLlm::bounded_from_fn(|_| {
+        Ok(json!({"reasoning": "x", "action": "map", "args": {"url": "https://shop.example.test/docs"}}))
+    }));
+    let ai = AiPolicy {
+        governor: Some(governor(
+            &llm,
+            Budgets {
+                max_run_calls: 1,
+                ..Budgets::default()
+            },
+        )),
+        ..AiPolicy::default()
+    };
+    let r = rig_with_ai(llm, ai).await;
+    let (_, plan) = r
+        .post(
+            &r.agent,
+            "/v1/agent-plans",
+            &json!({"prompt": "x", "urls": ["https://shop.example.test/docs"]}),
+        )
+        .await;
+    let id = plan["planId"].as_str().unwrap().to_owned();
+    let (_, approved) = r
+        .post(&r.operator, &format!("/v1/agent-plans/{id}/approve"), &json!({}))
+        .await;
+    let (s, started) = r
+        .post(
+            &r.agent,
+            &format!("/v1/agent-plans/{id}/execute"),
+            &json!({"approvalToken": approved["approvalToken"]}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{started}");
+    let done = wait_done(&r, started["id"].as_str().unwrap()).await;
+    assert_eq!(done["status"], "failed", "{done}");
+}
+
+#[tokio::test]
+async fn erasing_a_run_deletes_the_records_the_ai_endpoints_kept() {
+    let llm = Arc::new(MockLlm::bounded_from_fn(|_| Ok(json!({"sections": []}))));
+    let r = rig(llm, true).await;
+    let (run, _) = r
+        .run_with_pages(&[("https://app.example.test/account", "Account", Some(LOGIN_HTML))])
+        .await;
+    let (_, tri) = r
+        .post(&r.agent, &format!("/v1/crawls/{run}/triage"), &json!({}))
+        .await;
+    let evidence = surface(&tri, "POST", "/login")["evidenceRefs"][0]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (s, _) = r
+        .put(
+            &r.operator,
+            &format!("/v1/crawls/{run}/findings/f1"),
+            &json!({"title": "t", "status": "confirmed", "severity": "low", "evidence": [evidence]}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = r
+        .post(
+            &r.agent,
+            &format!("/v1/crawls/{run}/summaries"),
+            &json!({"useModel": false}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED);
+    let run_id: CrawlRunId = run.parse().unwrap();
+    for kind in crawlx_storage::intel::RUN_SETTING_KINDS {
+        let key = crawlx_storage::intel::run_setting_key(kind, run_id);
+        let present = r
+            .parts
+            .repos
+            .intel
+            .setting_get(r.env.tenant, &key)
+            .await
+            .unwrap()
+            .is_some();
+        assert!(
+            present || kind == "extractions",
+            "{kind} is stored before the erase"
+        );
+    }
+    r.env
+        .store
+        .set_status(
+            run_id,
+            crawlx_core::counters::RunStatus::Completed,
+            Some(crawlx_core::counters::TerminalReason::FrontierExhausted),
+        )
+        .await
+        .unwrap();
+    let (s, v) = {
+        let (s, _, b) = r
+            .env
+            .send(
+                Method::DELETE,
+                &format!("/v1/crawls/{run}"),
+                Some(&r.agent),
+                &[],
+                None,
+            )
+            .await;
+        (s, common::json(&b))
+    };
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    for kind in crawlx_storage::intel::RUN_SETTING_KINDS {
+        let key = crawlx_storage::intel::run_setting_key(kind, run_id);
+        assert!(
+            r.parts
+                .repos
+                .intel
+                .setting_get(r.env.tenant, &key)
+                .await
+                .unwrap()
+                .is_none(),
+            "{kind} outlived the run"
+        );
+    }
+}
+
+#[tokio::test]
+async fn proposals_are_capped_per_key_and_only_finished_ones_are_evicted() {
+    let r = rig(Arc::new(MockLlm::bounded_scripted(vec![])), false).await;
+    let reader = r
+        .env
+        .key_for("acme", &[Scope::CrawlsRead, Scope::CrawlsWrite])
+        .await;
+    let (_, pending) = r.post(&r.agent, "/v1/agent-plans", &plan_request()).await;
+    let pending_id = pending["planId"].as_str().unwrap().to_owned();
+    let (_, approved) = r.post(&r.agent, "/v1/agent-plans", &plan_request()).await;
+    let approved_id = approved["planId"].as_str().unwrap().to_owned();
+    let (s, _) = r
+        .post(
+            &r.operator,
+            &format!("/v1/agent-plans/{approved_id}/approve"),
+            &json!({}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    // another key churns through many proposals: create then cancel
+    let mut first_cancelled = None;
+    for n in 0..70 {
+        let (s, plan) = r.post(&reader, "/v1/agent-plans", &plan_request()).await;
+        assert_eq!(s, StatusCode::CREATED, "{n}: {plan}");
+        let id = plan["planId"].as_str().unwrap().to_owned();
+        let (s, _) = r
+            .post(&reader, &format!("/v1/agent-plans/{id}/cancel"), &json!({}))
+            .await;
+        assert_eq!(s, StatusCode::OK);
+        first_cancelled.get_or_insert(id);
+    }
+    let (s, shown) = r.get(&r.agent, &format!("/v1/agent-plans/{pending_id}")).await;
+    assert_eq!(
+        (s, shown["status"].as_str()),
+        (StatusCode::OK, Some("awaiting_approval")),
+        "{shown}"
+    );
+    let (s, shown) = r.get(&r.agent, &format!("/v1/agent-plans/{approved_id}")).await;
+    assert_eq!(
+        (s, shown["status"].as_str()),
+        (StatusCode::OK, Some("approved")),
+        "{shown}"
+    );
+    let (s, _) = r
+        .get(&r.agent, &format!("/v1/agent-plans/{}", first_cancelled.unwrap()))
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "old finished proposals are evicted");
+    // live proposals per key are capped
+    let capped = r.env.key_for("acme", &[Scope::CrawlsRead]).await;
+    for n in 0..crawlx_api::intel::proposals::MAX_LIVE_PER_KEY {
+        let (s, v) = r.post(&capped, "/v1/agent-plans", &plan_request()).await;
+        assert_eq!(s, StatusCode::CREATED, "{n}: {v}");
+    }
+    let (s, v) = r.post(&capped, "/v1/agent-plans", &plan_request()).await;
+    assert_eq!(s, StatusCode::TOO_MANY_REQUESTS, "{v}");
+    assert_eq!(v["error"]["code"], "proposal_quota");
+}
+
+#[tokio::test]
+async fn concurrent_creates_keep_every_proposal() {
+    let r = rig(Arc::new(MockLlm::bounded_scripted(vec![])), false).await;
+    let replies = futures::future::join_all(
+        (0..24).map(|_| r.post_owned(&r.env.key, "/v1/agent-plans".to_owned(), plan_request())),
+    )
+    .await;
+    // an all-scope key is one key: 24 live proposals, below the cap
+    let ids: BTreeSet<String> = replies
+        .iter()
+        .map(|(s, v)| {
+            assert_eq!(*s, StatusCode::CREATED, "{v}");
+            v["planId"].as_str().unwrap().to_owned()
+        })
+        .collect();
+    assert_eq!(ids.len(), 24);
+    let stored = r
+        .parts
+        .repos
+        .intel
+        .setting_list_prefix(r.env.tenant, "proposal:plan:", 1000)
+        .await
+        .unwrap();
+    assert_eq!(stored.len(), 24, "no entry was lost and no body is orphaned");
+    for id in &ids {
+        let (s, _) = r.get(&r.agent, &format!("/v1/agent-plans/{id}")).await;
+        assert_eq!(s, StatusCode::OK);
+    }
+}
+
+#[tokio::test]
+async fn expected_digests_of_unloaded_sources_and_html_by_id_are_handled() {
+    let llm = claims_llm(|ids| vec![claim("/title", json!("Pricing"), "# Pricing", &ids[0])]);
+    let r = rig(llm, true).await;
+    let (run, artifacts) = r
+        .run_with_pages(&[(
+            "https://shop.example.test/pricing",
+            PRICING,
+            Some("<h1>Pricing</h1>"),
+        )])
+        .await;
+    let uri = format!("/v1/crawls/{run}/extractions");
+    // an expected digest for an artifact that is not among the loaded sources is a conflict
+    let body = json!({"artifacts": [artifacts[0].clone()], "schema": vendor_schema(), "expectedDigests": {"00000000-0000-7000-8000-00000000dead": "0".repeat(64)}});
+    let (s, v) = r.post(&r.agent, &uri, &body).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert_eq!(v["error"]["code"], "stale_source");
+    // a page requested by URL and its html rendition requested by id are both loaded
+    let page = r.env.store.list(run.parse().unwrap()).await.unwrap();
+    let html_id = page[0].html.as_ref().unwrap().id.to_string();
+    let body = json!({"urls": ["https://shop.example.test/pricing"], "artifacts": [html_id.clone()], "schema": {"type": "object", "properties": {"title": {"type": "string"}}}});
+    let (s, v) = r.post(&r.agent, &uri, &body).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let kinds: BTreeSet<&str> = v["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, BTreeSet::from(["markdown", "html"]), "{v}");
+    assert!(v["missing"].as_array().unwrap().is_empty(), "{v}");
+}
+
+#[tokio::test]
+async fn an_oversized_goal_is_a_validation_error_not_a_silent_fallback() {
+    let llm = Arc::new(MockLlm::bounded_from_fn(|_| Ok(json!({"steps": []}))));
+    let r = rig(llm.clone(), true).await;
+    let long = "g".repeat(3001);
+    let (s, v) = r
+        .post(
+            &r.agent,
+            "/v1/agent-plans",
+            &json!({"prompt": long, "urls": ["https://shop.example.test/docs"]}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert!(llm.calls().is_empty());
+    let longest = "g".repeat(3000);
+    let (s, v) = r
+        .post(
+            &r.agent,
+            "/v1/agent-plans",
+            &json!({"prompt": longest, "urls": ["https://shop.example.test/docs"]}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    assert_eq!(llm.calls().len(), 1, "the largest valid goal reaches the model");
 }

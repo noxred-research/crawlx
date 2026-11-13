@@ -88,21 +88,29 @@ pub async fn load_sources(
     max_sources: usize,
 ) -> ApiResult<(Vec<Source>, Vec<Missing>)> {
     let pages = sorted_pages(state, run, None).await?;
-    let mut sources = Vec::new();
+    let mut sources: Vec<Source> = Vec::new();
     let mut found: BTreeSet<String> = BTreeSet::new();
     let mut missing = Vec::new();
     for page in &pages {
         let url = page.url.to_string();
+        let mut url_served = false;
         for (kind, artifact) in [("markdown", &page.markdown), ("html", &page.html)] {
             let Some(artifact) = artifact else { continue };
             let id = artifact.id.to_string();
             let by_artifact = wanted.artifacts.contains(&id);
-            let by_url = wanted.urls.contains(&url) && !sources.iter().any(|s: &Source| s.url == url);
+            // a URL request yields one rendition per page (markdown wins over html); an
+            // artifact id always yields exactly that rendition
+            let by_url = wanted.urls.contains(&url) && !url_served;
             if !(by_artifact || by_url) {
                 continue;
             }
             found.insert(id.clone());
-            found.insert(url.clone());
+            if wanted.urls.contains(&url) {
+                found.insert(url.clone());
+            }
+            if by_url {
+                url_served = true;
+            }
             if sources.len() >= max_sources {
                 missing.push(Missing {
                     requested: id,
@@ -138,10 +146,6 @@ pub async fn load_sources(
                     });
                 }
             }
-            if by_url {
-                // one rendition per requested URL: markdown wins over html
-                break;
-            }
         }
     }
     for item in wanted.artifacts.iter().chain(&wanted.urls) {
@@ -158,20 +162,26 @@ pub async fn load_sources(
 /// Refuse a request whose expected digests do not match what is retained now.
 ///
 /// # Errors
-/// `409 stale_source` naming the artifact.
+/// `409 stale_source` naming the artifact whose digest changed or that is no longer retained
+/// or readable.
 pub fn check_expected(
     sources: &[Source],
     expected: &std::collections::BTreeMap<String, String>,
 ) -> ApiResult<()> {
     for (artifact, digest) in expected {
-        if let Some(source) = sources.iter().find(|s| &s.id == artifact) {
-            if &source.digest != digest {
-                return Err(HttpError::compat(
-                    axum::http::StatusCode::CONFLICT,
-                    "stale_source",
-                    format!("artifact {artifact} no longer has the expected digest"),
-                ));
+        let stale = |why: &str| {
+            HttpError::compat(
+                axum::http::StatusCode::CONFLICT,
+                "stale_source",
+                format!("artifact {artifact} {why}"),
+            )
+        };
+        match sources.iter().find(|s| &s.id == artifact) {
+            None => return Err(stale("is not available as a source of this request")),
+            Some(source) if &source.digest != digest => {
+                return Err(stale("no longer has the expected digest"));
             }
+            Some(_) => {}
         }
     }
     Ok(())

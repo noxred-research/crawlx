@@ -503,6 +503,65 @@ async fn unknown_and_authorization_like_arguments_are_rejected_before_any_reques
 }
 
 #[tokio::test]
+async fn dot_segments_cannot_steer_a_path_argument_to_another_route() {
+    let server = MockServer::start().await;
+    // the export route a `..` store would reach from `/kv/{store}/{key}` after URL normalisation
+    serve_json(
+        &server,
+        "GET",
+        &format!("/v1/crawls/{RUN}/export"),
+        200,
+        &json!({"leaked": true}),
+    )
+    .await;
+    let mut session = Session::native(&server.uri(), &[], &[]).await;
+    for (store, key) in [("..", "export"), (".", "export"), ("kv", ".."), ("s", ".")] {
+        let reply = session
+            .call_raw("crawlx_get_kv", json!({"runId": RUN, "store": store, "key": key}))
+            .await;
+        assert_eq!(reply["error"]["code"], json!(-32602), "{store}/{key}: {reply}");
+        assert!(
+            reply["error"]["data"]["issues"][0]
+                .as_str()
+                .unwrap()
+                .contains("`.` or `..`"),
+            "{reply}"
+        );
+    }
+    // dotted names that are not dot segments stay ordinary values
+    serve_json(
+        &server,
+        "GET",
+        &format!("/v1/crawls/{RUN}/kv/a.b/c..d"),
+        200,
+        &json!({"v": 1}),
+    )
+    .await;
+    let reply = session
+        .call_raw(
+            "crawlx_get_kv",
+            json!({"runId": RUN, "store": "a.b", "key": "c..d"}),
+        )
+        .await;
+    assert!(reply.get("error").is_none(), "{reply}");
+    // resources apply the same rule
+    for uri in [
+        format!("crawlx://runs/{RUN}/reports/.."),
+        format!("crawlx://runs/{RUN}/reports/."),
+    ] {
+        let reply = session.request("resources/read", json!({"uri": uri})).await;
+        assert_eq!(reply["error"]["code"], json!(-32602), "{uri}: {reply}");
+    }
+    let seen = requests(&server).await;
+    assert!(
+        seen.iter()
+            .all(|request| !request.url.path().ends_with("/export")),
+        "no request reached the export route: {:?}",
+        seen.iter().map(|r| r.url.path().to_owned()).collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
 async fn erase_runs_only_with_the_matching_confirm_id() {
     let server = MockServer::start().await;
     serve_json(

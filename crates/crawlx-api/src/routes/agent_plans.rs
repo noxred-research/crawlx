@@ -9,8 +9,9 @@ use crate::auth::Principal;
 use crate::errors::{ApiResult, Detail, HttpError};
 use crate::intel::agent::{self, PlanBinding};
 use crate::intel::agent_plan::{self, PlanRequest};
+use crate::intel::agent_spec::{self, ZdrPolicy};
 use crate::intel::govern::{self, ModelCall};
-use crate::intel::proposals::{self, Kind, Status};
+use crate::intel::proposals::{self, Kind};
 use crate::state::AppState;
 use crate::store::Scope;
 use crate::util::{json_response, ts, JsonBody};
@@ -18,7 +19,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::Extension;
-use crawlx_model::policy::{ModelInputEnvelopeV1, OperatorTask, Purpose, RetentionClass};
+use crawlx_model::policy::{GovernError, ModelInputEnvelopeV1, OperatorTask, Purpose, RetentionClass};
 use crawlx_model::provenance::Instruction;
 use serde_json::{json, Value};
 
@@ -170,28 +171,31 @@ async fn audit(state: &AppState, principal: &Principal, event: &str, record: &pr
 /// `POST /v1/agent-plans/{planId}/cancel`.
 ///
 /// # Errors
-/// `403 scope_missing` without `crawls:write`, `404`, `409` once the plan was executed.
+/// `403 scope_missing` without `crawls:write`, `404`, `409` once the plan was executed (or an
+/// execution takes it at the same moment).
 pub async fn cancel(
     State(state): State<AppState>,
     Extension(principal): Extension<Principal>,
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
     principal.require(Scope::CrawlsWrite)?;
-    let mut record = proposals::load(&state, principal.tenant, Kind::Plan, &id).await?;
-    if record.status == Status::Consumed {
-        return Err(HttpError::invalid_state("the plan was already executed"));
-    }
-    record.status = Status::Cancelled;
-    proposals::update(&state, principal.tenant, Kind::Plan, &record).await?;
+    let record = proposals::load(&state, principal.tenant, Kind::Plan, &id).await?;
+    let record = proposals::cancel(&state, principal.tenant, Kind::Plan, record).await?;
     audit(&state, &principal, "agent_plan.cancelled", &record).await;
     Ok(json_response(StatusCode::OK, &proposals::view(&state, &record)))
 }
 
 /// `POST /v1/agent-plans/{planId}/execute`: body `{approvalToken}`.
 ///
+/// The run's model calls go through the model-egress governor: the provider must be approved for
+/// `agent_plan` (and for zero-data-retention content when the tenant forces it), and every call is
+/// projected, bounded, budgeted and audited. Without such a provider the execution is refused
+/// before the approval token is spent.
+///
 /// # Errors
-/// `403 scope_missing` without `crawls:write`, `403 approval_token_invalid`, `404`, `409` when
-/// not approved, `410` when expired, and the admission errors of the agent job.
+/// `403 scope_missing` without `crawls:write`, `403 approval_token_invalid`, the model-egress
+/// refusals, `404`, `409` when not approved or already spent, `410` when expired, and the
+/// admission errors of the agent job.
 pub async fn execute(
     State(state): State<AppState>,
     Extension(principal): Extension<Principal>,
@@ -211,11 +215,33 @@ pub async fn execute(
                 "the body must be {\"approvalToken\": \"...\"}",
             )])
         })?;
-    // the run's own model calls are outside the governor: executing needs the operator to have
-    // approved external processing for plans
-    govern::availability(&state, Purpose::AgentPlan, RetentionClass::Standard)
-        .map_err(|e| govern::http_error(&e))?;
     let record = proposals::load(&state, principal.tenant, Kind::Plan, &id).await?;
+    // The run's calls are governed like every other model call of these endpoints. Refuse here,
+    // before the approval is spent, when no approved provider can serve them.
+    let forced = ZdrPolicy::from_setting(
+        state
+            .repos
+            .intel
+            .setting_get(principal.tenant, agent_spec::ZDR_SETTING)
+            .await?
+            .as_ref(),
+    )
+    .forced;
+    let retention = if forced {
+        RetentionClass::Zdr
+    } else {
+        RetentionClass::Standard
+    };
+    let governor = state
+        .ai
+        .governor
+        .as_ref()
+        .ok_or_else(|| govern::http_error(&GovernError::ExternalProcessingDisabled))?;
+    let tenant = principal.tenant.0.to_string();
+    let scope = format!("plan:{}", record.id);
+    let client = governor
+        .client(&tenant, &scope, Purpose::AgentPlan, retention)
+        .map_err(|e| govern::http_error(&e))?;
     let tools: std::collections::BTreeSet<String> = record
         .body
         .get("tools")
@@ -240,13 +266,11 @@ pub async fn execute(
         plan_id: record.id,
         digest: record.digest.clone(),
         tools,
+        governed: Some(client.clone()),
     };
-    match agent::start_bound(&state, principal.tenant, &agent_body, Some(binding)).await {
+    match agent::start_with(&state, principal.tenant, &agent_body, client, Some(binding)).await {
         Ok(started) => {
-            let mut done = record.clone();
-            done.execution = Some(json!({"jobId": started.id, "status": "processing"}));
-            proposals::update(&state, principal.tenant, Kind::Plan, &done).await?;
-            audit(&state, &principal, "agent_plan.executed", &done).await;
+            audit(&state, &principal, "agent_plan.executed", &record).await;
             let reply = json!({
                 "success": true,
                 "planId": record.id,
@@ -258,9 +282,7 @@ pub async fn execute(
         }
         Err(error) => {
             // nothing started: the approval stays spendable until it expires
-            let mut restored = record;
-            restored.status = Status::Approved;
-            proposals::update(&state, principal.tenant, Kind::Plan, &restored).await?;
+            proposals::release(&state, principal.tenant, Kind::Plan, record).await?;
             Err(error)
         }
     }

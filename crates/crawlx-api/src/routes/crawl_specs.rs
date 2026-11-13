@@ -60,6 +60,35 @@ fn policy_digest(state: &AppState) -> String {
     Digest::of("crawlx.spec_policy.v1", proposals::canonical(&doc).as_bytes()).to_hex()
 }
 
+/// The configuration as shown to callers and digested into the spec: no header, cookie, form
+/// password or credential-shaped value (secret-named fields and registered secrets are masked,
+/// the header maps of the scrape options are masked whole). The unredacted configuration is
+/// kept server-side only (see [`proposals::put_secret`]).
+fn spec_view(crawl: &CreateCrawl) -> ApiResult<Value> {
+    const MASK: &str = "[redacted]";
+    let mut view = client_form(crawl.clone()).redacted();
+    if let Some(password) = view.extract.form_fill.password.as_mut() {
+        MASK.clone_into(password);
+    }
+    let mut value = serde_json::to_value(&view).map_err(|_| HttpError::internal())?;
+    for pointer in ["/scrape/options/headers", "/scrape/webhookHeaders"] {
+        if let Some(Value::Object(map)) = value.pointer_mut(pointer) {
+            for entry in map.values_mut() {
+                *entry = Value::String(MASK.to_owned());
+            }
+        }
+    }
+    let scrubbed = crawlx_core::secret::Redactor::new()
+        .redact_text(&value.to_string())
+        .into_inner();
+    serde_json::from_str(&scrubbed).map_err(|_| HttpError::internal())
+}
+
+/// Digest of a redacted configuration view.
+fn view_digest(view: &Value) -> String {
+    Digest::of("crawlx.spec_config.v1", proposals::canonical(view).as_bytes()).to_hex()
+}
+
 /// `POST /v1/crawl-specs/validate`: the body is a native create body; nothing is created.
 ///
 /// # Errors
@@ -74,11 +103,10 @@ pub async fn validate(
     let (crawl, details) = parse_create(&body)?;
     crate::scrape_service::validate_native_extraction(&crawl.extract)?;
     let admission = admit_crawl(&state, &principal, crawl, details, Vec::new()).await?;
-    let config =
-        serde_json::to_value(client_form(admission.crawl.clone())).map_err(|_| HttpError::internal())?;
+    let config = spec_view(&admission.crawl)?;
     let reply = json!({
         "valid": true,
-        "configDigest": admission.admitted.config_digest.to_string(),
+        "configDigest": view_digest(&config),
         "authorizationDigest": admission.admitted.authorization.as_ref().map(|a| a.body_digest.to_string()),
         "policyDigest": policy_digest(&state),
         "config": config,
@@ -196,16 +224,20 @@ pub async fn compile(
             )]));
         }
     };
+    crate::scrape_service::validate_native_extraction(&base.extract)?;
     let compiled = spec_compile::compile(&base, &intent).map_err(|e| spec_error(&e))?;
     let mut config = compiled.config;
+    crate::scrape_service::validate_native_extraction(&config.extract)?;
     if config.seed.is_none() {
         // a fixed seed makes the digest of the previewed configuration the one that runs
         config.seed = Some(server_seed());
     }
-    let before = serde_json::to_value(&base).map_err(|_| HttpError::internal())?;
-    let after = serde_json::to_value(&config).map_err(|_| HttpError::internal())?;
+    // the diff compares redacted views: it never carries a header, cookie or password
+    let before = spec_view(&base)?;
+    let after = spec_view(&config)?;
     let admission = admit_crawl(&state, &principal, config, details, Vec::new()).await?;
-    let stored_config =
+    let stored_config = spec_view(&admission.crawl)?;
+    let full_config =
         serde_json::to_value(client_form(admission.crawl.clone())).map_err(|_| HttpError::internal())?;
     let mut warnings: Vec<Value> = compiled
         .warnings
@@ -227,7 +259,7 @@ pub async fn compile(
     }
     let spec = json!({
         "config": stored_config,
-        "configDigest": admission.admitted.config_digest.to_string(),
+        "configDigest": view_digest(&stored_config),
         "authorizationDigest": admission.admitted.authorization.as_ref().map(|a| a.body_digest.to_string()),
         "policyDigest": policy_digest(&state),
         "intent": {
@@ -242,6 +274,7 @@ pub async fn compile(
         "model": model_record,
     });
     let record = proposals::create(&state, &principal, Kind::Spec, spec.clone()).await?;
+    proposals::put_secret(&state, principal.tenant, Kind::Spec, record.id, full_config).await?;
     let mut reply = proposals::view(&state, &record);
     if let (Some(out), Some(extra)) = (reply.as_object_mut(), spec.as_object()) {
         out.insert("specId".to_owned(), json!(record.id));
@@ -344,12 +377,19 @@ pub async fn create(
             format!("{what} changed since the spec was compiled; compile it again"),
         )
     };
-    let config_value = record
-        .body
-        .get("config")
-        .cloned()
-        .ok_or_else(HttpError::internal)?;
-    let (crawl, details) = parse_create(&config_value)?;
+    // the unredacted configuration never leaves the server: it is read back from the secret
+    // companion and must match the redacted configuration the operator approved
+    let full = proposals::get_secret(&state, principal.tenant, Kind::Spec, record.id).await?;
+    let (crawl, details) = parse_create(&full)?;
+    let shown = record.body.get("config").ok_or_else(HttpError::internal)?;
+    if spec_view(&crawl)? != *shown {
+        return Err(HttpError::compat(
+            StatusCode::FORBIDDEN,
+            "approval_token_invalid",
+            "the approval token does not match this approved proposal",
+        ));
+    }
+    crate::scrape_service::validate_native_extraction(&crawl.extract)?;
     let admission = admit_crawl(&state, &principal, crawl, details, Vec::new()).await?;
     let stored = |key: &str| record.body.get(key).and_then(Value::as_str).map(str::to_owned);
     if stored("policyDigest").as_deref() != Some(policy_digest(&state).as_str()) {
@@ -376,9 +416,7 @@ pub async fn create(
         }
         Err(error) => {
             // nothing started: the approval stays spendable until it expires
-            let mut restored = record;
-            restored.status = proposals::Status::Approved;
-            proposals::update(&state, principal.tenant, Kind::Spec, &restored).await?;
+            proposals::release(&state, principal.tenant, Kind::Spec, record).await?;
             Err(error)
         }
     }

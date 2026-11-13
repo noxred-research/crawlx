@@ -84,12 +84,16 @@ Refusals use stable codes: `external_processing_disabled`, `purpose_not_allowed`
 (all `403`), `ai_not_configured` (`503`), `input_too_large` (`413`), `ai_budget_exhausted` (`429`),
 `ai_timeout` (`504`) and `ai_invalid_output` (`502`).
 
-Scope of the policy: it governs the native endpoints below. The compatibility `json` format and
-`/compat/v2/extract` keep their page-level source attribution; field-level evidence is the native
-extraction endpoint. Document products of the compatibility API
-(`/compat/v2/extract`, `/agent`, scrape formats) keep their own controls (fenced inputs, bounded content
-strategy with explicit consent, zero-data-retention handling). Executing an approved agent plan runs
-the compatibility agent, so it additionally requires external processing to be approved for `agent_plan`.
+Scope of the policy: it governs the native endpoints below, including the model calls of an approved
+agent plan (see below). The compatibility `json` format and `/compat/v2/extract` keep their page-level
+source attribution; field-level evidence is the native extraction endpoint. Other compatibility products
+(`/compat/v2/agent` started directly, scrape formats) keep their own controls (fenced inputs, bounded
+content strategy with explicit consent, zero-data-retention handling).
+
+Run budgets and the reply cache are held in this process's memory: they restart with the process and are
+not shared between API replicas, so a deployment with several replicas allows up to that many times the
+configured per-run budget. The run-budget ledger is bounded per tenant (1024 scopes, oldest evicted), so one
+tenant cannot push another tenant's budgets out.
 
 ## Natural-language specifications
 
@@ -124,8 +128,12 @@ compiler applies it to `baseConfig`:
 - The intent has no field for credentials, authorization, safety-profile ceilings, egress, robots
   policy, provider endpoints or the target. A reply with any other field is rejected (`ai_invalid_output`).
 
-The compiled configuration goes through the same admission code as `POST /v1/crawls`, so an invalid
-configuration is a `422` with the usual details. The response carries `config`, `diff` against the base
+The compiled configuration goes through the same admission code as `POST /v1/crawls` (including the
+extraction-option validation), so an invalid configuration is a `400` or `422` with the usual details.
+The configuration shown, diffed and digested is a **redacted view**: fetch headers and cookies, the form
+password, scrape header maps and secret-named or credential-shaped values read `[redacted]`. The real
+configuration is kept server-side only, is never returned (also not by `GET /v1/crawl-specs/{id}` or the MCP
+tools), and must still match the redacted view at creation. The response carries `config`, `diff` against the base
 configuration, `warnings`, `unsupportedIntents`, `requiredCapabilities`, `configDigest`,
 `authorizationDigest` and `policyDigest`, and `targetIo: false`.
 
@@ -138,7 +146,11 @@ Starting a crawl needs an operator:
    record changed since the preview, and then starts the crawl through normal admission. An expired or
    revoked authorization therefore refuses the start. The token is spent by the first successful create.
 
-Specs and approvals expire after `proposalTtlSecs`. A spec whose stored body was altered no longer
+Specs and approvals expire after `proposalTtlSecs`. Approving and spending are atomic claims: of any number
+of concurrent approvals or spends of one token exactly one succeeds (the rest get `409`), and a plan cannot
+be both cancelled and executed. Each API key may hold at most 32 live proposals of a kind (`429
+proposal_quota`); expired, spent and cancelled ones are evicted oldest first beyond 64 per tenant and kind,
+live ones never. A spec whose stored body was altered no longer
 matches its digest and its token is refused.
 
 ## Plan-first research agent
@@ -146,7 +158,7 @@ matches its digest and its token is refused.
 For the research agent (`/compat/v2/agent`), plan-first mode puts an operator between the model's idea and
 its execution.
 
-1. `POST /v1/agent-plans` with `{"prompt", "urls", "schema"?, "effort"?, "maxCredits"?}` proposes a plan.
+1. `POST /v1/agent-plans` with `{"prompt" (at most 3000 characters), "urls" (at most 20, 300 characters each), "schema"?, "effort"?, "maxCredits"?}` proposes a plan.
    The operator supplies the URLs; a model (when approved) proposes at most `effort` steps using only
    `map`, `scrape` and `extract` on those hosts and path prefixes. Every step is validated
    deterministically: steps with another tool, host, port or path are dropped and listed in `findings`.
@@ -154,7 +166,10 @@ its execution.
    Nothing is fetched.
 2. `POST /v1/agent-plans/{planId}/approve` (`approvals:decide`, a different key than the proposer)
    returns a single-use token bound to the plan digest.
-3. `POST /v1/agent-plans/{planId}/execute` (`crawls:write`, `{"approvalToken"}`) starts an agent job with
+3. `POST /v1/agent-plans/{planId}/execute` (`crawls:write`, `{"approvalToken"}`) first requires a provider
+   approved for `agent_plan` (and for zero-data-retention content when the tenant forces it); otherwise it
+   is refused with `403` before the token is spent. It then starts an agent job, whose model calls go through
+   the governor (projection, bounds, budget scope `plan:<id>`, audit rows `model.processed`), with
    `strictConstrainToURLs`, no exchange tools, the plan's effort and credit ceiling, and a binding to the
    plan's tool set. A call outside the plan is refused, and the refusal is recorded as a deviation on the
    job result (`plan.digest`, `plan.deviations`) and on the plan record. Page text can fill data inside
@@ -221,6 +236,8 @@ retained evidence ids that must resolve in the run; a confirmed finding needs ev
 lists them.
 
 Derived records of zero-data-retention runs (extractions, triage, summaries) are returned but never stored.
+The stored records of a run (extractions, triage, findings, summaries) are deleted with the run, by
+`DELETE /v1/crawls/{id}` and by the retention sweeper.
 
 ## Scopes
 

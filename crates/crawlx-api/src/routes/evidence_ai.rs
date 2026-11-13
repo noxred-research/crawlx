@@ -83,8 +83,10 @@ fn object<'a>(body: &'a Value, allowed: &[&str]) -> ApiResult<&'a Map<String, Va
     }
 }
 
+/// The tenant-setting key of the run-owned record `kind`; the rows go with the run
+/// ([`crawlx_storage::intel::RUN_SETTING_KINDS`]).
 fn store_key(kind: &str, run: &CrawlRun) -> String {
-    format!("evidence:{kind}:{}", run.id)
+    crawlx_storage::intel::run_setting_key(kind, run.id)
 }
 
 async fn stored_list(state: &AppState, run: &CrawlRun, kind: &str) -> ApiResult<Vec<Value>> {
@@ -575,35 +577,74 @@ async fn findings_map(state: &AppState, run: &CrawlRun) -> ApiResult<Map<String,
     Ok(stored.and_then(|v| v.as_object().cloned()).unwrap_or_default())
 }
 
-async fn evidence_exists(state: &AppState, run: &CrawlRun, reference: &str) -> ApiResult<bool> {
-    if let Some(id) = reference.strip_prefix("artifact:") {
-        let pages = sorted_pages(state, run, None).await?;
-        return Ok(pages.iter().any(|p| {
-            [&p.markdown, &p.html]
-                .into_iter()
-                .flatten()
-                .any(|a| a.id.to_string() == id)
-        }));
+/// The evidence ids of a run, each kind loaded at most once per request.
+struct EvidenceIndex<'a> {
+    state: &'a AppState,
+    run: &'a CrawlRun,
+    artifacts: Option<BTreeSet<String>>,
+    traffic: Option<BTreeSet<String>>,
+    surfaces: Option<BTreeSet<String>>,
+}
+
+impl<'a> EvidenceIndex<'a> {
+    const fn new(state: &'a AppState, run: &'a CrawlRun) -> Self {
+        Self {
+            state,
+            run,
+            artifacts: None,
+            traffic: None,
+            surfaces: None,
+        }
     }
-    if let Some(id) = reference.strip_prefix("traffic:") {
-        let events = state
-            .repos
-            .api
-            .traffic_list(run.id, &TrafficFilter::default())
-            .await?;
-        return Ok(events.iter().any(|t| t.id == id));
+
+    async fn contains(&mut self, reference: &str) -> ApiResult<bool> {
+        if let Some(id) = reference.strip_prefix("artifact:") {
+            if self.artifacts.is_none() {
+                let pages = sorted_pages(self.state, self.run, None).await?;
+                self.artifacts = Some(
+                    pages
+                        .iter()
+                        .flat_map(|p| [&p.markdown, &p.html])
+                        .flatten()
+                        .map(|a| a.id.to_string())
+                        .collect(),
+                );
+            }
+            return Ok(self.artifacts.as_ref().is_some_and(|set| set.contains(id)));
+        }
+        if let Some(id) = reference.strip_prefix("traffic:") {
+            if self.traffic.is_none() {
+                let events = self
+                    .state
+                    .repos
+                    .api
+                    .traffic_list(self.run.id, &TrafficFilter::default())
+                    .await?;
+                self.traffic = Some(events.into_iter().map(|t| t.id).collect());
+            }
+            return Ok(self.traffic.as_ref().is_some_and(|set| set.contains(id)));
+        }
+        if let Some(id) = reference.strip_prefix("surface:") {
+            if self.surfaces.is_none() {
+                let stored = self
+                    .state
+                    .repos
+                    .intel
+                    .setting_get(self.run.tenant, &store_key("triage", self.run))
+                    .await?;
+                self.surfaces = Some(
+                    stored
+                        .and_then(|t| t.get("surfaces").and_then(Value::as_array).cloned())
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|x| x["surfaceId"].as_str().map(str::to_owned))
+                        .collect(),
+                );
+            }
+            return Ok(self.surfaces.as_ref().is_some_and(|set| set.contains(id)));
+        }
+        Ok(false)
     }
-    if let Some(id) = reference.strip_prefix("surface:") {
-        let stored = state
-            .repos
-            .intel
-            .setting_get(run.tenant, &store_key("triage", run))
-            .await?;
-        return Ok(stored
-            .and_then(|t| t.get("surfaces").and_then(Value::as_array).cloned())
-            .is_some_and(|s| s.iter().any(|x| x["surfaceId"] == id)));
-    }
-    Ok(false)
 }
 
 /// `PUT /v1/crawls/{id}/findings/{findingId}`: an operator's review of one finding.
@@ -692,8 +733,9 @@ pub async fn put_finding(
     if !details.is_empty() {
         return Err(HttpError::validation(details));
     }
+    let mut index = EvidenceIndex::new(&state, &run);
     for reference in &evidence {
-        if !evidence_exists(&state, &run, reference).await? {
+        if !index.contains(reference).await? {
             return Err(HttpError::validation(vec![Detail::new(
                 "/evidence",
                 "evidence_not_found",

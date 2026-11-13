@@ -25,7 +25,9 @@
 //! data-retention calls are never cached. The module owns no network, storage or action
 //! capability: a reply can only ever be data.
 
-use crate::llm::extractor::{fence, CompletionLimits, LlmError, LlmExtractor, MaxOutputTokens, TokenUsage};
+use crate::llm::extractor::{
+    fence, Completion, CompletionLimits, LlmError, LlmExtractor, MaxOutputTokens, TokenUsage,
+};
 use crate::provenance::{Instruction, Provenance};
 use crawlx_core::hash::Digest;
 use crawlx_core::secret::Redactor;
@@ -52,8 +54,9 @@ pub const MAX_TASK_CHARS: usize = 10_000;
 pub const MAX_RECORDS: usize = 256;
 /// Replies the governor keeps for reuse.
 const CACHE_ENTRIES: usize = 128;
-/// Run ledgers the governor keeps before it forgets the oldest.
-const LEDGER_ENTRIES: usize = 4096;
+/// Run ledgers the governor keeps per tenant before it forgets that tenant's oldest. One tenant
+/// can therefore never push another tenant's budget out of memory.
+const LEDGER_ENTRIES_PER_TENANT: usize = 1024;
 
 /// What a model call is for. A provider is approved per purpose.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -595,6 +598,10 @@ struct Ledger {
 }
 
 /// Enforces [`ModelProcessingPolicyV1`] around the configured provider clients.
+///
+/// Run budgets and the reply cache live in this process's memory: they restart with the process
+/// and are not shared between replicas, so a deployment with several API replicas allows up to
+/// that many times the configured per-run budget.
 pub struct ModelGovernor {
     policy: ModelProcessingPolicyV1,
     policy_digest: String,
@@ -791,16 +798,18 @@ impl ModelGovernor {
     fn reserve_call(&self, tenant: &str, scope: &str) -> Result<(), GovernError> {
         let budgets = &self.policy.budgets;
         let mut ledger = self.ledger.lock();
-        if ledger.runs.len() >= LEDGER_ENTRIES
-            && !ledger.runs.contains_key(&(tenant.to_owned(), scope.to_owned()))
-        {
-            if let Some(oldest) = ledger
+        let slot = (tenant.to_owned(), scope.to_owned());
+        if !ledger.runs.contains_key(&slot) {
+            let mine: Vec<(&(String, String), u64)> = ledger
                 .runs
                 .iter()
-                .min_by_key(|(_, usage)| usage.seq)
-                .map(|(key, _)| key.clone())
-            {
-                ledger.runs.remove(&oldest);
+                .filter(|((t, _), _)| t == tenant)
+                .map(|(k, u)| (k, u.seq))
+                .collect();
+            if mine.len() >= LEDGER_ENTRIES_PER_TENANT {
+                if let Some(oldest) = mine.iter().min_by_key(|(_, seq)| *seq).map(|(k, _)| (*k).clone()) {
+                    ledger.runs.remove(&oldest);
+                }
             }
         }
         ledger.next += 1;
@@ -835,6 +844,91 @@ impl ModelGovernor {
             .runs
             .get(&(tenant.to_owned(), scope.to_owned()))
             .map_or((0, 0), |usage| (usage.calls, usage.tokens))
+    }
+
+    /// A completion client for callers that build their own prompts (the research agent of an
+    /// approved plan). It is admitted for `purpose` and `retention` now, and every call it makes
+    /// is projected, bounded, budgeted under `scope` and recorded for audit.
+    ///
+    /// # Errors
+    /// The refusal [`ModelGovernor::admit`] makes.
+    pub fn client(
+        self: &Arc<Self>,
+        tenant: &str,
+        scope: &str,
+        purpose: Purpose,
+        retention: RetentionClass,
+    ) -> Result<Arc<GovernedClient>, GovernError> {
+        let provider = self.select(purpose, retention)?.to_owned();
+        Ok(Arc::new(GovernedClient {
+            governor: Arc::clone(self),
+            provider,
+            tenant: tenant.to_owned(),
+            scope: scope.to_owned(),
+            purpose,
+            retention,
+            records: Mutex::new(Vec::new()),
+        }))
+    }
+
+    /// One governed call over an already rendered prompt (no cache: the caller's prompts are
+    /// not reproducible).
+    async fn process_raw(
+        &self,
+        client: &GovernedClient,
+        system: &str,
+        user: &str,
+        schema: Option<&Value>,
+        cancel: &CancellationToken,
+    ) -> Result<Completion<Value>, GovernError> {
+        let provider = self.admit(&client.provider, client.purpose, client.retention)?;
+        if let Some(schema) = schema {
+            validate_schema_bounds(schema)?;
+        }
+        let system = self.redactor.redact_text(system).into_inner();
+        let user = self.redactor.redact_text(user).into_inner();
+        let bytes = system.len().saturating_add(user.len());
+        if bytes > self.policy.budgets.max_input_bytes {
+            return Err(GovernError::InputTooLarge {
+                bytes,
+                max: self.policy.budgets.max_input_bytes,
+            });
+        }
+        let backend = self
+            .clients
+            .get(&client.provider)
+            .ok_or_else(|| GovernError::ProviderNotConfigured(client.provider.clone()))?;
+        self.reserve_call(&client.tenant, &client.scope)?;
+        let limits = CompletionLimits::new(
+            MaxOutputTokens::new(self.policy.budgets.max_output_tokens)?,
+            self.policy.budgets.max_response_bytes,
+        )?;
+        let deadline = Duration::from_millis(self.policy.budgets.deadline_ms);
+        let call = backend.complete_bounded(&system, &user, schema, limits, cancel);
+        let completion = match tokio::time::timeout(deadline, call).await {
+            Ok(result) => result?,
+            Err(_) => return Err(GovernError::DeadlineExceeded),
+        };
+        self.record_tokens(&client.tenant, &client.scope, completion.usage.total());
+        let mut changed = false;
+        let value = project_value(&completion.value, &self.redactor, &mut changed);
+        let digest = |domain: &str, text: &str| Digest::of(domain, text.as_bytes()).to_hex();
+        client.records.lock().push(GovernanceRecord {
+            provider: client.provider.clone(),
+            model: provider.model.clone(),
+            revision: provider.revision.clone(),
+            purpose: client.purpose,
+            policy_digest: self.policy_digest.clone(),
+            input_digest: digest("crawlx.model_input.v1", &format!("{system}\u{1}{user}")),
+            output_digest: digest("crawlx.model_output.v1", &value.to_string()),
+            usage: completion.usage.into(),
+            cached: false,
+            output_redacted: changed,
+        });
+        Ok(Completion {
+            value,
+            usage: completion.usage,
+        })
     }
 
     fn cache_key(
@@ -979,4 +1073,87 @@ struct Parts {
     usage: UsageRecord,
     cached: bool,
     output_redacted: bool,
+}
+
+/// A governed [`LlmExtractor`] for one purpose, retention class and budget scope; see
+/// [`ModelGovernor::client`]. Every call goes through the governor's projection, bounds, budget
+/// and deadline; calls record a [`GovernanceRecord`] the owner drains for audit.
+pub struct GovernedClient {
+    governor: Arc<ModelGovernor>,
+    provider: String,
+    tenant: String,
+    scope: String,
+    purpose: Purpose,
+    retention: RetentionClass,
+    records: Mutex<Vec<GovernanceRecord>>,
+}
+
+impl std::fmt::Debug for GovernedClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GovernedClient")
+            .field("provider", &self.provider)
+            .field("purpose", &self.purpose)
+            .finish_non_exhaustive()
+    }
+}
+
+impl GovernedClient {
+    /// The records of the calls made so far, emptying the list.
+    pub fn take_records(&self) -> Vec<GovernanceRecord> {
+        std::mem::take(&mut *self.records.lock())
+    }
+
+    /// The provider id the client was bound to.
+    #[must_use]
+    pub fn provider(&self) -> &str {
+        &self.provider
+    }
+
+    fn llm_error(error: GovernError, deadline_ms: u64) -> LlmError {
+        match error {
+            GovernError::Model(error) => error,
+            GovernError::DeadlineExceeded => LlmError::Timeout {
+                after_ms: deadline_ms,
+            },
+            other => LlmError::InvalidRequest(other.to_string()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmExtractor for GovernedClient {
+    async fn complete(
+        &self,
+        system: &str,
+        user: &str,
+        schema: Option<&Value>,
+    ) -> Result<Completion<Value>, LlmError> {
+        self.complete_bounded(
+            system,
+            user,
+            schema,
+            CompletionLimits::default(),
+            &CancellationToken::new(),
+        )
+        .await
+    }
+
+    async fn complete_bounded(
+        &self,
+        system: &str,
+        user: &str,
+        schema: Option<&Value>,
+        _limits: CompletionLimits,
+        cancel: &CancellationToken,
+    ) -> Result<Completion<Value>, LlmError> {
+        // the operator's budgets, never the caller's, bound the call
+        self.governor
+            .process_raw(self, system, user, schema, cancel)
+            .await
+            .map_err(|e| Self::llm_error(e, self.governor.policy.budgets.deadline_ms))
+    }
+
+    fn max_input_chars(&self) -> usize {
+        self.governor.policy.budgets.max_input_bytes / 2
+    }
 }

@@ -87,6 +87,8 @@ conformance! { databases:
     overdue_artifacts_count_until_the_sweeper_runs_then_zero,
     sweeper_counts_each_zdr_artifact_row_once,
     sweeper_purges_expired_runs_and_chains_the_audit_log,
+    sweeper_deletes_the_settings_rows_a_run_owns,
+    settings_claim_delete_and_list_by_prefix,
     erasure_closes_the_run_before_its_rows_are_purged,
     authorization_records_are_removed_after_the_audit_horizon,
     sweep_loop_deletes_expired_rows_on_each_tick_and_stops_on_cancel,
@@ -1372,6 +1374,116 @@ async fn sweeper_purges_expired_runs_and_chains_the_audit_log(rig: &Rig) {
             .unwrap();
         assert_eq!(again.runs_purged, 0);
         assert_eq!(count(db, "SELECT count(*) FROM audit_events", &[]).await, 1);
+    });
+}
+
+/// Records the AI endpoints keep per run (`run:{id}:{kind}` tenant settings) go with the run.
+async fn sweeper_deletes_the_settings_rows_a_run_owns(rig: &Rig) {
+    use crawlx_storage::intel::{run_setting_key, RUN_SETTING_KINDS};
+    use crawlx_storage::IntelRepo;
+    rig.migrate().await;
+    let tenant = tenant(rig).await;
+    on_db!(rig, |store| {
+        let mut run = crawl_run(tenant, create_crawl("https://example.test/", &[], 1));
+        run.created_at = Utc::now() - Duration::days(30);
+        run.status = RunStatus::Completed;
+        run.terminal_reason = Some(TerminalReason::FrontierExhausted);
+        RunRepo::create(store, &run, None).await.unwrap();
+        let kept = run_setting_key("findings", CrawlRunId::new());
+        for kind in RUN_SETTING_KINDS {
+            store
+                .setting_put(
+                    tenant,
+                    &run_setting_key(kind, run.id),
+                    serde_json::json!({"k": kind}),
+                    Utc::now(),
+                )
+                .await
+                .unwrap();
+        }
+        store
+            .setting_put(tenant, &kept, serde_json::json!(1), Utc::now())
+            .await
+            .unwrap();
+        let report = RetentionSweeper::new(store.clone())
+            .sweep(Utc::now())
+            .await
+            .unwrap();
+        assert_eq!(report.runs_purged, 1);
+        for kind in RUN_SETTING_KINDS {
+            assert!(
+                store
+                    .setting_get(tenant, &run_setting_key(kind, run.id))
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "{kind}"
+            );
+        }
+        assert!(
+            store.setting_get(tenant, &kept).await.unwrap().is_some(),
+            "another run's record stays"
+        );
+    });
+}
+
+/// `setting_put_if_absent` is a single-use claim, `setting_delete` reports what it removed and
+/// `setting_list_prefix` lists one tenant's keys in order.
+async fn settings_claim_delete_and_list_by_prefix(rig: &Rig) {
+    use crawlx_storage::IntelRepo;
+    rig.migrate().await;
+    let tenant = tenant(rig).await;
+    on_db!(rig, |store| {
+        let now = Utc::now();
+        assert!(store
+            .setting_put_if_absent(tenant, "claim:a", serde_json::json!(1), now)
+            .await
+            .unwrap());
+        assert!(!store
+            .setting_put_if_absent(tenant, "claim:a", serde_json::json!(2), now)
+            .await
+            .unwrap());
+        assert_eq!(
+            store.setting_get(tenant, "claim:a").await.unwrap(),
+            Some(serde_json::json!(1))
+        );
+        // concurrent claimants: exactly one wins
+        let wins = futures::future::join_all((0..8).map(|n| {
+            let store = store.clone();
+            async move {
+                store
+                    .setting_put_if_absent(tenant, "claim:race", serde_json::json!(n), Utc::now())
+                    .await
+                    .unwrap()
+            }
+        }))
+        .await;
+        assert_eq!(wins.iter().filter(|w| **w).count(), 1, "{wins:?}");
+        assert!(store.setting_delete(tenant, "claim:race").await.unwrap());
+        assert!(!store.setting_delete(tenant, "claim:race").await.unwrap());
+        assert!(store
+            .setting_put_if_absent(tenant, "claim:race", serde_json::json!(0), now)
+            .await
+            .unwrap());
+        for key in ["list:b", "list:a", "listing", "other:x"] {
+            store
+                .setting_put(tenant, key, serde_json::json!(key), now)
+                .await
+                .unwrap();
+        }
+        let listed = store.setting_list_prefix(tenant, "list:", 10).await.unwrap();
+        assert_eq!(
+            listed.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            vec!["list:a", "list:b"]
+        );
+        assert_eq!(
+            store.setting_list_prefix(tenant, "list:", 1).await.unwrap().len(),
+            1
+        );
+        assert!(
+            store.setting_list_prefix(tenant, "li_t", 10).await.is_err(),
+            "wildcards are refused"
+        );
     });
 }
 

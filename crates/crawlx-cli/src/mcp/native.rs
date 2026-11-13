@@ -36,8 +36,10 @@ const DEFAULT_EVENTS: u64 = 100;
 const DEFAULT_EVENT_WAIT_MS: u64 = 500;
 /// Longest error message quoted back to the model.
 const MAX_MESSAGE_BYTES: usize = 2000;
-/// Most shrink steps before a result falls back to the minimal envelope.
-const MAX_SHRINK_STEPS: usize = 4096;
+/// Bytes `"data":` and its separating comma add to an envelope.
+const DATA_MEMBER_BYTES: usize = 8;
+/// Most shrink steps one result takes; each halves the largest array or string.
+const MAX_SHRINK_STEPS: usize = 256;
 /// Shortest string the shrinker will cut.
 const MIN_CUT_BYTES: usize = 64;
 
@@ -877,6 +879,8 @@ fn parse_resource(uri: &str) -> Option<(String, Trust)> {
     let id = parts.first().filter(|id| uuid::Uuid::parse_str(id).is_ok())?;
     let simple = |text: &str| {
         !text.is_empty()
+            && text != "."
+            && text != ".."
             && text.len() <= 128
             && text
                 .bytes()
@@ -1026,6 +1030,10 @@ fn check_arg(
 fn check_text(text: &str) -> Result<(), String> {
     if text.is_empty() {
         return Err("must not be empty".to_owned());
+    }
+    // a path segment of `.` or `..` would be collapsed by URL normalisation and reach another route
+    if text == "." || text == ".." {
+        return Err("must not be `.` or `..`".to_owned());
     }
     if text.chars().count() > 1024 {
         return Err("must be at most 1024 characters".to_owned());
@@ -1249,16 +1257,27 @@ fn fit(
 ) -> (Value, String) {
     let budget = max.saturating_sub(reserved);
     let mut envelope = head;
-    envelope.insert("data".to_owned(), data);
     if let Some(cursor) = &next {
         envelope.insert("nextCursor".to_owned(), json!(cursor));
     }
-    let text = serde_json::to_string(&envelope).unwrap_or_default();
-    if text.len() <= budget {
-        return (Value::Object(envelope), text);
+    // The envelope without `data` is small; the size of `data` comes from the scan that also
+    // finds what to shrink, so no step re-serializes the whole envelope.
+    let mut data = data;
+    let mut path = Vec::new();
+    let mut best = None;
+    let mut data_size = visit(&data, &mut path, &mut best);
+    let fixed = serde_json::to_string(&envelope).map_or(0, |text| text.len());
+    let original = fixed.saturating_add(DATA_MEMBER_BYTES).saturating_add(data_size);
+    let finish = |envelope: &Map<String, Value>, data: Value| {
+        let mut envelope = envelope.clone();
+        envelope.insert("data".to_owned(), data);
+        let text = serde_json::to_string(&envelope).unwrap_or_default();
+        (Value::Object(envelope), text)
+    };
+    if original <= budget {
+        return finish(&envelope, data);
     }
-    let original = text.len();
-    let total_items = envelope.get("data").map_or(0, count_items);
+    let total_items = count_items(&data);
     let mut omitted = 0_usize;
     let mut cut = 0_usize;
     for _ in 0..MAX_SHRINK_STEPS {
@@ -1266,30 +1285,27 @@ fn fit(
         if omitted > 0 || cut > 0 {
             envelope.remove("nextCursor");
         }
-        let text = serde_json::to_string(&envelope).unwrap_or_default();
-        if text.len() <= budget {
-            return (Value::Object(envelope), text);
+        let fixed = serde_json::to_string(&envelope).map_or(0, |text| text.len());
+        if fixed.saturating_add(DATA_MEMBER_BYTES).saturating_add(data_size) <= budget {
+            let (value, text) = finish(&envelope, data.clone());
+            if text.len() <= budget {
+                return (value, text);
+            }
         }
-        let Some(data) = envelope.get_mut("data") else {
+        let Some((_, target)) = best.take() else {
             break;
         };
-        let mut best: Option<(usize, Vec<Seg>)> = None;
-        let mut path = Vec::new();
-        visit(data, &mut path, &mut best);
-        let Some((_, target)) = best else {
-            break;
-        };
-        match shrink_at(data, &target) {
+        match shrink_at(&mut data, &target) {
             Some(Shrunk::Items(count)) => omitted = omitted.saturating_add(count),
             Some(Shrunk::Text) => cut = cut.saturating_add(1),
             None => break,
         }
+        path.clear();
+        data_size = visit(&data, &mut path, &mut best);
     }
-    envelope.insert("data".to_owned(), Value::Null);
     envelope.remove("nextCursor");
     envelope.insert("truncated".to_owned(), truncated(original, total_items, cut));
-    let text = serde_json::to_string(&envelope).unwrap_or_default();
-    (Value::Object(envelope), text)
+    finish(&envelope, Value::Null)
 }
 
 fn truncated(original: usize, omitted: usize, cut: usize) -> Value {

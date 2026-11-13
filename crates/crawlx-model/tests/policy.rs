@@ -550,3 +550,80 @@ async fn errors_and_records_carry_no_page_content() {
         .unwrap_err();
     assert!(!format!("{err} {err:?}").contains("PAGE-CANARY-TEXT"));
 }
+
+#[tokio::test]
+async fn one_tenants_scopes_never_evict_anothers_budget() {
+    let llm = ok_llm();
+    let budgets = Budgets {
+        max_run_calls: 1,
+        ..Budgets::default()
+    };
+    let gov = governor(policy(true, budgets), &llm);
+    let cancel = CancellationToken::new();
+    let mut b = request("main", RetentionClass::Standard, None);
+    b.tenant = "tenant-b";
+    gov.process(&b, &envelope("b spends its call"), &cancel)
+        .await
+        .unwrap();
+    for n in 0..1200 {
+        let mut a = request("main", RetentionClass::Standard, None);
+        a.scope = Box::leak(format!("scope-{n}").into_boxed_str());
+        gov.process(&a, &envelope(&format!("a {n}")), &cancel)
+            .await
+            .unwrap();
+    }
+    let err = gov.process(&b, &envelope("b again"), &cancel).await.unwrap_err();
+    assert!(matches!(err, GovernError::BudgetExhausted("call")), "{err}");
+}
+
+#[tokio::test]
+async fn governed_clients_are_admitted_up_front_and_bound_every_call() {
+    let llm = ok_llm();
+    let gov = Arc::new(governor(
+        policy(
+            true,
+            Budgets {
+                max_run_calls: 2,
+                ..Budgets::default()
+            },
+        ),
+        &llm,
+    ));
+    // a purpose no provider serves, and a ZDR run with only a non-ZDR provider, are refused
+    let only_spec = {
+        let mut p = policy(true, Budgets::default());
+        p.providers.remove("private");
+        for provider in p.providers.values_mut() {
+            provider.purposes = BTreeSet::from([Purpose::CrawlSpec]);
+        }
+        Arc::new(governor(p, &llm))
+    };
+    assert!(matches!(
+        only_spec.client("t", "s", Purpose::AgentPlan, RetentionClass::Standard),
+        Err(GovernError::PurposeNotAllowed { .. })
+    ));
+    let no_zdr = {
+        let mut p = policy(true, Budgets::default());
+        p.providers.remove("private");
+        Arc::new(governor(p, &llm))
+    };
+    assert!(matches!(
+        no_zdr.client("t", "s", Purpose::RunSummary, RetentionClass::Zdr),
+        Err(GovernError::ZdrIncompatible(_))
+    ));
+    let client = gov
+        .client("t", "scope", Purpose::RunSummary, RetentionClass::Standard)
+        .unwrap();
+    let secret = "cxcanary-0a1b2c3d4e5f6071";
+    assert!(crawlx_core::secret::register_secret(secret));
+    client
+        .complete("system", &format!("user {secret}"), None)
+        .await
+        .unwrap();
+    client.complete("system", "second", None).await.unwrap();
+    let err = client.complete("system", "third", None).await.unwrap_err();
+    assert!(matches!(err, LlmError::InvalidRequest(_)), "{err:?}");
+    assert!(llm.calls().iter().all(|c| !c.user.contains(secret)));
+    assert_eq!(client.take_records().len(), 2);
+    assert!(client.take_records().is_empty());
+}

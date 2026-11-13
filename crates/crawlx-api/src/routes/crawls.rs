@@ -630,6 +630,14 @@ pub async fn erase(
             json!({ "run_id": run.id }),
         )
         .await?;
+    // records the AI endpoints keep for the run (extractions, triage, findings, summaries)
+    for kind in crawlx_storage::intel::RUN_SETTING_KINDS {
+        state
+            .repos
+            .intel
+            .setting_delete(run.tenant, &crawlx_storage::intel::run_setting_key(kind, run.id))
+            .await?;
+    }
     let rows = state.repos.eraser.erase(run.id).await?;
     let buffered = if state.zdr.is_enabled() {
         state.zdr.purge_run(run.tenant, run.id).await?

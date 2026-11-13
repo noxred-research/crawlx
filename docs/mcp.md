@@ -179,6 +179,10 @@ dedicated argument. Operations with a request body take a `body` object; its sch
 API's OpenAPI description when the operation documents one, and is otherwise a permissive object that the service
 validates.
 
+Path arguments (store names, keys, report kinds) must not be `.` or `..`: URL normalisation would
+collapse such a segment and reach a different route, so they are refused with `-32602`, as are resource URIs with
+such a segment.
+
 An agent-provided `confirm`, `approve` or similar argument does not exist and is never treated as authorization.
 The irreversible erase tools additionally require `confirmId` equal to the target id (`runId`, or `exportId` for
 archives). That is a typo guard; the real gates are the `erase` capability and the service's scopes.

@@ -8,7 +8,7 @@
 //! confined to the plan (see `routes::agent_plans`).
 
 use crate::errors::Detail;
-use crate::intel::agent_spec::{Effort, DEFAULT_MAX_CREDITS, MAX_PROMPT_CHARS};
+use crate::intel::agent_spec::{Effort, DEFAULT_MAX_CREDITS};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 use url::Url;
@@ -19,6 +19,11 @@ pub const PROMPT_VERSION: &str = "agent-plan.prompt.v1";
 pub const SCHEMA_VERSION: &str = "agent-plan.v1";
 /// Most operator URLs.
 pub const MAX_URLS: usize = 20;
+/// Longest goal (characters). Together with [`MAX_URLS`] URLs of at most [`MAX_URL_CHARS`] it
+/// always fits the model task limit, so a long goal is a `422`, never a silent fallback.
+pub const MAX_GOAL_CHARS: usize = 3000;
+/// Longest operator URL (characters).
+pub const MAX_URL_CHARS: usize = 300;
 /// Most steps of any plan.
 pub const MAX_STEPS: usize = 16;
 /// Longest step purpose.
@@ -80,12 +85,12 @@ pub fn parse_request(body: &Value) -> Result<PlanRequest, Vec<Detail>> {
         }
     }
     let goal = match map.get("prompt").and_then(Value::as_str) {
-        Some(p) if !p.trim().is_empty() && p.chars().count() <= MAX_PROMPT_CHARS => p.to_owned(),
+        Some(p) if !p.trim().is_empty() && p.chars().count() <= MAX_GOAL_CHARS => p.to_owned(),
         _ => {
             details.push(detail(
                 "/prompt",
                 "invalid",
-                "prompt must be a non-empty string of at most 10000 characters",
+                "prompt must be a non-empty string of at most 3000 characters",
             ));
             String::new()
         }
@@ -94,7 +99,7 @@ pub fn parse_request(body: &Value) -> Result<PlanRequest, Vec<Detail>> {
     match map.get("urls").and_then(Value::as_array) {
         Some(list) if (1..=MAX_URLS).contains(&list.len()) => {
             for (n, item) in list.iter().enumerate() {
-                match item.as_str().and_then(operator_url) {
+                match item.as_str().filter(|u| u.chars().count() <= MAX_URL_CHARS).and_then(operator_url) {
                     Some(url) => {
                         if !urls.contains(&url) {
                             urls.push(url);
@@ -103,7 +108,7 @@ pub fn parse_request(body: &Value) -> Result<PlanRequest, Vec<Detail>> {
                     None => details.push(detail(
                         &format!("/urls/{n}"),
                         "invalid",
-                        "urls must be absolute http or https URLs without credentials",
+                        "urls must be absolute http or https URLs of at most 300 characters, without credentials",
                     )),
                 }
             }
@@ -392,6 +397,21 @@ mod tests {
         assert!(
             parse_request(&json!({"prompt": "x", "urls": ["https://a.test/"], "maxCredits": 0})).is_err()
         );
+    }
+
+    #[test]
+    fn the_largest_valid_request_fits_the_model_task_limit() {
+        let urls: Vec<String> = (0..MAX_URLS)
+            .map(|i| format!("https://h{i}.example.test/{}", "a".repeat(MAX_URL_CHARS - 30)))
+            .collect();
+        let request = parse_request(&json!({"prompt": "g".repeat(MAX_GOAL_CHARS), "urls": urls})).unwrap();
+        crawlx_model::policy::OperatorTask::new(&task_text(&request)).unwrap();
+        assert!(parse_request(
+            &json!({"prompt": "g".repeat(MAX_GOAL_CHARS + 1), "urls": ["https://a.test/"]})
+        )
+        .is_err());
+        let long = format!("https://a.test/{}", "a".repeat(MAX_URL_CHARS));
+        assert!(parse_request(&json!({"prompt": "x", "urls": [long]})).is_err());
     }
 
     #[test]
