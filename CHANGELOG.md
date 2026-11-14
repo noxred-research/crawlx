@@ -69,6 +69,18 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ### Fixed
 
+- Every command now selects its configuration file like `crawlx config check`: `CRAWLX_CONFIG`, else
+  `./crawlx.toml`. Before, `migrate`, `crawl`, `worker`, `serve`, `export`, `replay` and the operator
+  commands read only `./crawlx.toml`, so `database.schema` was ignored (a URL from the environment migrated
+  into `public`) and `database.url_file` was not read. A `CRAWLX_CONFIG` that names a missing or invalid file
+  is an error, also for the `[ocr]` table. `export`, `replay` and `crawl` also read `database.url_file` and
+  apply the `[database]` pool, timeout and schema settings.
+- `crawlx config check` accepts `CRAWLX_ZDR_REDIS_URL_FILE` (file must be readable and not empty; refused
+  together with `CRAWLX_ZDR_REDIS_URL`) and reports the object-store bucket and prefix from
+  `CRAWLX_S3_BUCKET` and `CRAWLX_S3_PREFIX` instead of an empty bucket.
+- `docs/ops/object-storage.md` no longer says `CRAWLX_S3_BUCKET` is ignored by `serve`, `worker` and
+  `crawl`: with a database they write through the bucket; only the in-memory `serve` and `crawl` without
+  `--database-url` use the filesystem.
 - `crawlx serve` now reads `[intel.policy]` from `crawlx.toml` (camelCase keys, unknown keys and inline
   credentials refused), so the native AI endpoints can be enabled; before, no way to set the policy
   existed and they always answered `403 external_processing_disabled`. `crawlx config check` validates
@@ -81,6 +93,19 @@ project is pre-1.0; minor versions may contain breaking changes.
   key provider) now says why: `GET /v1/crawls/{id}` carries `failure: {code, message}`
   (`checkpoint_keys_required`, `config_refused`) next to `terminalReason: fatal_error`, recorded as a
   `run.refused` event, and the worker logs the reason.
+- ClickHouse delivery no longer drops batches of another run or deployment that share a table: the
+  `insert_deduplication_token` was the batch key (`request.<page>.<feed>`), which repeats across runs
+  and across deployments (request ids restart in every database), so the second batch was deduplicated
+  away while the outbox said `delivered`. The token, the Kafka record key and the RabbitMQ `message_id`
+  are now a hash of tenant id, run id and batch key (the plain key stays in the `batch_key` column and
+  the `crawlx-batch` header); a retry of one batch still deduplicates. A batch retried across the
+  upgrade can be stored once more. See `docs/ops/backends.md`.
+- Two deployments under one object-store prefix no longer delete each other's live artifacts as
+  orphans: the first write claims the prefix with the marker object `<prefix>.crawlx-deployment`
+  (conditional put; the id is kept in `cluster_settings` under `deployment.id`), and any write, delete
+  or orphan sweep by another deployment is refused with a message naming the prefix. Reads and
+  `verify-artifacts` are not refused; the marker is never listed or swept. Operator override:
+  `CRAWLX_S3_ALLOW_SHARED_PREFIX=1` (unsafe). See `docs/ops/object-storage.md`.
 
 ## [0.1.0] - 2026-11-12
 

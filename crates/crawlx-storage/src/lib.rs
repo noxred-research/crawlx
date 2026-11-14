@@ -102,6 +102,7 @@ pub mod checkpoint_crypto;
 mod codec;
 pub mod custody;
 pub mod dataset;
+pub mod deployment;
 mod digest_registry;
 mod error;
 pub mod intel;

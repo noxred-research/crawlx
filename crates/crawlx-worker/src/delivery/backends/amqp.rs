@@ -2,11 +2,13 @@
 //!
 //! Exchange and queue names live under a deployment prefix (default `crawlx.`) inside the
 //! virtual host named by the endpoint path. The exchange (direct) and the durable queue are
-//! declared on first use, each batch is one persistent message whose `message_id` is the batch
-//! idempotency key, and the send returns only after the broker confirmed the publish and no
+//! declared on first use, each batch is one persistent message whose `message_id` is the scoped batch
+//! identity (a hash of tenant id, run id and batch key; the raw key is in the `crawlx-batch`
+//! header), and the send returns only after the broker confirmed the publish and no
 //! `mandatory` return came back. A retry after an unconfirmed send can deliver twice, so the sink
 //! reports `duplicate_possible`; consumers deduplicate on `message_id`.
 
+use super::scoped_batch_id;
 use crate::delivery::{DeliveryAuthority, DeliveryDestination, DeliveryError};
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -17,7 +19,7 @@ use lapin::options::{
     BasicPublishOptions, ConfirmSelectOptions, ExchangeDeclareOptions, QueueBindOptions, QueueDeclareOptions,
 };
 
-use lapin::types::FieldTable;
+use lapin::types::{AMQPValue, FieldTable};
 use lapin::{BasicProperties, Channel, Confirmation, Connection, ConnectionProperties, ExchangeKind};
 use tokio::sync::Mutex;
 use url::Url;
@@ -180,8 +182,18 @@ impl DeliveryDestination for AmqpDestination {
         let Some((_, channel)) = slot.as_ref() else {
             return Err(DeliveryError::Unavailable("amqp_channel_unavailable"));
         };
+        let mut headers = FieldTable::default();
+        headers.insert(
+            "crawlx-batch".into(),
+            AMQPValue::LongString(batch.idempotency_key.clone().into_bytes().into()),
+        );
+        headers.insert(
+            "crawlx-run".into(),
+            AMQPValue::LongString(run.id.0.to_string().into_bytes().into()),
+        );
         let properties = BasicProperties::default()
-            .with_message_id(batch.idempotency_key.clone().into())
+            .with_message_id(scoped_batch_id(run, batch).into())
+            .with_headers(headers)
             .with_delivery_mode(2)
             .with_content_type("application/octet-stream".into());
         let confirmation = match channel

@@ -350,11 +350,18 @@ impl Stores {
                         .with_custody(parts.custody, parts.keys, parts.writes),
                 ),
                 ObjectStoreChoice::S3(config) => Arc::new(
-                    S3ArtifactStore::new(S3Blobs::new(config).map_err(s3_error)?, runs, parts.clock)
-                        .with_index(Arc::new(store.clone()))
-                        .with_zdr_buffer(parts.zdr)
-                        .with_upload_spool(parts.spool)
-                        .with_custody(parts.custody, parts.keys, parts.writes),
+                    S3ArtifactStore::new(
+                        // the deployment id of the database claims the bucket prefix at the first write
+                        S3Blobs::new(config)
+                            .map_err(s3_error)?
+                            .with_deployment(Arc::new(store.clone())),
+                        runs,
+                        parts.clock,
+                    )
+                    .with_index(Arc::new(store.clone()))
+                    .with_zdr_buffer(parts.zdr)
+                    .with_upload_spool(parts.spool)
+                    .with_custody(parts.custody, parts.keys, parts.writes),
                 ),
             })
         }

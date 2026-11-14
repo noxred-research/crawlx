@@ -1,11 +1,13 @@
 //! Native Kafka producer sink (no REST proxy in between).
 //!
 //! Topics live under a deployment prefix (default `crawlx.`). A topic is created on first use
-//! when missing. Each batch is one record keyed by its idempotency key and sent to the partition
-//! that key hashes to; the send returns only after the broker acknowledged it (`acks=all`). The
+//! when missing. Each batch is one record keyed by its scoped batch identity (a hash of tenant id,
+//! run id and batch key, so runs and deployments sharing a topic never share a key; the raw batch
+//! key is in the `crawlx-batch` header) and sent to the partition that key hashes to; the send returns only after the broker acknowledged it (`acks=all`). The
 //! client has no idempotent-producer mode, so a retry after an unacknowledged send can store the
 //! batch twice: the sink reports `duplicate_possible` and consumers deduplicate on the record key.
 
+use super::scoped_batch_id;
 use crate::delivery::{DeliveryAuthority, DeliveryDestination, DeliveryError};
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -206,7 +208,8 @@ impl DeliveryDestination for KafkaDestination {
         }
         let partitions = self.partitions().await?;
         let client = self.client().await?;
-        let hash = blake3::hash(batch.idempotency_key.as_bytes());
+        let record_key = scoped_batch_id(run, batch);
+        let hash = blake3::hash(record_key.as_bytes());
         let slot = usize::try_from(u32::from_le_bytes([
             hash.as_bytes()[0],
             hash.as_bytes()[1],
@@ -228,13 +231,17 @@ impl DeliveryDestination for KafkaDestination {
             .map_err(backoff)?;
         let mut headers = BTreeMap::new();
         headers.insert("crawlx-feed".to_owned(), batch.feed.clone().into_bytes());
+        headers.insert(
+            "crawlx-batch".to_owned(),
+            batch.idempotency_key.clone().into_bytes(),
+        );
         headers.insert("crawlx-run".to_owned(), run.id.0.to_string().into_bytes());
         headers.insert(
             "crawlx-content-digest".to_owned(),
             batch.content.artifact().digest.to_hex().into_bytes(),
         );
         let record = Record {
-            key: Some(batch.idempotency_key.clone().into_bytes()),
+            key: Some(record_key.into_bytes()),
             value: Some(bytes.to_vec()),
             headers,
             timestamp: Utc::now(),

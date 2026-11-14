@@ -408,9 +408,11 @@ impl state::ArtifactsFactory for FsArtifacts {
             ),
             crawlx_worker::ObjectStoreChoice::S3(config) => Arc::new(
                 crawlx_storage::S3ArtifactStore::new(
-                    crawlx_storage::S3Blobs::new(config).map_err(|error| {
-                        crawlx_core::StoreError::Unavailable(format!("object store: {error}"))
-                    })?,
+                    crawlx_storage::S3Blobs::new(config)
+                        .map_err(|error| {
+                            crawlx_core::StoreError::Unavailable(format!("object store: {error}"))
+                        })?
+                        .with_deployment(Arc::new(store.clone())),
                     runs,
                     self.clock.clone(),
                 )

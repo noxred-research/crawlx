@@ -127,6 +127,16 @@ fn a_bad_value_names_what_is_wrong() {
     assert!(Cli::try_parse_from(["crawlx", "serve", "--ocr-backend", "cloud"]).is_err());
 }
 
+#[test]
+fn a_named_config_file_that_is_missing_is_an_error_not_the_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let gone = dir.path().join("gone.toml");
+    let e = serve_args(&[])
+        .config(&env(&[("CRAWLX_CONFIG", gone.to_str().unwrap())]))
+        .unwrap_err();
+    assert!(format!("{e:#}").contains("gone.toml"), "{e:#}");
+}
+
 #[tokio::test]
 async fn a_missing_engine_stops_start_up_with_the_remedy() {
     let e = worker_args(&[

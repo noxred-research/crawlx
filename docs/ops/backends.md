@@ -50,7 +50,7 @@ Every deployment picks its own names; none of them touches anything outside its 
 | PostgreSQL | `database.schema` | the role's search path | The schema is created by `crawlx migrate`; each schema has its own tables **and** migration table. Refused for MariaDB and SQLite. The request-login role needs `USAGE` on the schema. |
 | MariaDB | the database in the URL path | as given | one database per deployment |
 | SQLite | the file path | as given | one file per deployment |
-| Object store | `CRAWLX_S3_PREFIX` | empty (legacy layout) | `a/b` or `a/b/`; letters, digits and `. _ -`, no empty or dot segments. Reads, lists and deletes stay inside the prefix; listings return keys without it. One bucket can hold several deployments. |
+| Object store | `CRAWLX_S3_PREFIX` | empty (legacy layout) | `a/b` or `a/b/`; letters, digits and `. _ -`, no empty or dot segments. Reads, lists and deletes stay inside the prefix; listings return keys without it. One bucket can hold several deployments, each under a prefix of its own: the first writer claims the prefix with a marker object and a second deployment is refused (see [object storage](object-storage.md#sharing-a-bucket)). |
 | Valkey/Redis | `CRAWLX_REDIS_KEY_PREFIX` | `crawlx:` | Keys are `<prefix>secrets:{tenant:run}` and `<prefix>zdr:{delivery}:...`. CrawlX deletes only keys it names, never uses `KEYS`, and never flushes a database. The logical database index, ACL user and password, and TLS (`rediss://`) come from the URL. |
 | Search | `indexPrefix` | `crawlx-` | Indices are `<indexPrefix><index>`; the template covers exactly `<indexPrefix>*`. CrawlX never deletes an index. |
 | ClickHouse | `database` | `crawlx` | tables are created by versioned migrations recorded in `<database>.crawlx_migrations` |
@@ -58,7 +58,13 @@ Every deployment picks its own names; none of them touches anything outside its 
 | RabbitMQ | the vhost in the endpoint path, `namePrefix` | `crawlx.` | exchange and queue are `<namePrefix><queue>` |
 
 The object-store prefix defaults to empty so existing deployments keep reading the objects they
-wrote. Set `CRAWLX_S3_PREFIX=crawlx/` (and move existing objects) before sharing a bucket.
+wrote. Set `CRAWLX_S3_PREFIX=crawlx/` (and move existing objects) before sharing a bucket. Two
+deployments (two databases) under one prefix would each delete the other's live objects as
+orphans, so the first writer claims the prefix with the marker object
+`<prefix>.crawlx-deployment`, holding the id of its database deployment; any write, delete or
+orphan sweep by another deployment is refused with a message naming the prefix. Reads are never
+refused. `CRAWLX_S3_ALLOW_SHARED_PREFIX=1` switches the guard off (unsafe); the marker is
+described in [object storage](object-storage.md#sharing-a-bucket).
 
 Secrets (database URLs, S3 credentials, registry credentials) come from files, environment
 variables or credential references, never from the registry file itself.
@@ -92,9 +98,9 @@ refused):
 | Kind | Required | Optional | Behavior |
 |---|---|---|---|
 | `opensearch`, `elasticsearch` | `endpoint`, `index` | `indexPrefix`, `headers` | Detects the engine and version with `GET /` and refuses a mismatch with the configured kind; supports Elasticsearch 7.8 or newer and OpenSearch 1.0 or newer (composable templates); installs the template `<indexPrefix>crawlx` (version 1) once; indexes with `_bulk` under a stable document id, so a retry overwrites; a tombstone projection deletes one document. Only the API subset both engines share is used. |
-| `clickhouse` | `endpoint`, `table` | `database`, `headers` | Creates the database, `crawlx_migrations` and the feed table (`MergeTree`, monthly partitions, deduplication window of 10,000 blocks) on first use; inserts one `JSONEachRow` row per batch with the batch key as `insert_deduplication_token`, so a retry inside the window stores once. Payloads must be UTF-8. |
-| `kafka` | `brokers`, `topic` | `namePrefix`, `partitions`, `replicationFactor`, `tls`, `credentials` | Creates the topic when missing; produces one record keyed by the batch key to the partition the key hashes to and returns after the broker acknowledged it (`acks=all`). SASL/PLAIN with `credentials`. The client has no idempotent-producer mode: a retry after an unacknowledged send can store the batch twice, the sink reports `duplicate_possible`, and consumers deduplicate on the record key. |
-| `amqp` | `endpoint` (with an explicit vhost), `topic` | `namePrefix`, `credentials` | Declares a durable direct exchange and queue and binds them; publishes one persistent message per batch with `message_id` set to the batch key, `mandatory`, and publisher confirms; unroutable or negatively acknowledged messages are rejected. Reconnects after a failure. At-least-once: deduplicate on `message_id`. |
+| `clickhouse` | `endpoint`, `table` | `database`, `headers` | Creates the database, `crawlx_migrations` and the feed table (`MergeTree`, monthly partitions, deduplication window of 10,000 blocks) on first use; inserts one `JSONEachRow` row per batch with the scoped batch id (tenant, run and batch key hashed) as `insert_deduplication_token`, so a retry inside the window stores once and the same batch key of another run or deployment sharing the table is stored. Payloads must be UTF-8. |
+| `kafka` | `brokers`, `topic` | `namePrefix`, `partitions`, `replicationFactor`, `tls`, `credentials` | Creates the topic when missing; produces one record keyed by the scoped batch id (tenant, run and batch key hashed; the batch key is in the `crawlx-batch` header) to the partition the key hashes to and returns after the broker acknowledged it (`acks=all`). SASL/PLAIN with `credentials`. The client has no idempotent-producer mode: a retry after an unacknowledged send can store the batch twice, the sink reports `duplicate_possible`, and consumers deduplicate on the record key. |
+| `amqp` | `endpoint` (with an explicit vhost), `topic` | `namePrefix`, `credentials` | Declares a durable direct exchange and queue and binds them; publishes one persistent message per batch with `message_id` set to the scoped batch id, `mandatory`, and publisher confirms; unroutable or negatively acknowledged messages are rejected. Reconnects after a failure. At-least-once: deduplicate on `message_id`. |
 
 Common rules: none of these destinations accepts zero-data-retention content; a connection or
 broker failure is retried later by the delivery outbox; a rejected batch is not. Endpoints are
@@ -102,6 +108,26 @@ trusted infrastructure (like the database and the object store), so the crawl eg
 not apply to them and `addresses` is refused; use the network policy of the deployment to limit
 where the workers can connect. Responses are read up to 4 MiB with a 30 second deadline, and
 redirects and ambient proxies are off.
+
+## Batch identity on shared sinks
+
+A batch key is only unique inside one run (`request.<page>.<feed>`; request ids restart at 1 in
+every database), so the sinks never use the raw key as their identity on a shared table, topic
+or queue. They use the *scoped batch id*: the BLAKE3 hash (64 hex digits) of the tenant id, the
+run id and the batch key, each length-prefixed. Tenant and run ids are random time-ordered UUIDs
+stored with the run, so the scoped id differs between runs and between deployments with no
+configured deployment id, and it is the same for every retry of one batch, also after a restart.
+
+| Sink | Identity | What a collision on the raw key would have done |
+|---|---|---|
+| ClickHouse | `insert_deduplication_token` is the scoped id; the `tenant_id`, `run_id` and `batch_key` columns keep the plain values | the table silently dropped the second insert of a key, so a batch another run delivered as `delivered` never arrived |
+| Kafka | record key is the scoped id; the `crawlx-batch` header carries the batch key and `crawlx-run` the run | harmless on a delete-policy topic, but a compacted topic would have kept one record per key across deployments, and a consumer deduplicating on the key would have dropped the other deployments' batches |
+| RabbitMQ | `message_id` is the scoped id; the `crawlx-batch` and `crawlx-run` headers carry the plain values | a consumer deduplicating on `message_id` would have dropped the other deployments' batches |
+| Search | document id is `<run id>:<entry id>`, which is unique per run | none: a retry overwrites its own document and no other run shares the id |
+
+Consumers that deduplicate use the record key or `message_id` as before. A batch retried across
+an upgrade of a deployment that still holds the old raw-key tokens can be stored once more in
+ClickHouse, because the token of the retry differs from the token of the first attempt.
 
 ## Shared-instance setup
 

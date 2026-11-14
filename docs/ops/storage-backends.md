@@ -16,6 +16,14 @@ postgres, mariadb or sqlite`. The URL is read from `--database-url`, `CRAWLX_DAT
 `crawlx.toml`. Credentials never appear in logs or error text: diagnostics print the scheme, host,
 port and database (or the file path) only.
 
+Every command that reads database settings (`serve`, `worker`, `crawl`, `migrate`, `export`,
+`replay`, `inspect`, `admin`, `archive`, `profiles`, `reparse`, `replay-response`) selects its
+configuration file the same way as `crawlx config check`: the file named by `CRAWLX_CONFIG`, else
+`./crawlx.toml` when present. A `CRAWLX_CONFIG` that names a missing, unreadable or invalid file is
+an error; it never falls back to `./crawlx.toml`. So `database.url_file`, `database.schema`,
+`database.pool_max` and `database.statement_timeout_ms` apply to all of them, including when the
+URL comes from `CRAWLX_DATABASE_URL` or `CRAWLX_DATABASE_URL_FILE`.
+
 On PostgreSQL, `database.schema` of `crawlx.toml` places every table and the migration table in
 one named schema (`crawlx migrate` creates it), so several deployments can share a database; it is
 refused for MariaDB and SQLite. See [backends.md](backends.md).
@@ -106,8 +114,9 @@ Artifacts live in the filesystem (`--artifacts-dir`) or in an S3-compatible buck
 the database engine. Set `CRAWLX_S3_BUCKET` (and `CRAWLX_S3_PROFILE`, endpoint, region, ...) for
 `serve`, `worker` and `crawl --database-url`; the profiles `standard`, `compatible`, `edge` and
 `self-hosted`, their defaults and refusals are in [object-storage.md](object-storage.md). With a
-bucket set, nothing is written under `--artifacts-dir`. `serve` and `worker` must name the same
-bucket.
+database and a bucket set, nothing is written under `--artifacts-dir`; `serve` and `crawl`
+without a database always use the filesystem and ignore the bucket. `serve` and `worker` must
+name the same bucket.
 
 ## Deployment
 

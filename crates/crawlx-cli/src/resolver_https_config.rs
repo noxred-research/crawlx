@@ -1,12 +1,11 @@
 //! Operator-only encrypted DNS configuration shared by worker startup and config checking.
 
-use crate::config_check::{egress_source, load_from, Loaded, ProxyUrl, CONFIG_ENV};
+use crate::config_check::{config_file, egress_source, load_from, Loaded, ProxyUrl};
 use anyhow::{anyhow, Context as _};
 use crawlx_fetch::{HttpsResolver, HttpsResolverConfig};
 use crawlx_policy::{EgressPolicy, SharedEgressLists};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -105,9 +104,7 @@ pub(crate) fn from_env(
         .iter()
         .filter_map(|name| getenv(name).map(|value| ((*name).to_owned(), value)))
         .collect::<Vec<_>>();
-    let file = getenv(CONFIG_ENV)
-        .filter(|path| !path.trim().is_empty())
-        .map(PathBuf::from);
+    let file = config_file(getenv);
     let Some(settings) = load_from(file.as_deref(), &vars)?.config.fetch.resolver_https else {
         return Ok(None);
     };
@@ -123,7 +120,7 @@ pub(crate) fn from_env(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
-    use crate::config_check::{validate, Source};
+    use crate::config_check::{validate, Source, CONFIG_ENV};
     use crawlx_fetch::Resolver;
 
     fn empty_lists() -> SharedEgressLists {

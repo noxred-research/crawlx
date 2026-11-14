@@ -2,10 +2,13 @@
 //!
 //! One database per deployment (default `crawlx`), tables created by versioned migrations that
 //! are recorded in `<database>.crawlx_migrations`. Each delivered batch is one `JSONEachRow`
-//! insert whose `insert_deduplication_token` is the batch idempotency key, so a retried batch is
-//! dropped by the table's deduplication window instead of storing twice.
+//! insert whose `insert_deduplication_token` is a hash of tenant id, run id and batch key (see
+//! [`scoped_batch_id`]), so a retried batch is dropped by the table's deduplication window instead
+//! of storing twice, while the same batch key of another run or deployment sharing the table is
+//! stored.
 
 use super::http::{InfraHttp, RETRY_AFTER};
+use super::scoped_batch_id;
 use crate::delivery::{DeliveryAuthority, DeliveryDestination, DeliveryError};
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -170,6 +173,7 @@ impl DeliveryDestination for ClickHouseDestination {
         if u64::try_from(row.len()).map_or(true, |size| size > MAX_VALUE_BYTES.saturating_mul(2)) {
             return Err(DeliveryError::Rejected("provider_wire_byte_limit"));
         }
+        let token = scoped_batch_id(run, batch);
         let statement = format!(
             "INSERT INTO {}.{} (tenant_id, run_id, feed, batch_key, content_digest, payload) FORMAT JSONEachRow",
             self.database, self.table
@@ -181,7 +185,7 @@ impl DeliveryDestination for ClickHouseDestination {
                 "/",
                 &[
                     ("query", statement.as_str()),
-                    ("insert_deduplication_token", batch.idempotency_key.as_str()),
+                    ("insert_deduplication_token", token.as_str()),
                 ],
                 Some("application/x-ndjson"),
                 Bytes::from(row),

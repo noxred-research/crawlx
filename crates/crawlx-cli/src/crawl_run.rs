@@ -335,9 +335,10 @@ pub(crate) fn base_config(
     getenv: Getenv<'_>,
 ) -> anyhow::Result<WorkerConfig> {
     let gates_dir = args.gates_dir.clone().unwrap_or_else(|| PathBuf::from("gates"));
+    let database_url = crate::config_check::database_url(args.database_url.as_deref())?;
     let mut cfg = WorkerConfig {
-        database_url: args.database_url.clone(),
-        store: crate::config_check::store_config(args.database_url.as_deref())?,
+        store: crate::config_check::store_config(database_url.as_deref())?,
+        database_url,
         artifacts_dir: output.join("artifacts"),
         artifact_spool: crate::config_check::artifact_spool_from_env(getenv)?,
         retained_profiles: crawlx_worker::RetainedProfilePolicy::from_env(getenv)?,

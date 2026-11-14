@@ -7,7 +7,7 @@
 use anyhow::{anyhow, Context as _};
 use clap::Args;
 use crawlx_extract::parse::ocr::{Ocr, OcrBackend, OcrConfig, Rasterizer};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// OCR for scanned PDF pages and image files (compatibility API `parsers`: `mode: ocr`, `image`).
@@ -41,12 +41,17 @@ pub struct OcrArgs {
 
 /// The `[ocr]` table of `crawlx.toml`, when a file is discoverable and has one.
 fn from_file(getenv: &dyn Fn(&str) -> Option<String>) -> anyhow::Result<OcrConfig> {
-    let path = getenv("CRAWLX_CONFIG")
-        .filter(|p| !p.trim().is_empty())
-        .map_or_else(|| PathBuf::from("crawlx.toml"), PathBuf::from);
-    if !Path::new(&path).is_file() {
-        return Ok(OcrConfig::default());
-    }
+    // a named `CRAWLX_CONFIG` is read even when it is missing (an error, never a fallback)
+    let path = match crate::config_check::config_file(getenv) {
+        Some(path) => path,
+        None => {
+            let discovered = PathBuf::from("crawlx.toml");
+            if !discovered.is_file() {
+                return Ok(OcrConfig::default());
+            }
+            discovered
+        }
+    };
     let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let doc: toml::Table = text
         .parse()

@@ -435,6 +435,66 @@ async fn clickhouse_migrates_deduplicates_and_keeps_databases_apart() {
     }
 }
 
+#[tokio::test]
+async fn clickhouse_keeps_the_batches_of_runs_and_deployments_sharing_a_table() {
+    let Some(url) = env("CRAWLX_TEST_CLICKHOUSE_URL") else {
+        eprintln!("skipped: CRAWLX_TEST_CLICKHOUSE_URL is not set");
+        return;
+    };
+    let endpoint: Url = url.parse().unwrap();
+    let db = format!("crawlx_s_{}", unique());
+    // two deployments (two sink instances, as two processes would be) feed ONE table
+    let one = ClickHouseDestination::new(endpoint.clone(), HeaderMap::new(), &db, "pages").unwrap();
+    let two = ClickHouseDestination::new(endpoint.clone(), HeaderMap::new(), &db, "pages").unwrap();
+    // each deployment runs twice; request ids restart at 1 in every deployment, so the batch keys
+    // repeat across all four runs
+    let runs = [standard_run(), standard_run(), standard_run(), standard_run()];
+    let authority = authority(&runs[0]);
+    let payload = b"{\"title\":\"hello\"}\n";
+    for (index, run) in runs.iter().enumerate() {
+        let sink = if index < 2 { &one } else { &two };
+        for key in ["request.1.f", "request.2.f", "request.3.f"] {
+            sink.send(&authority, run, &batch(key, payload), Bytes::from_static(payload))
+                .await
+                .unwrap();
+        }
+    }
+    // a retry of one batch from its own deployment and run is still dropped by the window
+    one.send(
+        &authority,
+        &runs[0],
+        &batch("request.2.f", payload),
+        Bytes::from_static(payload),
+    )
+    .await
+    .unwrap();
+    let admin = InfraHttp::new(endpoint, HeaderMap::new()).unwrap();
+    let query = |sql: String| {
+        let admin = &admin;
+        async move {
+            let reply = admin
+                .send(Method::POST, "/", &[], Some("text/plain"), Bytes::from(sql))
+                .await
+                .unwrap();
+            assert_eq!(reply.status, 200, "{}", String::from_utf8_lossy(&reply.body));
+            String::from_utf8_lossy(&reply.body).trim().to_owned()
+        }
+    };
+    assert_eq!(
+        query(format!("SELECT count() FROM {db}.pages FORMAT TabSeparated")).await,
+        "12",
+        "every batch of every run arrives, the retried one only once"
+    );
+    assert_eq!(
+        query(format!(
+            "SELECT uniqExact(run_id) FROM {db}.pages FORMAT TabSeparated"
+        ))
+        .await,
+        "4"
+    );
+    query(format!("DROP DATABASE IF EXISTS {db}")).await;
+}
+
 // ---- Kafka -------------------------------------------------------------------------------------
 
 #[tokio::test]
@@ -498,7 +558,11 @@ async fn kafka_produces_to_prefixed_topics_and_keeps_deployments_apart() {
     }
     assert_eq!(seen.len(), 1, "exactly the one record of A");
     let record = &seen[0];
-    assert_eq!(record.key.as_deref(), Some(&b"batch-a"[..]));
+    assert_eq!(
+        record.key.as_deref(),
+        Some(super::scoped_batch_id(&run, &batch("batch-a", b"payload-a")).as_bytes())
+    );
+    assert_eq!(record.headers["crawlx-batch"], b"batch-a");
     assert_eq!(record.value.as_deref(), Some(&b"payload-a"[..]));
     assert_eq!(record.headers["crawlx-feed"], b"feed");
     assert_eq!(record.headers["crawlx-run"], run.id.0.to_string().into_bytes());
@@ -618,7 +682,12 @@ async fn rabbitmq_publishes_with_confirms_to_prefixed_queues() {
     assert_eq!(first.data, b"payload-a");
     assert_eq!(
         first.properties.message_id().as_ref().map(|m| m.as_str()),
-        Some("key-a")
+        Some(super::scoped_batch_id(&run, &batch("key-a", b"payload-a")).as_str())
+    );
+    let headers = first.properties.headers().as_ref().expect("headers");
+    assert_eq!(
+        headers.inner().get("crawlx-batch"),
+        Some(&lapin::types::AMQPValue::LongString("key-a".into()))
     );
     assert_eq!(first.properties.delivery_mode(), &Some(2), "persistent");
     first

@@ -664,9 +664,14 @@ pub(crate) async fn export(args: ExportArgs, out: &mut dyn Write) -> anyhow::Res
         (None, ExportSource::Database(_)) => PathBuf::from("./crawlx-artifacts"),
     };
     let database_url = match &source {
-        ExportSource::Database(_) => Some(args.database_url.clone().ok_or_else(|| {
-            anyhow!("export reads the database: pass --database-url or set CRAWLX_DATABASE_URL")
-        })?),
+        ExportSource::Database(_) => Some(
+            crate::config_check::database_url(args.database_url.as_deref())?.ok_or_else(|| {
+                anyhow!(
+                    "export reads the database: pass --database-url, set CRAWLX_DATABASE_URL, \
+                     CRAWLX_DATABASE_URL_FILE or database.url_file"
+                )
+            })?,
+        ),
         ExportSource::Report(_) => {
             if args.format == ExportFormat::Dump {
                 bail!("--format dump needs a run id and a database");
@@ -675,6 +680,7 @@ pub(crate) async fn export(args: ExportArgs, out: &mut dyn Write) -> anyhow::Res
         }
     };
     let mut cfg = WorkerConfig {
+        store: crate::config_check::store_config(database_url.as_deref())?,
         database_url,
         request_identity_key: WorkerConfig::request_identity_key_from_lookup(&|key| std::env::var(key).ok())?,
         artifacts_dir,
@@ -745,15 +751,17 @@ pub(crate) async fn replay(
         .to
         .parse()
         .map_err(|e| anyhow!("{:?} is not a transition id: {e}", args.to))?;
+    let database_url = crate::config_check::database_url(args.database_url.as_deref())?;
     let mut cfg = WorkerConfig {
-        database_url: args.database_url.clone(),
+        store: crate::config_check::store_config(database_url.as_deref())?,
+        database_url,
         request_identity_key: WorkerConfig::request_identity_key_from_lookup(getenv)?,
         artifacts_dir: args.artifacts_dir.clone(),
         ..WorkerConfig::default()
     };
     cfg.load_checkpoint_keys_from_lookup(getenv).await?;
     cfg.load_artifact_custody_from_lookup(getenv).await?;
-    let store = connect(args.database_url.as_deref()).await?;
+    let store = connect(cfg.database_url.as_deref()).await?;
     let action = crawlx_worker::on_store!(&store, pg => InspectRepo::new(pg.clone()).transition_action(run, transition)
         .await)
         .context("reading transitions")?

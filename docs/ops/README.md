@@ -139,6 +139,10 @@ spelling or a test that does not exist, or when a compatibility spelling has no 
 diagnostics. Load failures instead return `{"ok":false,"error":"..."}`. The default
 environment is `prod`; local inspection can use `CRAWLX_ENVIRONMENT=dev`.
 Malformed TOML reports its location without printing source lines that may hold secrets.
+The report shows the object-store bucket and key prefix selected by `CRAWLX_S3_BUCKET` and
+`CRAWLX_S3_PREFIX` (neither is secret), and the source of the ZDR buffer endpoint
+(`CRAWLX_ZDR_REDIS_URL` or `CRAWLX_ZDR_REDIS_URL_FILE`, never both; the URL and the file content are
+never printed).
 
 No `doctor` or shell-completion command is provided. Use `config check`,
 `crawl ... --health-check`, `protocol --probe`, `healthcheck` and `admin status`
