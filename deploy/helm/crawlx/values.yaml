@@ -7,7 +7,7 @@ environment: prod # dev | ci | staging | prod; gym is refused outside dev/stagin
 
 image:
   registry: ghcr.io/noxred-research
-  tag: v0.1.0
+  tag: v0.2.0
   chromiumVersion: "155.0.8059.84" # must equal chromium-pin.toml; the worker tag is <tag>-chromium<version>
   pullPolicy: IfNotPresent
 

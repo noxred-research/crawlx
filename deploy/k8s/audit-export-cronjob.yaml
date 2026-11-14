@@ -40,7 +40,7 @@ spec:
             seccompProfile: { type: RuntimeDefault }
           containers:
             - name: audit-export
-              image: ghcr.io/noxred-research/crawlx-api:v0.1.0
+              image: ghcr.io/noxred-research/crawlx-api:v0.2.0
               imagePullPolicy: IfNotPresent
               args: ["admin", "audit-export", "--all", "--s3-bucket", "crawlx-audit"]
               env:

@@ -39,11 +39,16 @@ CrawlX is pre-1.0. Production qualification is in progress; see the
 | [Walkthrough](walkthrough.md) | An end-to-end local run against the CrawlerGym fixture with PostgreSQL and Chromium, including a sample authorization record |
 | [Compatibility clients and integrations](integrations.md) | Pointing client libraries, command-line clients and third-party integrations at the compatibility API, the endpoints served, operator protocol and acquisition-service boundary |
 | [Operations](ops/README.md) | Provisioning and validation of optional operator capabilities |
+| [Storage backends](ops/storage-backends.md) | PostgreSQL, MariaDB and SQLite: what each engine supports and how to configure it |
+| [Object storage](ops/object-storage.md) | Object-store profiles, the key prefix and the deployment claim that stops shared prefixes from deleting each other's artifacts |
+| [Backends](ops/backends.md) | Support matrix, namespacing on shared instances, and delivery to OpenSearch, Elasticsearch, ClickHouse, Kafka and RabbitMQ |
+| [Release gates](ops/release-gates.md) | The release-gate checklist, its evidence files and the waiver format |
 | [Operator runbooks](ops/runbooks.md) | Runbooks RB-01 to RB-12, alert cards, the `crawlx admin` command table, backup, restore and rollback |
 
 ## Project
 
 - [README](../README.md): what CrawlX is, quick start and configuration pointers
+- [Integrations](../README.md#integrations) with the related BrowserX and ProxyX projects
 - [Roadmap](roadmap.md): open work
 - [CONTRIBUTING](../CONTRIBUTING.md): coding standards, checks and contribution flow
 - [SECURITY](../SECURITY.md): private vulnerability reporting, response times and safe harbor

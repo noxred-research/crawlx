@@ -94,7 +94,7 @@ services:
     logging: *logging
 
   migrate:
-    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-api:${CRAWLX_TAG:-v0.1.0}
+    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-api:${CRAWLX_TAG:-v0.2.0}
     build: *api-build
     # `crawlx migrate` before api and worker; the DDL role's DSN, not the app role's
     command: ["migrate"]
@@ -156,7 +156,7 @@ services:
     # (with the filesystem store they MUST share one --artifacts-dir). A new named
     # volume is root-owned and the two images ship different uids, so this one-shot gives the
     # directory to uid 10001 (the worker's own uid, which `api` also runs as below).
-    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-worker:${CRAWLX_TAG:-v0.1.0}-chromium${CRAWLX_CHROMIUM_VERSION:-155.0.8059.84}
+    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-worker:${CRAWLX_TAG:-v0.2.0}-chromium${CRAWLX_CHROMIUM_VERSION:-155.0.8059.84}
     build: *worker-build
     restart: "no"
     user: "0:0"
@@ -178,7 +178,7 @@ services:
     logging: *logging
 
   api:
-    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-api:${CRAWLX_TAG:-v0.1.0}
+    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-api:${CRAWLX_TAG:-v0.2.0}
     build: *api-build
     restart: unless-stopped
     # Binds the container's own interface (the image default); the host side below is loopback
@@ -255,7 +255,7 @@ services:
     logging: *logging
 
   worker:
-    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-worker:${CRAWLX_TAG:-v0.1.0}-chromium${CRAWLX_CHROMIUM_VERSION:-155.0.8059.84}
+    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-worker:${CRAWLX_TAG:-v0.2.0}-chromium${CRAWLX_CHROMIUM_VERSION:-155.0.8059.84}
     build: *worker-build
     restart: unless-stopped
     command:
@@ -449,7 +449,7 @@ services:
     # with no arguments it prints the status. Examples: `verify-artifacts --s3-bucket crawlx-artifacts`,
     # `sweep-retention --artifacts-dir /var/lib/crawlx/artifacts`, `workers`, `drain --admission`.
     profiles: [ops]
-    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-api:${CRAWLX_TAG:-v0.1.0}
+    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-api:${CRAWLX_TAG:-v0.2.0}
     build: *api-build
     restart: "no"
     entrypoint: ["/usr/local/bin/crawlx", "admin"]
@@ -491,7 +491,7 @@ services:
     # CrawlerGym fixture server for staging/CI only (never in production). Part of
     # the stack only with `--profile smoke`; ci/compose-smoke.sh crawls it through the API.
     profiles: [smoke]
-    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-gym:${CRAWLX_TAG:-v0.1.0}
+    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-gym:${CRAWLX_TAG:-v0.2.0}
     build:
       context: ..
       dockerfile: docker/Dockerfile.gym

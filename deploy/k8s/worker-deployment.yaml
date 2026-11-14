@@ -38,7 +38,7 @@ spec:
           localhostProfile: crawlx-chromium.json
       containers:
         - name: worker
-          image: ghcr.io/noxred-research/crawlx-worker:v0.1.0-chromium155.0.8059.84
+          image: ghcr.io/noxred-research/crawlx-worker:v0.2.0-chromium155.0.8059.84
           args:
             - worker
             - --max-sessions=4

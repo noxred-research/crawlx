@@ -8,6 +8,29 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-14
+
+Second source release. Distribution is unchanged: the GitHub repository and the tagged source
+archive, with a CycloneDX SBOM and `SHA256SUMS`; no binaries, container images or crates.io packages
+are published. Production qualification is still in progress: the release-gate checklist in
+`docs/ops/release-gates.md` has not been measured for this release (no soak, flake window,
+restore drill, severity-classified findings or model calibration was run for it), so do not treat it
+as qualified for production use.
+
+### Highlights
+
+- AI-native features, off by default and advisory only: a model-egress policy, natural-language crawl
+  specifications, a plan-first research agent, schema extraction with exact field evidence, passive
+  surface triage and grounded summaries (`docs/ai.md`).
+- A native, capability-scoped MCP surface with scoped API keys and a hash-chained audit log
+  (`docs/mcp.md`).
+- Shared-instance backends: namespacing for PostgreSQL, the object store and Valkey/Redis, delivery to
+  OpenSearch, Elasticsearch, ClickHouse, Kafka and RabbitMQ, and a guard against two deployments
+  deleting each other's artifacts (`docs/ops/backends.md`).
+- A local key-encryption-key file for browser checkpoints, so durable deployments need no cloud key
+  service.
+- CI runs on self-hosted runners for code owners only, and no update bot is configured.
+
 ### Added
 
 - Local key-encryption-key file for browser checkpoints (`CRAWLX_CHECKPOINT_KEK_FILE`): durable
@@ -118,6 +141,18 @@ project is pre-1.0; minor versions may contain breaking changes.
   or orphan sweep by another deployment is refused with a message naming the prefix. Reads and
   `verify-artifacts` are not refused; the marker is never listed or swept. Operator override:
   `CRAWLX_S3_ALLOW_SHARED_PREFIX=1` (unsafe). See `docs/ops/object-storage.md`.
+
+### Upgrade notes
+
+- A ClickHouse, Kafka or RabbitMQ delivery batch that was retried across the upgrade can be stored
+  once more, because the deduplication token, record key and `message_id` changed (see *Fixed*).
+- Deployments that already share one object-store prefix: the first to write after the upgrade claims
+  the prefix and the others are refused until each uses its own prefix (or
+  `CRAWLX_S3_ALLOW_SHARED_PREFIX=1` is set, which is unsafe). A single deployment is unaffected.
+- `--cdp-ws-url` still works but logs a deprecation warning; use `--cdp-ws-url-file` or
+  `CRAWLX_CDP_WS_URL_FILE`.
+- The plain `--api-key TENANT=KEY` form still holds every scope; use `agent`, `operator` or a scope
+  list to narrow a key.
 
 ## [0.1.0] - 2026-11-12
 
@@ -1066,5 +1101,6 @@ third-party product names outside the documented exceptions.
 - `SECURITY.md` gains response-time targets, safe-harbor terms, scope lists and release verification;
   new `CODE_OF_CONDUCT.md`; YAML issue forms for bugs, feature requests and questions.
 
-[Unreleased]: https://github.com/noxred-research/crawlx/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/noxred-research/crawlx/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/noxred-research/crawlx/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/noxred-research/crawlx/releases/tag/v0.1.0

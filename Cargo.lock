@@ -1887,7 +1887,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-api"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -1939,7 +1939,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-bench"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -1997,7 +1997,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-browser"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -2039,7 +2039,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2094,7 +2094,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2121,7 +2121,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-elements"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crawlx-core",
  "crawlx-url",
@@ -2141,7 +2141,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-extract"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.23.1",
  "calamine",
@@ -2189,7 +2189,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-fetch"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-compression",
  "async-trait",
@@ -2240,7 +2240,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-forms"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "crawlx-core",
@@ -2257,7 +2257,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-graph"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "crawlx-core",
@@ -2273,7 +2273,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-model"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2300,7 +2300,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-observe"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2316,7 +2316,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-policy"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "crawlx-core",
@@ -2337,7 +2337,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-safety"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "crawlx-core",
@@ -2351,7 +2351,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-scheduler"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2376,7 +2376,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-state"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crawlx-core",
  "criterion",
@@ -2388,7 +2388,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-storage"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -2432,7 +2432,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-strategies"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2464,7 +2464,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-telemetry"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crawlx-core",
  "opentelemetry",
@@ -2482,7 +2482,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-url"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "chrono",
@@ -2501,7 +2501,7 @@ dependencies = [
 
 [[package]]
 name = "crawlx-worker"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "aws-config",

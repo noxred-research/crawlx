@@ -11,10 +11,10 @@ supported, how to report a vulnerability, what you can expect from us, and what 
 
 | Version | Supported |
 | --- | --- |
-| 0.1.x | Yes |
-| Earlier than 0.1.0 | No |
+| 0.2.x | Yes |
+| Earlier than 0.2.0 | No |
 
-CrawlX is pre-1.0. Only the latest 0.1.x release receives security fixes. The distribution is the source
+CrawlX is pre-1.0. Only the latest 0.2.x release receives security fixes. The distribution is the source
 repository and tagged source releases; no binaries, container images, hosted service or crates.io packages
 are published, so there are no other artifacts to patch.
 
