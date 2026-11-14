@@ -583,11 +583,46 @@ fn checksum_headers(record: &RequestRecord) -> Vec<&str> {
         .collect()
 }
 
+/// Whether a request addresses the deployment marker the first write of a prefix claims.
+fn is_marker(record: &RequestRecord) -> bool {
+    record.path.ends_with("/.crawlx-deployment")
+}
+
+/// The object uploads of a test: every `PUT` except the one that claims the prefix.
 fn puts(fake: &FakeS3) -> Vec<RequestRecord> {
     fake.requests()
         .into_iter()
-        .filter(|r| r.method == "PUT")
+        .filter(|r| r.method == "PUT" && !is_marker(r))
         .collect()
+}
+
+/// The claim of the prefix. The first write sends exactly one conditional `PUT` (after a `GET`
+/// that found no marker), and the claim is part of the profile's upload semantics: it carries the
+/// same encryption and checksum headers as any other upload.
+fn marker_put(fake: &FakeS3) -> RequestRecord {
+    let requests = fake.requests();
+    let reads = requests
+        .iter()
+        .filter(|r| r.method == "GET" && is_marker(r))
+        .count();
+    let mut claims: Vec<RequestRecord> = requests
+        .into_iter()
+        .filter(|r| r.method == "PUT" && is_marker(r))
+        .collect();
+    assert_eq!(
+        claims.len(),
+        1,
+        "one claim per prefix, however many uploads follow"
+    );
+    assert!(reads >= 1, "the claim follows a read of the marker");
+    let claim = claims.remove(0);
+    assert_eq!(
+        claim.header("if-none-match"),
+        Some("*"),
+        "the first claimer wins: {:?}",
+        claim.headers
+    );
+    claim
 }
 
 /// put, get, head, list and delete against the fake.
@@ -681,6 +716,18 @@ async fn checksums_stay_off_the_wire_unless_the_profile_allows_and_the_operator_
             );
         }
         assert_eq!(fake.objects().get("content/b").unwrap(), b"beta", "{profile}");
+        // the claim of the prefix obeys the same rule: no checksum header, no trailer encoding
+        let claim = marker_put(&fake);
+        assert!(
+            checksum_headers(&claim).is_empty(),
+            "{profile}: {:?}",
+            claim.headers
+        );
+        assert_ne!(
+            claim.header("content-encoding"),
+            Some("aws-chunked"),
+            "{profile}: no trailer encoding on the claim"
+        );
     }
 
     // when_supported, accepted on the standard profile only: uploads carry a CRC32
@@ -696,6 +743,12 @@ async fn checksums_stay_off_the_wire_unless_the_profile_allows_and_the_operator_
         !checksum_headers(&uploads[0]).is_empty(),
         "{:?}",
         uploads[0].headers
+    );
+    let claim = marker_put(&fake);
+    assert!(
+        !checksum_headers(&claim).is_empty(),
+        "the claim is an upload too: {:?}",
+        claim.headers
     );
     assert_eq!(
         fake.objects().get("content/crc").unwrap(),
@@ -730,6 +783,15 @@ async fn object_lock_buckets_receive_a_checksum_on_every_upload_and_archives_too
         }
         assert_eq!(fake.objects().get("audit/x").unwrap(), b"first", "{profile}");
         assert_eq!(fake.objects().get("audit/y").unwrap(), b"archived", "{profile}");
+        // an object-lock bucket rejects a PUT without a checksum, the claim of the prefix included
+        let claim = marker_put(&fake);
+        assert!(
+            claim
+                .header("x-amz-sdk-checksum-algorithm")
+                .is_some_and(|a| a.eq_ignore_ascii_case("crc32")),
+            "{profile}: the claim needs a checksum: {:?}",
+            claim.headers
+        );
     }
 }
 

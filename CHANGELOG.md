@@ -74,6 +74,7 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ### Fixed
 
+- The object-store prefix claim retries a transport failure of its marker requests a bounded number of times before refusing the write, and the profile tests assert the claim's request shape (no checksum where the profile forbids it, a checksum where object lock requires it).
 - Every command now selects its configuration file like `crawlx config check`: `CRAWLX_CONFIG`, else
   `./crawlx.toml`. Before, `migrate`, `crawl`, `worker`, `serve`, `export`, `replay` and the operator
   commands read only `./crawlx.toml`, so `database.schema` was ignored (a URL from the environment migrated

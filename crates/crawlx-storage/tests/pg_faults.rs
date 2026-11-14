@@ -241,6 +241,22 @@ async fn pg_terminated_connection_between_t1_and_t2_leaves_intended_and_nothing_
         .await
         .unwrap();
     assert!(terminated, "the worker backend {pid} was terminated");
+    // `pg_terminate_backend` only signals the backend: wait until it is really gone, so the
+    // next statement of the worker cannot still be served by the dying connection
+    let mut gone = false;
+    for _ in 0..200 {
+        let alive: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE pid = $1")
+            .bind(pid)
+            .fetch_one(env.pg.pool())
+            .await
+            .unwrap();
+        if alive == 0 {
+            gone = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert!(gone, "the terminated backend {pid} is still listed");
 
     let err = worker
         .finish(a.id, full_outcome(a.session, a.cluster))

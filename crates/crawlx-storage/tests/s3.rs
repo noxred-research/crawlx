@@ -362,6 +362,60 @@ fn guarded_with(endpoint: &str, prefix: &str, deployment: Option<&str>, allow_sh
     }
 }
 
+/// A TCP front for `target` that closes the first `drops` connections without a reply (the
+/// SDK reports a dispatch failure) and relays every later one.
+async fn flaky_front(target: &str, drops: usize) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let target = target.trim_start_matches("http://").to_owned();
+    tokio::spawn(async move {
+        let mut seen = 0usize;
+        while let Ok((mut inbound, _)) = listener.accept().await {
+            seen += 1;
+            if seen <= drops {
+                drop(inbound);
+                continue;
+            }
+            let target = target.clone();
+            tokio::spawn(async move {
+                if let Ok(mut outbound) = tokio::net::TcpStream::connect(target).await {
+                    let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
+                }
+            });
+        }
+    });
+    format!("http://{address}")
+}
+
+#[tokio::test]
+async fn the_marker_requests_survive_a_server_that_is_briefly_unreachable() {
+    let fake = FakeS3::start().await.unwrap();
+    // `guarded` allows 2 SDK attempts per request, so 3 dropped connections defeat the first
+    // marker read; the marker retry must carry the claim through
+    let front = flaky_front(fake.endpoint(), 3).await;
+    let blobs = guarded(&front, "flaky", Some("deployment-one"));
+    blobs.put("k", b"v").await.unwrap();
+    assert!(
+        fake.keys()
+            .iter()
+            .any(|k| k.ends_with("flaky/.crawlx-deployment")),
+        "the claim was written: {:?}",
+        fake.keys()
+    );
+
+    // a server that never answers still ends in a typed, retryable error after a bounded wait
+    let dead = flaky_front(fake.endpoint(), usize::MAX).await;
+    let blobs = guarded(&dead, "dead", Some("deployment-one"));
+    let error = tokio::time::timeout(Duration::from_secs(60), blobs.put("k", b"v"))
+        .await
+        .expect("the wait is bounded")
+        .unwrap_err();
+    assert!(
+        matches!(error, crawlx_core::StoreError::Unavailable(_)),
+        "{error:?}"
+    );
+}
+
 fn claimed(error: &crawlx_core::StoreError) -> bool {
     matches!(error, crawlx_core::StoreError::Conflict(message) if message.contains("claimed by another crawlx deployment"))
 }

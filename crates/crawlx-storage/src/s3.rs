@@ -953,8 +953,31 @@ impl S3Blobs {
             .await
     }
 
+    /// Run one marker request again after a transport failure. The SDK's retry budget is spent
+    /// within a few hundred milliseconds, which a server that has just started or is restarting
+    /// can outlast; the marker gates every write, so a short extra bounded wait is better than
+    /// refusing the write. Only `Unavailable` (transport and timeout) is retried; both marker
+    /// requests are safe to repeat (the conditional write answers 412 when the first one landed).
+    async fn marker_retry<T, F, Fut>(&self, mut attempt: F) -> Result<T, StoreError>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Result<T, StoreError>>,
+    {
+        const EXTRA_ATTEMPTS: u32 = 3;
+        let mut tried = 0;
+        loop {
+            match attempt().await {
+                Err(StoreError::Unavailable(_)) if tried < EXTRA_ATTEMPTS => {
+                    tried += 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(250 * u64::from(tried))).await;
+                }
+                other => return other,
+            }
+        }
+    }
+
     async fn read_marker(&self) -> Result<Option<Marker>, StoreError> {
-        let Some(bytes) = self.get(DEPLOYMENT_MARKER_KEY).await? else {
+        let Some(bytes) = self.marker_retry(|| self.get(DEPLOYMENT_MARKER_KEY)).await? else {
             return Ok(None);
         };
         let marker: Marker = serde_json::from_slice(&bytes).map_err(|_| {
@@ -986,22 +1009,26 @@ impl S3Blobs {
             kind,
         })
         .map_err(|e| StoreError::Serialization(e.to_string()))?;
-        let mut request = self
-            .put_request(DEPLOYMENT_MARKER_KEY)
-            .content_type("application/json")
-            .content_length(i64::try_from(body.len()).unwrap_or(i64::MAX))
-            .body(ByteStream::from(Bytes::from(body)));
-        if conditional {
-            request = request.if_none_match("*");
-        }
-        match request.send().await {
-            Ok(_) => Ok(MarkerWrite::Written),
-            Err(e) => match e.raw_response().map(|r| r.status().as_u16()) {
-                Some(409 | 412) => Ok(MarkerWrite::Lost),
-                Some(501) if conditional => Ok(MarkerWrite::Unsupported),
-                _ => Err(sdk_error("put", DEPLOYMENT_MARKER_KEY, &e)),
-            },
-        }
+        let body = Bytes::from(body);
+        self.marker_retry(|| async {
+            let mut request = self
+                .put_request(DEPLOYMENT_MARKER_KEY)
+                .content_type("application/json")
+                .content_length(i64::try_from(body.len()).unwrap_or(i64::MAX))
+                .body(ByteStream::from(body.clone()));
+            if conditional {
+                request = request.if_none_match("*");
+            }
+            match request.send().await {
+                Ok(_) => Ok(MarkerWrite::Written),
+                Err(e) => match e.raw_response().map(|r| r.status().as_u16()) {
+                    Some(409 | 412) => Ok(MarkerWrite::Lost),
+                    Some(501) if conditional => Ok(MarkerWrite::Unsupported),
+                    _ => Err(sdk_error("put", DEPLOYMENT_MARKER_KEY, &e)),
+                },
+            }
+        })
+        .await
     }
 
     /// Whether `marker` is the claim of a deployment other than `own`. A marker written by a
