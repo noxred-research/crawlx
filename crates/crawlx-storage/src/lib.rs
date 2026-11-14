@@ -106,6 +106,7 @@ mod digest_registry;
 mod error;
 pub mod intel;
 mod intel_memory;
+pub mod kek_file;
 pub mod leases;
 pub mod memory;
 pub mod origin;

@@ -21,7 +21,7 @@ use crate::stores::Stores;
 use crate::supervisor::Supervisor;
 use crate::url_plane::{UrlPlaneDeps, UrlPlaneRunner};
 use crawlx_core::config::CrawlMode;
-use crawlx_core::counters::{RunStatus, TerminalReason};
+use crawlx_core::counters::{RunFailure, RunFailureCode, RunStatus, TerminalReason};
 use crawlx_core::repo::{CrawlRun, FrontierStatus, SessionStatus};
 use crawlx_core::{BrowserBackend, CrawlRunId, SystemClock};
 use crawlx_fetch::{EgressOptions, EgressProxyHandle};
@@ -444,17 +444,21 @@ async fn run_with_inner(
                     tracing::warn!(run=%run_id,reason,"acquisition unavailable; session returned for recovery");
                     continue;
                 }
-                Err(WorkerError::Config(_)) => {
+                Err(error @ (WorkerError::Config(_) | WorkerError::CheckpointKeysRequired)) => {
                     // Refuse this run without taking unrelated sessions down with it.
                     match scheduler.fail(&lease).await {
                         Ok(()) => {}
                         Err(error) if error.is_lease_lost() => {}
                         Err(error) => return Err(error.into()),
                     }
-                    stores
-                        .finish_run(run_id, TerminalReason::FatalError, &cfg.cpu_pool, cfg.worker_id)
-                        .await?;
-                    tracing::warn!(run = %run_id, "run configuration refused");
+                    end_misconfigured(
+                        &stores,
+                        run_id,
+                        &refusal_failure(&error),
+                        &cfg.cpu_pool,
+                        cfg.worker_id,
+                    )
+                    .await?;
                     continue;
                 }
                 Err(error) if admission_lease_lost(&error) => {
@@ -922,6 +926,53 @@ async fn refuse_run(
 ) {
     tracing::warn!(run = %run, reason = stop.reason(), "run refused: authorization record unusable");
     end_unauthorized(stores, run, stop.reason(), None, cpu, worker).await;
+}
+
+/// The typed reason a worker refuses a run over its configuration. Only closed codes and
+/// operator-facing setting names reach it; the message never carries a secret value.
+fn refusal_failure(error: &WorkerError) -> RunFailure {
+    let code = match error {
+        WorkerError::CheckpointKeysRequired => RunFailureCode::CheckpointKeysRequired,
+        _ => RunFailureCode::ConfigRefused,
+    };
+    let message = match error {
+        WorkerError::Config(message) => message.clone(),
+        other => other.to_string(),
+    };
+    RunFailure::new(code, &message)
+}
+
+/// End a run the worker refused over its configuration: failed with `fatal_error`, and the
+/// reason is logged and recorded on the run so its owner can read why.
+///
+/// The `run.refused` event is appended before the run turns terminal, so a reader that sees
+/// `failed` also finds the reason.
+pub(crate) async fn end_misconfigured(
+    stores: &Stores,
+    run: CrawlRunId,
+    failure: &RunFailure,
+    cpu: &crate::runtime::CpuPool,
+    worker: crawlx_core::WorkerId,
+) -> Result<(), WorkerError> {
+    let reason = TerminalReason::FatalError;
+    tracing::warn!(
+        run = %run,
+        code = failure.code.as_str(),
+        reason = %failure.message,
+        "run configuration refused"
+    );
+    stores
+        .events
+        .append(run, RunFailure::EVENT_KIND, failure.event_payload())
+        .await?;
+    stores.finish_run(run, reason, cpu, worker).await?;
+    let mut terminal = failure.event_payload();
+    terminal["status"] = serde_json::Value::from(status_for(reason).as_str());
+    terminal["terminalReason"] = serde_json::Value::from(reason.as_str());
+    if let Err(error) = stores.events.append(run, "completed", terminal).await {
+        tracing::warn!(run = %run, error = %error, "terminal event of a refused run not recorded");
+    }
+    Ok(())
 }
 
 /// End a running run whose authorization was lost: the guard has cancelled its token, here the

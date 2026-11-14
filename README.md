@@ -420,7 +420,7 @@ Read more: [architecture](docs/design/architecture.md) · [crawl model](docs/des
 | Filters | `--filter-similar`, `--content-similar off\|simhash\|tfidf\|bm25`, `--match-regex`, `--filter-regex`, `--match-condition`, `--filter-condition`, `--filter-page-type` |
 | Politeness and fetch | `--rate-limit`, `--host-rate-limit`, `--concurrency`, `--delay-ms`, `--timeout`, `--retries`, `--max-response-size`, `--no-redirects`, `--proxy`, `--headers`, `--cookie`, `--user-agent` |
 | Extraction | `--js-crawl`, `--javascript-mode off\|regex\|ast\|both`, `--form-extraction`, `--detect-secrets`, `--tech-detect`, `--knowledge-base`, `--custom-field-config` |
-| Browser | `--page-load-strategy`, `--dom-wait-time`, `--show-browser`, `--cdp-ws-url`, `--no-incognito`, `--auto-download-chromium`, `--interaction-depth`, `--interaction-max-actions` |
+| Browser | `--page-load-strategy`, `--dom-wait-time`, `--show-browser`, `--cdp-ws-url-file` (the DevTools URL is a bearer token: also `CRAWLX_CDP_WS_URL_FILE` / `CRAWLX_CDP_WS_URL`; `--cdp-ws-url` is deprecated), `--no-incognito`, `--auto-download-chromium`, `--interaction-depth`, `--interaction-max-actions` |
 | Output | `--output DIR`, `-j/--jsonl`, `-o/--output-file`, `--output-template`, `--field`, `--store-field`, `--store-response`, `--omit-raw`, `--list-output-fields`, `--silent`, `--verbose` |
 
 Behavior of the less obvious options (source discovery, response cache and replay, adaptive extraction,

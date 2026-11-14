@@ -637,6 +637,118 @@ async fn prompts_compile_through_the_governed_model_and_cannot_widen_anything() 
     assert!(v.to_string().contains("conflicting_intent"));
 }
 
+/// The operator configuration of `intel.policy` as the API configuration (and the `crawlx.toml`
+/// of `crawlx serve`) spells it, pointing at `endpoint`.
+fn configured_policy(endpoint: &str, external_processing: bool) -> crawlx_api::config::IntelConfig {
+    let policy = serde_json::from_value(json!({
+        "externalProcessing": external_processing,
+        "providers": { "analysis": {
+            "endpoint": endpoint,
+            "model": "reviewer-1",
+            "apiKeyRef": "env:POLICY_PROVIDER_KEY",
+            "allowedPurposes": ["crawl_spec", "evidence_extraction"],
+        }},
+        "maxRunCalls": 4,
+    }))
+    .unwrap();
+    crawlx_api::config::IntelConfig {
+        policy: Some(policy),
+        ..crawlx_api::config::IntelConfig::default()
+    }
+}
+
+async fn provider_replying(content: &Value) -> wiremock::MockServer {
+    use wiremock::matchers::{header, method};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(header("authorization", "Bearer sk-policy-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": content.to_string()}}],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+        })))
+        .mount(&server)
+        .await;
+    server
+}
+
+#[tokio::test]
+async fn a_policy_built_from_operator_configuration_enables_the_governed_endpoints() {
+    let server = provider_replying(&intent_reply()).await;
+    let key = |name: &str| (name == "POLICY_PROVIDER_KEY").then(|| "sk-policy-key".to_owned());
+    // enabled: the endpoint that answers 403 without a policy now reaches the approved provider
+    let on =
+        crawlx_api::intel::ai_policy_with(&configured_policy(&format!("{}/v1", server.uri()), true), &key)
+            .unwrap();
+    let r = rig_with_ai(Arc::new(MockLlm::bounded_scripted(vec![])), on).await;
+    let (s, v) = r.get(&r.agent, "/v1/capabilities/ai").await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["externalProcessing"], true, "{v}");
+    assert_eq!(v["providers"][0]["id"], "analysis");
+    let (s, spec) = r
+        .post(
+            &r.agent,
+            "/v1/crawl-specs/compile",
+            &json!({"baseConfig": simple(), "prompt": "crawl lightly"}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{spec}");
+    assert_eq!(spec["intent"]["source"], "model", "{spec}");
+    assert_eq!(spec["model"]["purpose"], "crawl_spec");
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    assert!(!spec.to_string().contains("sk-policy-key"));
+
+    // the same configuration with the master switch off, and no configuration at all: 403
+    let off =
+        crawlx_api::intel::ai_policy_with(&configured_policy(&format!("{}/v1", server.uri()), false), &key)
+            .unwrap();
+    for ai in [off, AiPolicy::default()] {
+        let r = rig_with_ai(Arc::new(MockLlm::bounded_scripted(vec![])), ai).await;
+        let (s, v) = r
+            .post(
+                &r.agent,
+                "/v1/crawl-specs/compile",
+                &json!({"baseConfig": simple(), "prompt": "crawl lightly"}),
+            )
+            .await;
+        assert_eq!(s, StatusCode::FORBIDDEN, "{v}");
+        assert_eq!(v["error"]["code"], "external_processing_disabled");
+    }
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        1,
+        "no call without the policy"
+    );
+}
+
+#[test]
+fn a_policy_whose_key_reference_does_not_resolve_fails_closed_without_the_reference_text() {
+    let none = |_: &str| None;
+    let error = crawlx_api::intel::ai_policy_with(&configured_policy("http://models.test/v1", true), &none)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        error.contains("intel.policy") && error.contains("POLICY_PROVIDER_KEY"),
+        "{error}"
+    );
+    // a key pasted where a reference belongs is refused without being echoed
+    let mut intel = configured_policy("http://models.test/v1", true);
+    intel
+        .policy
+        .as_mut()
+        .unwrap()
+        .providers
+        .get_mut("analysis")
+        .unwrap()
+        .api_key_ref = Some("sk-pasted-inline-key".to_owned());
+    let error = crawlx_api::intel::ai_policy_with(&intel, &none)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(!error.contains("sk-pasted-inline-key"), "{error}");
+}
+
 #[tokio::test]
 async fn prompt_compiling_is_refused_without_external_processing() {
     let llm = Arc::new(MockLlm::bounded_scripted(vec![Ok(intent_reply())]));

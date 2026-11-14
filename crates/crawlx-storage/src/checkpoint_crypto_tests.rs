@@ -373,3 +373,154 @@ async fn memory_store_custody_survives_reopened_wrappers_but_not_a_distinct_stor
         Err(CheckpointCryptoError::Authentication)
     ));
 }
+
+const KEK_OLD: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+const KEK_NEW: &str = "2222222222222222222222222222222222222222222222222222222222222222";
+const KEK_OTHER: &str = "3333333333333333333333333333333333333333333333333333333333333333";
+
+/// A file provider over `body`, written owner-only into a fresh directory.
+fn kek_provider(body: &str) -> (tempfile::TempDir, FileCheckpointKeys) {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("kek");
+    std::fs::write(&path, body).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let provider = FileCheckpointKeys::from_file(&path).unwrap();
+    (dir, provider)
+}
+
+/// The key id a file-wrapped envelope names.
+fn wrapped_key_id(envelope: &[u8]) -> String {
+    let len = usize::from(envelope[HEADER_BYTES]);
+    String::from_utf8(envelope[HEADER_BYTES + 1..HEADER_BYTES + 1 + len].to_vec()).unwrap()
+}
+
+#[tokio::test]
+async fn kek_file_round_trip_binds_ownership_and_hides_plaintext() {
+    let (_dir, provider) = kek_provider(&format!("k1:{KEK_OLD}\n"));
+    assert!(provider.is_available());
+    assert_eq!(format!("{provider:?}"), "FileCheckpointKeys([REDACTED])");
+    let sealed = provider
+        .seal(&context(), Zeroizing::new(SECRET.to_vec()))
+        .await
+        .unwrap();
+    let bytes = sealed.as_ref().to_vec();
+    assert_eq!(&bytes[..4], MAGIC);
+    assert_eq!(&bytes[4..6], &[VERSION, FILE]);
+    assert!(!contains(&bytes, SECRET));
+    assert!(!contains(&bytes, KEK_OLD.as_bytes()));
+    assert_eq!(wrapped_key_id(&bytes), "k1");
+    assert_eq!(&*provider.open(&context(), bytes.clone()).await.unwrap(), SECRET);
+    for other in other_contexts(context()) {
+        assert!(matches!(
+            provider.open(&other, bytes.clone()).await,
+            Err(CheckpointCryptoError::Authentication)
+        ));
+    }
+    // each seal draws a fresh data key and nonce
+    let again = provider
+        .seal(&context(), Zeroizing::new(SECRET.to_vec()))
+        .await
+        .unwrap();
+    assert_ne!(again.as_ref(), bytes.as_slice());
+}
+
+#[tokio::test]
+async fn kek_rotation_wraps_with_the_primary_and_old_ids_still_unwrap() {
+    let (_old_dir, old_only) = kek_provider(&format!("k1:{KEK_OLD}\n"));
+    let before = old_only
+        .seal(&context(), Zeroizing::new(SECRET.to_vec()))
+        .await
+        .unwrap()
+        .as_ref()
+        .to_vec();
+    assert_eq!(wrapped_key_id(&before), "k1");
+
+    // rotate: the new key goes on top, the old one stays listed
+    let (_both_dir, both) = kek_provider(&format!("k2:{KEK_NEW}\nk1:{KEK_OLD}\n"));
+    assert_eq!(both.key_ids().collect::<Vec<_>>(), ["k2", "k1"]);
+    assert_eq!(&*both.open(&context(), before.clone()).await.unwrap(), SECRET);
+    let after = both
+        .seal(&context(), Zeroizing::new(SECRET.to_vec()))
+        .await
+        .unwrap()
+        .as_ref()
+        .to_vec();
+    assert_eq!(wrapped_key_id(&after), "k2");
+    assert_eq!(&*both.open(&context(), after.clone()).await.unwrap(), SECRET);
+
+    // retire the old key: what it wrapped fails closed, what the new key wrapped still opens
+    let (_new_dir, new_only) = kek_provider(&format!("k2:{KEK_NEW}\n"));
+    assert!(matches!(
+        new_only.open(&context(), before).await,
+        Err(CheckpointCryptoError::UnknownKey)
+    ));
+    assert_eq!(&*new_only.open(&context(), after).await.unwrap(), SECRET);
+}
+
+#[tokio::test]
+async fn kek_wrong_key_tamper_and_foreign_envelopes_fail_closed() {
+    let (_dir, provider) = kek_provider(&format!("k1:{KEK_OLD}\n"));
+    let sealed = provider
+        .seal(&context(), Zeroizing::new(SECRET.to_vec()))
+        .await
+        .unwrap()
+        .as_ref()
+        .to_vec();
+
+    // same id, different key material
+    let (_wrong_dir, wrong) = kek_provider(&format!("k1:{KEK_OTHER}\n"));
+    assert!(matches!(
+        wrong.open(&context(), sealed.clone()).await,
+        Err(CheckpointCryptoError::Authentication)
+    ));
+
+    // every byte of the envelope is authenticated or validated
+    for index in 0..sealed.len() {
+        let mut tampered = sealed.clone();
+        tampered[index] ^= 0x01;
+        let result = provider.open(&context(), tampered).await;
+        assert!(result.is_err(), "flipping byte {index} was accepted");
+    }
+    assert!(provider
+        .open(&context(), sealed[..sealed.len() - 1].to_vec())
+        .await
+        .is_err());
+    assert!(provider.open(&context(), Vec::new()).await.is_err());
+
+    // other providers' envelopes are not accepted by this one, and vice versa
+    let memory = MemoryCheckpointKeys::new().unwrap();
+    let foreign = memory
+        .seal(&context(), Zeroizing::new(SECRET.to_vec()))
+        .await
+        .unwrap()
+        .as_ref()
+        .to_vec();
+    assert!(matches!(
+        provider.open(&context(), foreign).await,
+        Err(CheckpointCryptoError::InvalidEnvelope)
+    ));
+    assert!(matches!(
+        memory.open(&context(), sealed).await,
+        Err(CheckpointCryptoError::InvalidEnvelope)
+    ));
+}
+
+#[tokio::test]
+async fn kek_file_must_be_owner_only_and_valid_to_load() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("kek");
+    std::fs::write(&path, format!("k1:{KEK_OLD}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(matches!(
+        FileCheckpointKeys::from_file(&path),
+        Err(KekFileError::UnsafeFile)
+    ));
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(FileCheckpointKeys::from_file(&path).is_ok());
+    assert!(matches!(
+        FileCheckpointKeys::from_file(&dir.path().join("absent")),
+        Err(KekFileError::File(_))
+    ));
+}

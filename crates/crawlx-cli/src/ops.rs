@@ -143,8 +143,10 @@ pub struct ServeArgs {
     /// Artifacts dir.
     pub artifacts_dir: PathBuf,
     /// Bootstrap API key as `tenant=cx_live_<26 characters from a-z and 2-7>`, or
-    /// `tenant=fc-<16 to 64 ASCII letters or digits>` with `--compat-keys`. Repeatable.
-    #[arg(long = "api-key", value_name = "TENANT=KEY")]
+    /// `tenant=fc-<16 to 64 ASCII letters or digits>` with `--compat-keys`. The plain form holds
+    /// every scope (operator key); `tenant=KEY:SCOPES` limits it to a comma-separated list of
+    /// presets (`agent`, `operator`) and scope names such as `crawls:read`. Repeatable.
+    #[arg(long = "api-key", value_name = "TENANT=KEY[:SCOPES]")]
     pub api_keys: Vec<String>,
     /// Accept prefixed `fc-...` bearer keys on the `/compat` routes
     /// (`compat.prefixedKeys`; the environment variable `CRAWLX_COMPAT_KEYS=1` does the
@@ -209,12 +211,10 @@ pub struct WorkerArgs {
     pub gates_dir: PathBuf,
     /// Attach to a running Chrome over its DevTools websocket instead of launching one
     /// (`ws://127.0.0.1:9222/devtools/browser/…`); admitted only for `test_environment` and
-    /// `authorized_security_test` runs.
-    #[arg(long, value_name = "URL")]
-    pub cdp_ws_url: Option<url::Url>,
-    /// Reuse the attached browser's default context instead of incognito contexts.
-    #[arg(long, requires = "cdp_ws_url")]
-    pub no_incognito: bool,
+    /// `authorized_security_test` runs. The URL is a bearer token: give it in a file
+    /// (`--cdp-ws-url-file`, `CRAWLX_CDP_WS_URL_FILE`) or the environment (`CRAWLX_CDP_WS_URL`).
+    #[command(flatten)]
+    pub cdp: crate::cdp_attach::CdpArgs,
     /// Retired plaintext profile root. Supplying it returns an explicit migration error.
     #[arg(long, env = "CRAWLX_PROFILES_DIR", value_name = "DIR")]
     pub profiles_dir: Option<PathBuf>,
@@ -256,6 +256,10 @@ pub(crate) async fn worker(
             "--profiles-dir plaintext reuse is retired; configure encrypted retained profiles through CRAWLX_PROFILE_KEY_REF"
         );
     }
+    let (cdp_ws_url, incognito) = match args.cdp.resolve_announced(getenv)? {
+        Some(attach) => (Some(attach.url), attach.incognito),
+        None => (None, true),
+    };
     let Some(url) = crate::config_check::database_url(args.database_url.as_deref())? else {
         bail!(
             "`worker` leases work from the database: pass --database-url, set CRAWLX_DATABASE_URL or CRAWLX_DATABASE_URL_FILE"
@@ -291,8 +295,8 @@ pub(crate) async fn worker(
         contexts_per_browser: args.contexts_per_browser,
         idle_exit_after: args.recover.then_some(Duration::from_secs(75)),
         gates: crate::crawl_run::load_gates(&args.gates_dir),
-        cdp_ws_url: args.cdp_ws_url,
-        incognito: !args.no_incognito,
+        cdp_ws_url,
+        incognito,
         retained_profiles: crawlx_worker::RetainedProfilePolicy::from_env(getenv)?,
         auto_download_chromium: args.auto_download_chromium,
         chromium_cache: args
@@ -375,13 +379,7 @@ pub(crate) async fn serve(args: ServeArgs) -> anyhow::Result<ExitCode> {
             "in-memory API mode: crawls stay queued, no separate worker can execute them, and runs are lost on exit; configure a database (--database-url) for API/worker runs, or use `crawlx crawl` locally"
         );
     }
-    for spec in &args.api_keys {
-        let (tenant, key) = spec
-            .split_once('=')
-            .filter(|(t, k)| !t.is_empty() && !k.is_empty())
-            .ok_or_else(|| anyhow!("--api-key expects TENANT=KEY"))?;
-        cfg.api_keys.push(ApiKeyBootstrap::new(tenant, key));
-    }
+    cfg.api_keys = bootstrap_keys(&args.api_keys)?;
     if let Some(n) = args.rate_limit_per_minute {
         cfg.rate_limit_per_minute = n;
     }
@@ -391,6 +389,9 @@ pub(crate) async fn serve(args: ServeArgs) -> anyhow::Result<ExitCode> {
     }
     cfg.ocr = args.ocr.config(&|k| std::env::var(k).ok())?;
     let getenv = |k: &str| std::env::var(k).ok();
+    // `[intel.policy]` of the configuration file: without it the native AI endpoints keep external
+    // model processing off and answer 403 `external_processing_disabled`
+    cfg.intel = crate::config_check::intel_from_env(&getenv)?;
     // the deployment lists reach every run's egress policy and the admission of `POST /v1/crawls`;
     // the operator keys verify `operator_signature` ownership proofs of authorization records
     let egress_feed = crate::egress_feed::EgressFeed::start(&getenv).await?;
@@ -404,6 +405,14 @@ pub(crate) async fn serve(args: ServeArgs) -> anyhow::Result<ExitCode> {
     egress_feed.stop().await;
     served.map_err(|e| anyhow!("api failed: {}", crate::authz::chain(&e)))?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// The `--api-key TENANT=KEY[:SCOPES]` specs as bootstrap keys; an error never repeats the key.
+fn bootstrap_keys(specs: &[String]) -> anyhow::Result<Vec<ApiKeyBootstrap>> {
+    specs
+        .iter()
+        .map(|spec| ApiKeyBootstrap::parse_spec(spec).map_err(|e| anyhow!("--api-key: {e}")))
+        .collect()
 }
 
 fn parse_compat_mode(value: &str) -> Result<crawlx_api::CompatMode, String> {
@@ -430,6 +439,68 @@ mod compat_mode_tests {
             assert_eq!(args.compat_mode, Some(mode));
         }
         assert!(crate::Cli::try_parse_from(["crawlx", "serve", "--compat-mode", "unknown"]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod api_key_spec_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use clap::Parser;
+    use crawlx_api::{Scope, AGENT_SCOPES};
+
+    const KEY: &str = "cx_live_abcdefghijklmnopqrstuvwxyz";
+
+    fn specs(args: &[&str]) -> anyhow::Result<Vec<crawlx_api::ApiKeyBootstrap>> {
+        let mut argv = vec!["crawlx", "serve"];
+        for a in args {
+            argv.extend(["--api-key", a]);
+        }
+        let cli = crate::Cli::try_parse_from(argv).unwrap();
+        let crate::Command::Serve(args) = cli.command else {
+            panic!("expected serve");
+        };
+        super::bootstrap_keys(&args.api_keys)
+    }
+
+    #[test]
+    fn plain_keys_keep_every_scope_and_scoped_keys_are_limited() {
+        let keys = specs(&[
+            &format!("acme={KEY}"),
+            &format!("acme={KEY}:agent"),
+            &format!("acme={KEY}:operator"),
+            &format!("acme={KEY}:crawls:read, authorizations:read"),
+        ])
+        .unwrap();
+        assert_eq!(keys[0].scopes, Scope::all_set());
+        assert_eq!(keys[1].scopes, AGENT_SCOPES.into_iter().collect());
+        assert!(!keys[1].scopes.contains(&Scope::ApprovalsDecide));
+        assert!(!keys[1].scopes.contains(&Scope::AuthorizationsWrite));
+        assert_eq!(keys[2].scopes, Scope::all_set());
+        assert_eq!(
+            keys[3].scopes,
+            [Scope::CrawlsRead, Scope::AuthorizationsRead]
+                .into_iter()
+                .collect()
+        );
+        assert!(keys.iter().all(|k| k.key == KEY && k.tenant == "acme"));
+    }
+
+    #[test]
+    fn bad_specs_are_refused_without_echoing_the_key() {
+        for spec in [
+            format!("acme={KEY}:"),
+            format!("acme={KEY}:,"),
+            format!("acme={KEY}:crawls:nope"),
+            format!("acme={KEY}:agent,admin"),
+            "acme=:agent".to_owned(),
+            format!("={KEY}"),
+            KEY.to_owned(),
+        ] {
+            let err = specs(&[&spec]).unwrap_err().to_string();
+            assert!(err.starts_with("--api-key: "), "{err}");
+            assert!(!err.contains(KEY), "{err}");
+        }
     }
 }
 

@@ -10,6 +10,12 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ### Added
 
+- Local key-encryption-key file for browser checkpoints (`CRAWLX_CHECKPOINT_KEK_FILE`): durable
+  API and worker deployments without a cloud service can run `dynamic` and `hybrid` crawls on
+  PostgreSQL, MariaDB or SQLite with any artifact store. One `<key-id>:<64 hex>` per line, mode `0600`
+  enforced, first key primary, older keys still unwrap for rotation. Exclusive with
+  `CRAWLX_CHECKPOINT_KMS_KEY_ID`; checked by `crawlx config check`. See
+  `docs/design/data-and-secrets.md`.
 - Backends guide (`docs/ops/backends.md`): support matrix, per-family namespacing and shared-instance
   setup.
   - Delivery destinations for OpenSearch and Elasticsearch (`opensearch`, `elasticsearch`: engine
@@ -22,8 +28,9 @@ project is pre-1.0; minor versions may contain breaking changes.
     other engines), `CRAWLX_S3_PREFIX` (object-store key prefix) and `CRAWLX_REDIS_KEY_PREFIX`
     (Valkey/Redis key prefix, default `crawlx:` so existing keys are unchanged), plus the index,
     database and topic/exchange prefixes of the new destinations. `crawlx config check` validates them.
-  - `ci/backend-services.sh` starts throwaway search, analytics and broker containers for the
-    real-service tests.
+  - `ci/backend-services.sh` starts throwaway search, analytics, broker and self-hosted S3 containers
+    for the real-service tests; the `self-hosted` object-store profile is verified against RustFS and
+    MinIO.
 - AI-native features, off by default and advisory only (see `docs/ai.md`):
   - A uniform untrusted-content and model-egress policy (`intel.policy`): an operator switch for
     external processing, approved providers per purpose with a retention capability, typed input and
@@ -49,6 +56,31 @@ project is pre-1.0; minor versions may contain breaking changes.
 - A native, capability-scoped MCP surface (`crawlx mcp --surface native`) with read-only inspection by
   default, explicit control, create, export, interact, erase and operator capabilities, structured
   results, untrusted-content labelling, resources and operator-granted upload handles; see `docs/mcp.md`.
+- Scoped bootstrap API keys: `crawlx serve --api-key TENANT=KEY:SCOPES` limits a key to the `agent`
+  preset (read and create runs, read authorization records; no `approvals:decide`,
+  `authorizations:write`, sensitive artifacts or metrics), the `operator` preset (all scopes) or a
+  comma-separated scope list. The plain `TENANT=KEY` form still holds every scope. Unknown or empty
+  scope lists are refused at startup. This makes the least-privilege agent key of `docs/mcp.md`
+  creatable.
+- `crawlx mcp --audit-log PATH` (`CRAWLX_MCP_AUDIT_LOG`): an append-only, hash-chained JSON Lines audit
+  log of every MCP tool call and resource read (intent before, result after; digests and sizes only,
+  refusals recorded). The server refuses to start, and refuses a call, when the log cannot be written.
+  `crawlx mcp audit-verify PATH` checks the chain; see `docs/mcp.md`.
+
+### Fixed
+
+- `crawlx serve` now reads `[intel.policy]` from `crawlx.toml` (camelCase keys, unknown keys and inline
+  credentials refused), so the native AI endpoints can be enabled; before, no way to set the policy
+  existed and they always answered `403 external_processing_disabled`. `crawlx config check` validates
+  and reports it without secrets (`docs/ai.md`).
+- The browser DevTools URL, a bearer token, no longer has to travel on the command line:
+  `--cdp-ws-url-file` (`0600` regular file), `CRAWLX_CDP_WS_URL_FILE` and `CRAWLX_CDP_WS_URL` for
+  `crawl` and `worker`; one source only. `--cdp-ws-url` still works with a deprecation warning, and the
+  URL no longer appears in `Debug` output.
+- A run the worker refuses over its configuration (for example a browser run without a checkpoint
+  key provider) now says why: `GET /v1/crawls/{id}` carries `failure: {code, message}`
+  (`checkpoint_keys_required`, `config_refused`) next to `terminalReason: fatal_error`, recorded as a
+  `run.refused` event, and the worker logs the reason.
 
 ## [0.1.0] - 2026-11-12
 

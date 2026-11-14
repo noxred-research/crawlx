@@ -23,6 +23,7 @@ mod authz;
 mod browser_cmd;
 pub mod cache_import;
 pub mod captcha_args;
+pub mod cdp_attach;
 mod compat_flag_defaults;
 mod compat_flags;
 pub mod config_check;
@@ -316,7 +317,7 @@ pub async fn execute_with_env(
         }
         Command::Mcp(args) => {
             let _telemetry = default_logs();
-            mcp::run(args).await
+            mcp::run(args, out).await
         }
         Command::Healthcheck(args) => healthcheck::run(args, out).await,
         Command::Browser(args) => {

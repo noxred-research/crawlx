@@ -1383,3 +1383,80 @@ async fn an_invalid_api_url_fails_at_startup_without_touching_stdout() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+// ---- audit log ----
+
+fn crawlx_command(args: &[&str]) -> std::process::Command {
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_crawlx"));
+    command.arg("mcp").args(args).stdin(Stdio::null());
+    command
+}
+
+#[tokio::test]
+async fn the_audit_log_records_calls_of_the_real_binary_and_audit_verify_checks_it() {
+    let server = MockServer::start().await;
+    ok_json(
+        &server,
+        "POST",
+        "scrape",
+        json!({"success": true, "data": {"markdown": "# CANARY-PAGE"}}),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("mcp-audit.jsonl");
+    let log_arg = log.to_str().unwrap();
+    let mut mcp = Session::spawn(
+        &[
+            "--api-url",
+            &server.uri(),
+            "--api-key",
+            "test-key",
+            "--audit-log",
+            log_arg,
+        ],
+        &[],
+    )
+    .await;
+    mcp.initialize().await;
+    mcp.call(TOOL_SCRAPE, json!({"url": "https://example.com/CANARY-URL"}))
+        .await;
+    // a second server on the same file must not start while the first holds it
+    let second = crawlx_command(&["--api-url", &server.uri(), "--audit-log", log_arg])
+        .output()
+        .unwrap();
+    assert!(!second.status.success());
+    assert!(String::from_utf8_lossy(&second.stderr).contains("in use by another process"));
+    mcp.call_raw("not_a_tool", json!({})).await;
+    let (status, _) = mcp.finish().await;
+    assert!(status.success());
+
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(text.lines().count(), 4, "{text}");
+    for secret in ["CANARY", "test-key", "example.com"] {
+        assert!(!text.contains(secret), "{secret} reached the audit log");
+    }
+
+    let verified = crawlx_command(&["audit-verify", log_arg]).output().unwrap();
+    assert!(verified.status.success(), "{verified:?}");
+    let stdout = String::from_utf8(verified.stdout).unwrap();
+    assert!(stdout.starts_with("entries: 4\nlast_hash: "), "{stdout}");
+
+    let mut lines: Vec<&str> = text.lines().collect();
+    lines.swap(1, 2);
+    std::fs::write(&log, format!("{}\n", lines.join("\n"))).unwrap();
+    let broken = crawlx_command(&["audit-verify", log_arg]).output().unwrap();
+    assert_eq!(broken.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&broken.stdout).contains("broken: line 2: "));
+}
+
+#[tokio::test]
+async fn an_audit_log_that_cannot_be_opened_stops_the_server_from_starting() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("no-such-dir").join("audit.jsonl");
+    let output = crawlx_command(&["--audit-log", log.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("audit log"));
+}

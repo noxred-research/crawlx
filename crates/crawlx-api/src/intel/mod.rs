@@ -158,7 +158,22 @@ pub fn backends(cfg: &IntelConfig) -> Result<Backends, ApiError> {
 
 /// The governor of `intel.policy`: every approved provider gets its own bounded client, so a
 /// provider never inherits another endpoint's credential.
-fn ai_policy(cfg: &IntelConfig) -> Result<govern::AiPolicy, ApiError> {
+///
+/// # Errors
+/// [`ApiError::Config`] for an invalid provider id, a provider without an endpoint or model, a key
+/// reference that does not resolve, or a proposal lifetime outside its bounds.
+pub fn ai_policy(cfg: &IntelConfig) -> Result<govern::AiPolicy, ApiError> {
+    ai_policy_with(cfg, &|k| std::env::var(k).ok())
+}
+
+/// [`ai_policy`] with an injectable environment lookup for `env:` key references.
+///
+/// # Errors
+/// As [`ai_policy`].
+pub fn ai_policy_with(
+    cfg: &IntelConfig,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Result<govern::AiPolicy, ApiError> {
     use crawlx_model::policy::{Budgets, ModelGovernor, ModelProcessingPolicyV1, ProviderPolicy};
     use std::collections::{BTreeMap, BTreeSet};
     let Some(settings) = &cfg.policy else {
@@ -227,7 +242,7 @@ fn ai_policy(cfg: &IntelConfig) -> Result<govern::AiPolicy, ApiError> {
             transcribe_model: None,
         };
         let resolved = llm_settings
-            .resolve()
+            .resolve_with(env)
             .map_err(|e| fail(format!("provider {id}: {e}")))?;
         let client = ChatCompletionsClient::new(resolved).map_err(|e| fail(format!("provider {id}: {e}")))?;
         clients.insert(id.clone(), Arc::new(client));

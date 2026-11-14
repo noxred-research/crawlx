@@ -164,8 +164,12 @@ They read sealed artifacts through the catalog. This boundary introduces no API 
 - **Requirements.** PostgreSQL workers need a key provider and `CRAWLX_SECRET_REDIS_URL`; the API needs
   only the key provider. A worker without them refuses to start.
 - **Checkpoints.** Session checkpoints (cookies, storage, URL) are sealed in a separate AES-256-GCM
-  envelope (`CXCP`) with a fresh KMS data key per seal (`CRAWLX_CHECKPOINT_KMS_KEY_ID`); browser
-  checkpoints fail without it, and plaintext checkpoint storage is revoked by migration.
+  envelope (`CXCP`) with a fresh data key per seal, wrapped by exactly one provider (see
+  [Checkpoint key providers](#checkpoint-key-providers)). Browser checkpoints, and so every
+  `dynamic`/`hybrid` run on a database-backed worker, fail without a provider, and plaintext
+  checkpoint storage is revoked by migration. A run the worker refuses for this reason ends `failed`
+  with `terminalReason: fatal_error` and a `failure` object on `GET /v1/crawls/{id}`
+  (`{"code": "checkpoint_keys_required", "message": "…"}`); the worker log carries the same reason.
 - **Read authority.** Reads during queued/running work require an unexpired durable use
   window and no pending registration or renewal. Terminal reads retain their approved
   retention because secret registration is closed. This gate does not claim a new
@@ -173,6 +177,56 @@ They read sealed artifacts through the catalog. This boundary introduces no API 
 
 Secrets known at run start (request controls, role credentials, the captcha key) keep their existing
 per-producer scans and are not registered run-wide.
+
+### Checkpoint key providers
+
+Set exactly one of these on every worker that runs browser-backed crawls (and on the CLI when it
+runs against a database). Setting both is a startup error, and `crawlx config check` reports it.
+
+| Provider | Setting | Wraps data keys with |
+|---|---|---|
+| Cloud KMS | `CRAWLX_CHECKPOINT_KMS_KEY_ID` (a stable key ARN) | `GenerateDataKey`/`Decrypt` with an encryption context of tenant, run, session and checkpoint |
+| Local key-encryption-key file | `CRAWLX_CHECKPOINT_KEK_FILE` (an absolute path) | AES-256-GCM under a key from the file, bound to the key id and the same ownership tuple |
+
+The local key-encryption-key file needs no cloud account or network access and does not depend on
+the database engine (PostgreSQL, MariaDB or SQLite) or on the artifact store (filesystem or any
+S3-compatible service): it only wraps the per-checkpoint data keys, which are stored with the sealed
+checkpoint. The artifact data keys have their own provider (`CRAWLX_ARTIFACT_KEY_FILE` or
+`CRAWLX_ARTIFACT_KMS_KEY_ID`, above); a self-hosted deployment sets both files.
+
+**File format.** One key per line: `<key-id>:<64 hexadecimal characters>` (32 random bytes, for
+example `openssl rand -hex 32`). Blank lines and lines starting with `#` are ignored. A key id is 1 to
+64 characters from `A-Z a-z 0-9 . _ -`. The file lists at most 64 keys and is at most 64 KiB.
+
+```
+# checkpoint key-encryption keys, newest first
+2026-11:9f2c…(64 hex characters)
+2026-05:41ab…(64 hex characters)
+```
+
+The **first** key is the primary: every new checkpoint is wrapped with it. Every listed key can still
+unwrap checkpoints that name it. The wrapped data key records its key id, so no other state is needed.
+
+**Protection.** The file must be a regular file that no group or other user can access (mode `0600`
+or `0400`); a Kubernetes secret volume needs `defaultMode: 0400`. Symlinks are followed. The check
+runs on the opened descriptor. Nothing generates a key: a missing, unreadable, empty, oversized or
+malformed file, a repeated key id, a key that is not exactly 32 bytes, a group- or world-accessible
+mode, or a checkpoint that names a key id the file no longer lists all fail closed with an error
+that never contains key material. Key bytes are zeroized in memory and never logged or serialized.
+Back the file up with the database: losing a key loses every checkpoint wrapped under it.
+
+**Rotation.**
+
+1. Generate a new key and add it as the **first** line with a new id; keep the old lines.
+2. Roll the file out to every worker and restart them. New checkpoints use the new key; checkpoints
+   wrapped under the old key still open.
+3. Once no checkpoint wrapped under the old key is still needed (for example its run has ended),
+   delete the old line and roll the file out again. Deleting a key earlier makes the checkpoints it
+   wrapped unreadable, and resuming those runs fails closed.
+
+Switching a deployment from cloud KMS to the file (or back) has the same limit: checkpoints sealed
+by the old provider are not readable by the new one, so switch only while no resumable
+checkpoint remains.
 
 ## Tenant isolation
 
@@ -266,7 +320,10 @@ Production deployments pass secrets as files: `CRAWLX_DATABASE_URL_FILE`,
 `CRAWLX_API_DATABASE_URL_FILE`, `CRAWLX_WEBHOOK_SECRET_FILE` (or `api.webhook.signing_key_file`),
 `CRAWLX_ARTIFACT_KEY_FILE`, `CRAWLX_SECRET_REDIS_URL_FILE`, `CRAWLX_ZDR_REDIS_URL_FILE`,
 `CRAWLX_REQUEST_IDENTITY_KEY_FILE`, `CRAWLX_AUTHZ_OPERATOR_KEYS_FILE`, `CRAWLX_GATE_KEYS_FILE` and
-`CRAWLX_PROFILE_KEY_FILE`. `crawlx config check` warns in staging and production when a database URL
+`CRAWLX_PROFILE_KEY_FILE`. The DevTools URL of an attached browser is a bearer token too:
+`--cdp-ws-url-file` / `CRAWLX_CDP_WS_URL_FILE` name a `0600` file holding it (`CRAWLX_CDP_WS_URL` is the
+environment form); `--cdp-ws-url` is deprecated because the URL shows in process arguments.
+`crawlx config check` warns in staging and production when a database URL
 or webhook secret is passed inline, and shows secret-bearing environment values as `<redacted>`.
 Webhooks are signed `Crawlx-Signature: t=<unix>,v1=<hex HMAC-SHA256 of "{t}.{body}">` (the compatibility
 API also sends `X-Firecrawl-Signature: sha256=<hex>` so existing receivers keep verifying). The Helm chart fails to render if both or <!-- wire-compat -->

@@ -1151,9 +1151,21 @@ fn active_mode_is_not_a_flag_value() {
 #[test]
 fn worker_help_lists_attach_flags() {
     let h = help(&["worker", "--help"]);
-    assert!(h.contains("--cdp-ws-url") && h.contains("--no-incognito"), "{h}");
-    // `--no-incognito` only makes sense for an attached browser
-    assert!(crawlx_cli::Cli::try_parse_from(["crawlx", "worker", "--no-incognito"]).is_err());
+    assert!(
+        h.contains("--cdp-ws-url") && h.contains("--cdp-ws-url-file") && h.contains("--no-incognito"),
+        "{h}"
+    );
+    // `--no-incognito` only makes sense for an attached browser; the sources can also come from
+    // the environment, so the check runs where the attach settings are resolved
+    let cli = crawlx_cli::Cli::try_parse_from(["crawlx", "worker", "--no-incognito"]).unwrap();
+    let crawlx_cli::Command::Worker(args) = cli.command else {
+        panic!("not a worker command");
+    };
+    assert!(args.cdp.resolve(&|_| None).is_err());
+    let attached = args.cdp.resolve(&|name| {
+        (name == "CRAWLX_CDP_WS_URL").then(|| "ws://127.0.0.1:9222/devtools/browser/x".to_owned())
+    });
+    assert!(!attached.unwrap().unwrap().incognito);
 }
 
 fn parse_crawl(args: &[&str]) -> crawlx_cli::crawl::CrawlArgs {

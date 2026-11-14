@@ -990,9 +990,7 @@ impl RunContext {
             .unwrap_or(&stores.checkpoint_keys)
             .clone();
         if run.config.mode != CrawlMode::Static && !checkpoint_keys.is_available() {
-            return Err(WorkerError::Config(
-                "browser checkpoints require CRAWLX_CHECKPOINT_KMS_KEY_ID".into(),
-            ));
+            return Err(WorkerError::CheckpointKeysRequired);
         }
         if let Some(referenced) = run.config.safety.authorization_record_ref {
             let guard = authorization
@@ -1605,9 +1603,7 @@ impl RunContext {
     ) -> Result<crate::pool::PooledContext, WorkerError> {
         use crawlx_core::session_binding::{SessionBindingV1, SessionIdentityV1};
         if !self.checkpoint_keys.is_available() {
-            return Err(WorkerError::Config(
-                "browser checkpoints require CRAWLX_CHECKPOINT_KMS_KEY_ID".into(),
-            ));
+            return Err(WorkerError::CheckpointKeysRequired);
         }
         let retained = self.crawl.dynamic.browser_profile.is_some();
         let profile_rt = if retained {

@@ -51,6 +51,12 @@ secret registry (`CRAWLX_SECRET_REDIS_URL`) are required for `serve` and `worker
 Without them startup is refused with `refused: custody_missing: encrypted artifact custody is not
 configured: ...`.
 
+Browser-backed runs (`dynamic`, `hybrid`) on a database also need a checkpoint key provider, on every
+engine and with any artifact store: `CRAWLX_CHECKPOINT_KMS_KEY_ID` (cloud KMS) or
+`CRAWLX_CHECKPOINT_KEK_FILE` (a local key-encryption-key file for deployments without a cloud
+service), never both. Without one the run ends `failed` with the `checkpoint_keys_required` failure.
+See "Checkpoint key providers" in `docs/design/data-and-secrets.md`.
+
 ## Pool size and statement timeout
 
 `database.pool_max` (default 32) is the pool size on every engine; on SQLite it bounds the readers

@@ -1,7 +1,8 @@
 //! Ownership-bound checkpoint encryption, with no plaintext compatibility path.
 //!
 //! The binary `CXCP` envelope contains a version, provider, wrapped-key length,
-//! random nonce, wrapped data key (KMS only), and AES-256-GCM ciphertext/tag.
+//! random nonce, wrapped data key (KMS and local key-encryption-key file only), and
+//! AES-256-GCM ciphertext/tag.
 //! Domain, version, provider, tenant, run, session and checkpoint IDs are AEAD AAD.
 //! Plaintext is bounded at 32 MiB and wrapped keys at 64 KiB before allocation.
 //!
@@ -18,6 +19,12 @@
 //! availability. Each seal generates a fresh data key; each open calls KMS. No
 //! key cache, fallback key, automatic root creation, or plaintext downgrade exists.
 //!
+//! [`FileCheckpointKeys`] is the self-hosted alternative: a fresh data key per checkpoint is
+//! wrapped with AES-256-GCM under the primary key of an operator-provisioned local
+//! key-encryption-key file (see [`crate::kek_file`]). The wrapped key names its KEK id, so
+//! retired-but-still-listed keys keep unwrapping after rotation. It needs no network, cloud
+//! account or database support and is independent of the artifact object store.
+//!
 //! Owned plaintext/data-key buffers are zeroized, including on authentication
 //! failure. The SDK may retain HTTP/JSON response buffers until deallocation;
 //! ring's internal expanded key schedule has no public zeroization API. Such
@@ -32,15 +39,21 @@ use aws_config::BehaviorVersion;
 use aws_sdk_kms::{primitives::Blob, types::DataKeySpec, Client};
 use aws_smithy_http_client::tls;
 use crawlx_core::checkpoint_crypto::{
-    self as core_crypto, Ciphertext, CiphertextError, HEADER_BYTES, KMS, MAGIC, MAX_ENVELOPE, MAX_PLAINTEXT,
-    MAX_WRAPPED_KEY, MEMORY, NONCE_BYTES, TAG_BYTES, VERSION,
+    self as core_crypto, Ciphertext, CiphertextError, FILE, HEADER_BYTES, KMS, MAGIC, MAX_ENVELOPE,
+    MAX_PLAINTEXT, MAX_WRAPPED_KEY, MEMORY, NONCE_BYTES, TAG_BYTES, VERSION,
 };
 use crawlx_core::{CheckpointId, CrawlRunId, SessionId, TenantId};
-use ring::rand::{SecureRandom, SystemRandom};
-use std::{collections::BTreeMap, error::Error, fmt, sync::Arc};
+use ring::{
+    aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM},
+    rand::{SecureRandom, SystemRandom},
+};
+use std::{collections::BTreeMap, error::Error, fmt, path::Path, sync::Arc};
 use zeroize::Zeroizing;
 
+use crate::kek_file::{is_valid_key_id, KekFile, KekFileError};
+
 const DOMAIN: &[u8] = b"crawlx/checkpoint/v1";
+const KEK_DOMAIN: &[u8] = b"crawlx/checkpoint-kek/v1";
 
 /// The complete immutable ownership tuple authenticated by checkpoint encryption.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -181,6 +194,9 @@ pub enum CheckpointCryptoError {
     /// Plaintext, wrapped key or envelope exceeded its fixed bound.
     #[error("checkpoint encryption size limit exceeded")]
     LimitExceeded,
+    /// The envelope names a key-encryption-key id that the configured local file does not list.
+    #[error("checkpoint key-encryption-key id is not configured")]
+    UnknownKey,
     /// Ownership, key, nonce, ciphertext or authentication tag did not match.
     #[error("checkpoint authentication failed")]
     Authentication,
@@ -398,6 +414,164 @@ impl CheckpointKeys for KmsCheckpointKeys {
     }
 }
 
+/// Self-hosted custody: fresh AES-256 data keys wrapped under a local key-encryption-key file.
+///
+/// Wrapped key layout: `id_len (1) | key id | nonce (12) | AES-256-GCM(data key) | tag (16)`,
+/// authenticated with the key id and the checkpoint ownership tuple, so a wrap cannot be
+/// replayed for another tenant, run, session, checkpoint or key id.
+#[non_exhaustive]
+pub struct FileCheckpointKeys {
+    keks: Arc<KekFile>,
+}
+
+impl fmt::Debug for FileCheckpointKeys {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("FileCheckpointKeys([REDACTED])")
+    }
+}
+
+impl FileCheckpointKeys {
+    /// Load the key-encryption-key file at `path`; the first key wraps new data keys.
+    ///
+    /// No key is generated.
+    ///
+    /// # Errors
+    /// Rejects an unreadable, group/other-accessible, oversized, empty or malformed file and
+    /// repeated key ids.
+    pub fn from_file(path: &Path) -> Result<Self, KekFileError> {
+        Ok(Self {
+            keks: Arc::new(KekFile::load(path)?),
+        })
+    }
+
+    /// Key ids in the loaded file, primary first.
+    pub fn key_ids(&self) -> impl Iterator<Item = &str> {
+        self.keks.ids()
+    }
+}
+
+fn kek_aad(key_id: &str, id_len: u8, context: &CheckpointContext) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(KEK_DOMAIN.len() + 1 + key_id.len() + DOMAIN.len() + 66);
+    aad.extend_from_slice(KEK_DOMAIN);
+    aad.push(id_len);
+    aad.extend_from_slice(key_id.as_bytes());
+    aad.extend_from_slice(&context.aad(FILE));
+    aad
+}
+
+fn kek_cipher(kek: &[u8; 32]) -> Result<LessSafeKey, CheckpointCryptoError> {
+    UnboundKey::new(&AES_256_GCM, kek)
+        .map(LessSafeKey::new)
+        .map_err(|_| CheckpointCryptoError::Authentication)
+}
+
+fn kek_wrap(
+    keks: &KekFile,
+    context: &CheckpointContext,
+    data_key: &[u8; 32],
+) -> Result<Vec<u8>, CheckpointCryptoError> {
+    let (key_id, kek) = keks.primary();
+    let mut nonce = [0; NONCE_BYTES];
+    random_fill(&mut nonce)?;
+    let id_len = u8::try_from(key_id.len()).map_err(|_| CheckpointCryptoError::InvalidConfiguration)?;
+    // The data key sits in this buffer only until it is encrypted in place; the capacity is
+    // exact, so the buffer is never reallocated, and it is zeroized on every path.
+    let mut wrapped = Zeroizing::new(Vec::with_capacity(
+        1 + key_id.len() + NONCE_BYTES + 32 + TAG_BYTES,
+    ));
+    wrapped.push(id_len);
+    wrapped.extend_from_slice(key_id.as_bytes());
+    wrapped.extend_from_slice(&nonce);
+    let body = wrapped.len();
+    wrapped.extend_from_slice(data_key);
+    let tag = kek_cipher(kek)?
+        .seal_in_place_separate_tag(
+            Nonce::assume_unique_for_key(nonce),
+            Aad::from(kek_aad(key_id, id_len, context)),
+            &mut wrapped[body..],
+        )
+        .map_err(|_| CheckpointCryptoError::Authentication)?;
+    wrapped.extend_from_slice(tag.as_ref());
+    Ok(wrapped.to_vec())
+}
+
+fn kek_unwrap(
+    keks: &KekFile,
+    context: &CheckpointContext,
+    wrapped: &[u8],
+) -> Result<Zeroizing<Vec<u8>>, CheckpointCryptoError> {
+    let (&id_len, rest) = wrapped
+        .split_first()
+        .ok_or(CheckpointCryptoError::InvalidEnvelope)?;
+    let id_bytes = usize::from(id_len);
+    if rest.len() != id_bytes + NONCE_BYTES + 32 + TAG_BYTES {
+        return Err(CheckpointCryptoError::InvalidEnvelope);
+    }
+    let (key_id, rest) = rest.split_at(id_bytes);
+    let key_id = std::str::from_utf8(key_id)
+        .ok()
+        .filter(|id| is_valid_key_id(id))
+        .ok_or(CheckpointCryptoError::InvalidEnvelope)?;
+    let (nonce, sealed) = rest.split_at(NONCE_BYTES);
+    let nonce: [u8; NONCE_BYTES] = nonce
+        .try_into()
+        .map_err(|_| CheckpointCryptoError::InvalidEnvelope)?;
+    let kek = keks.get(key_id).ok_or(CheckpointCryptoError::UnknownKey)?;
+    let mut buffer = Zeroizing::new(sealed.to_vec());
+    let length = kek_cipher(kek)?
+        .open_in_place(
+            Nonce::assume_unique_for_key(nonce),
+            Aad::from(kek_aad(key_id, id_len, context)),
+            &mut buffer,
+        )
+        .map_err(|_| CheckpointCryptoError::Authentication)?
+        .len();
+    buffer.truncate(length);
+    if buffer.len() != 32 {
+        return Err(CheckpointCryptoError::Authentication);
+    }
+    Ok(buffer)
+}
+
+#[async_trait]
+impl CheckpointKeys for FileCheckpointKeys {
+    async fn seal(
+        &self,
+        context: &CheckpointContext,
+        plaintext: Zeroizing<Vec<u8>>,
+    ) -> Result<Ciphertext, CheckpointCryptoError> {
+        check_plaintext(&plaintext)?;
+        let mut data_key = Zeroizing::new([0_u8; 32]);
+        random_fill(data_key.as_mut())?;
+        let wrapped = kek_wrap(&self.keks, context, &data_key)?;
+        let context = *context;
+        blocking(move || encrypt(&context, FILE, data_key.as_ref(), &wrapped, plaintext)).await
+    }
+
+    async fn open(
+        &self,
+        context: &CheckpointContext,
+        ciphertext: Vec<u8>,
+    ) -> Result<Zeroizing<Vec<u8>>, CheckpointCryptoError> {
+        let envelope = parse_envelope(&ciphertext, FILE)?;
+        let data_key = kek_unwrap(&self.keks, context, envelope.wrapped)?;
+        let context = *context;
+        let nonce = envelope.nonce;
+        let encrypted_start = HEADER_BYTES + envelope.wrapped.len();
+        blocking(move || {
+            decrypt(
+                &context,
+                FILE,
+                &data_key,
+                nonce,
+                encrypted_start,
+                Zeroizing::new(ciphertext),
+            )
+        })
+        .await
+    }
+}
+
 /// Explicit absent custody. Never accepts or returns plaintext.
 #[derive(Debug, Default)]
 pub struct UnavailableCheckpointKeys;
@@ -482,7 +656,7 @@ fn parse_envelope(bytes: &[u8], provider: u8) -> Result<Envelope<'_>, Checkpoint
     if wrapped_len > MAX_WRAPPED_KEY {
         return Err(CheckpointCryptoError::LimitExceeded);
     }
-    if (provider == MEMORY && wrapped_len != 0) || (provider == KMS && wrapped_len == 0) {
+    if (provider == MEMORY) != (wrapped_len == 0) {
         return Err(CheckpointCryptoError::InvalidEnvelope);
     }
     let encrypted_start = HEADER_BYTES

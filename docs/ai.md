@@ -20,34 +20,42 @@ The operations are also available as tools of the native [MCP surface](mcp.md).
 
 ## Model-processing policy
 
-Everything model-assisted goes through one governor. Configure it under `intel.policy` in the API
-configuration; nothing in it can be set by a request, a page or a model.
+Everything model-assisted goes through one governor. The operator configures it in the `[intel.policy]`
+section of `crawlx.toml` (the file named by `CRAWLX_CONFIG`, else `./crawlx.toml`), which `crawlx serve`
+reads at start-up; nothing in it can be set by a request, a page or a model. The keys are the API's
+camelCase configuration keys, and the section is read from the file only: there is no flag or environment
+override for it. Unknown keys fail `serve` and `crawlx config check`.
 
-```json
-{
-  "intel": {
-    "llm": { "endpoint": "https://models.internal.example/v1", "model": "reviewer-1", "apiKeyRef": "env:CRAWLX_LLM_API_KEY" },
-    "policy": {
-      "externalProcessing": true,
-      "providers": {
-        "analysis": {
-          "revision": "2026-11",
-          "retentionCapability": "none",
-          "allowedPurposes": ["crawl_spec", "agent_plan", "evidence_extraction", "surface_triage", "run_summary"]
-        }
-      },
-      "maxInputBytes": 131072,
-      "maxOutputTokens": 2048,
-      "maxResponseBytes": 1048576,
-      "maxRunCalls": 16,
-      "maxRunTokens": 200000,
-      "deadlineMs": 60000,
-      "proposalTtlSecs": 900,
-      "allowSelfApproval": false
-    }
-  }
-}
+```toml
+[intel.policy]
+externalProcessing = true
+maxInputBytes = 131072
+maxOutputTokens = 2048
+maxResponseBytes = 1048576
+maxRunCalls = 16
+maxRunTokens = 200000
+deadlineMs = 60000
+proposalTtlSecs = 900
+allowSelfApproval = false
+
+[intel.policy.providers.analysis]
+endpoint = "https://models.internal.example/v1"
+model = "reviewer-1"
+apiKeyRef = "env:POLICY_PROVIDER_KEY"   # env:NAME or file:/path, never the key itself
+revision = "2026-11"
+retentionCapability = "none"
+allowedPurposes = ["crawl_spec", "agent_plan", "evidence_extraction", "surface_triage", "run_summary"]
 ```
+
+A provider that omits `endpoint`, `model` and `apiKeyRef` uses the default model endpoint, which is set by the
+environment (`CRAWLX_LLM_BASE_URL`, `CRAWLX_LLM_MODEL`, `CRAWLX_LLM_API_KEY`). Provider keys are only ever
+referenced: a key reference that is not `env:` or `file:`, and an endpoint carrying user info, a query or a
+fragment, are refused. Without an `[intel.policy]` section, or with `externalProcessing = false`, every
+model call of these endpoints answers `403 external_processing_disabled`.
+
+`crawlx config check` validates the section (a provider that cannot be built, a key reference that does not
+resolve, a switch that disagrees with the approved providers) and reports it under `intel.policy` with
+endpoints stripped of user info and each key reference shown with whether it resolves, never the key.
 
 | Key | Meaning |
 |---|---|

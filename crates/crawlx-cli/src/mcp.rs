@@ -22,6 +22,9 @@
 //! resources. The compatibility tools above are the default surface.
 
 mod api;
+mod audit;
+#[cfg(test)]
+mod audit_tests;
 mod catalog;
 mod native;
 mod protocol;
@@ -31,14 +34,16 @@ mod tools;
 use anyhow::Context as _;
 use api::{describe, tokio_sleep, Api, Config};
 use catalog::Capability;
-use clap::{Args, ValueEnum};
+use clap::{Args, Subcommand, ValueEnum};
 use protocol::{
     error_frame, parse_incoming, read_frame, result_frame, write_frame, Frame, Incoming, RpcError,
-    INVALID_REQUEST, MAX_FRAME_BYTES, METHOD_NOT_FOUND, PARSE_ERROR, SERVER_BUSY,
+    AUDIT_UNAVAILABLE, INVALID_REQUEST, MAX_FRAME_BYTES, METHOD_NOT_FOUND, PARSE_ERROR, SERVER_BUSY,
 };
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::fmt;
+use std::io::Write;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -74,9 +79,23 @@ pub enum McpSurface {
     Native,
 }
 
+/// Subcommands of `crawlx mcp`. Without one, the server runs on stdio.
+#[derive(Subcommand, Clone, Debug)]
+pub enum McpCommand {
+    /// Check the hash chain of an audit log written by `--audit-log`: prints the entry count
+    /// and the last hash, and exits non-zero naming the first broken line.
+    AuditVerify {
+        /// The audit log file.
+        path: PathBuf,
+    },
+}
+
 /// Arguments of `crawlx mcp`.
 #[derive(Args, Clone)]
 pub struct McpArgs {
+    /// Subcommand; the server itself runs when none is given.
+    #[command(subcommand)]
+    pub command: Option<McpCommand>,
     /// Base URL of the crawlx API whose `/compat/v2` routes the tools call.
     /// Falls back to the drop-in client's API-URL variable, then `http://127.0.0.1:8080`.
     #[arg(long, env = "CRAWLX_API_URL", value_name = "URL")]
@@ -155,11 +174,19 @@ pub struct McpArgs {
     /// most 64 MiB when a call uses it. Models never supply paths.
     #[arg(long = "upload-grant", value_name = "HANDLE=PATH", value_parser = parse_upload_grant)]
     pub upload_grants: Vec<UploadGrant>,
+    /// Append a hash-chained audit log of every tool call and resource read to this file
+    /// (digests and sizes only, never arguments or content). The file is created with mode
+    /// 0600; its directory must exist. If it cannot be opened the server does not start, and
+    /// a call whose record cannot be written is refused. One file belongs to one server
+    /// process. Check it with `crawlx mcp audit-verify`.
+    #[arg(long, env = "CRAWLX_MCP_AUDIT_LOG", value_name = "PATH")]
+    pub audit_log: Option<PathBuf>,
 }
 
 impl fmt::Debug for McpArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("McpArgs")
+            .field("command", &self.command)
             .field("api_url", &self.api_url)
             .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
             .field("timeout_ms", &self.timeout_ms)
@@ -169,6 +196,7 @@ impl fmt::Debug for McpArgs {
             .field("capabilities", &self.capabilities)
             .field("max_result_bytes", &self.max_result_bytes)
             .field("max_in_flight", &self.max_in_flight)
+            .field("audit_log", &self.audit_log)
             .field(
                 "upload_grants",
                 &self
@@ -209,11 +237,16 @@ impl McpArgs {
     }
 }
 
-/// Run `crawlx mcp` on the process's stdin and stdout until stdin closes.
+/// Run `crawlx mcp` on the process's stdin and stdout until stdin closes, or the subcommand
+/// asked for (results go to `out`).
 ///
 /// # Errors
-/// Fails when the arguments cannot be resolved or the stdio transport breaks.
-pub(crate) async fn run(args: McpArgs) -> anyhow::Result<ExitCode> {
+/// Fails when the arguments cannot be resolved, the audit log cannot be opened or the stdio
+/// transport breaks.
+pub(crate) async fn run(args: McpArgs, out: &mut dyn Write) -> anyhow::Result<ExitCode> {
+    if let Some(McpCommand::AuditVerify { path }) = &args.command {
+        return audit_verify(path, out);
+    }
     let config = args.resolve(&|name| std::env::var(name).ok())?;
     let api = Api::new(&config, tokio_sleep()).context("cannot build the api client")?;
     tracing::info!(
@@ -231,21 +264,54 @@ pub(crate) async fn run(args: McpArgs) -> anyhow::Result<ExitCode> {
             Some(native)
         }
     };
-    let server = Arc::new(Server::build(api, native, max_in_flight));
+    let audit = match &args.audit_log {
+        Some(path) => {
+            let audit = audit::Audit::open(path).context("the audit log is configured but cannot be used")?;
+            tracing::info!(path = %path.display(), "audit log enabled");
+            Some(Arc::new(audit))
+        }
+        None => {
+            if native
+                .as_ref()
+                .is_some_and(|native| native.capability_names() != ["inspect"])
+            {
+                tracing::warn!("native surface with more than `inspect` and no audit log (--audit-log)");
+            }
+            None
+        }
+    };
+    let server = Arc::new(Server::build(api, native, max_in_flight).with_audit(audit));
     serve(BufReader::new(tokio::io::stdin()), tokio::io::stdout(), server)
         .await
         .context("the mcp stdio transport failed")?;
     Ok(ExitCode::SUCCESS)
 }
 
+/// `crawlx mcp audit-verify`: exit 0 when the chain is intact, 1 at the first broken line.
+fn audit_verify(path: &std::path::Path, out: &mut dyn Write) -> anyhow::Result<ExitCode> {
+    let found =
+        audit::verify(path).with_context(|| format!("cannot read the audit log `{}`", path.display()))?;
+    writeln!(out, "entries: {}", found.entries)?;
+    writeln!(out, "last_hash: {}", found.last_hash)?;
+    Ok(match found.broken {
+        None => ExitCode::SUCCESS,
+        Some((line, reason)) => {
+            writeln!(out, "broken: line {line}: {reason}")?;
+            ExitCode::from(1)
+        }
+    })
+}
+
 /// Protocol state: the API client, the cancellation tokens of requests in flight, the
-/// admission semaphore and, on the native surface, the native tool set.
+/// admission semaphore, on the native surface the native tool set and, when configured, the
+/// audit log.
 struct Server {
     api: Api,
     in_flight: Mutex<BTreeMap<String, CancellationToken>>,
     permits: Arc<Semaphore>,
     max_in_flight: usize,
     native: Option<native::Native>,
+    audit: Option<Arc<audit::Audit>>,
 }
 
 impl Server {
@@ -263,7 +329,14 @@ impl Server {
             permits: Arc::new(Semaphore::new(max_in_flight)),
             max_in_flight,
             native,
+            audit: None,
         }
+    }
+
+    /// The same server recording every call in `audit`.
+    fn with_audit(mut self, audit: Option<Arc<audit::Audit>>) -> Self {
+        self.audit = audit;
+        self
     }
 
     fn tokens(&self) -> MutexGuard<'_, BTreeMap<String, CancellationToken>> {
@@ -346,7 +419,26 @@ impl Server {
         (!replies.is_empty()).then_some(Value::Array(replies))
     }
 
+    /// The single dispatch point of every request. With an audit log, a request that reads or
+    /// changes anything (`tools/call`, `resources/read`) has its intent recorded before it
+    /// runs and its result after; if either record cannot be written the call is refused
+    /// (before it runs) or its result withheld.
     async fn dispatch(&self, method: &str, params: Option<Value>) -> Result<Value, RpcError> {
+        let Some(audit) = &self.audit else {
+            return self.route(method, params).await;
+        };
+        let Some(call) = audit::CallInfo::for_request(method, params.as_ref(), self.native.as_ref()) else {
+            return self.route(method, params).await;
+        };
+        let guard = audit.begin(call).map_err(|error| audit_refusal(&error, false))?;
+        let result = self.route(method, params).await;
+        guard
+            .finish(&result)
+            .map_err(|error| audit_refusal(&error, true))?;
+        result
+    }
+
+    async fn route(&self, method: &str, params: Option<Value>) -> Result<Value, RpcError> {
         match (method, self.native.as_ref()) {
             ("initialize", native) => initialize(params, native),
             ("ping", _) => Ok(json!({})),
@@ -398,6 +490,18 @@ impl Server {
             Err(error) => tool_result(&describe(&error), true),
         })
     }
+}
+
+/// The error of a call the audit log could not record. The audit error names the file and the
+/// cause, never call content, so it is logged; the client gets a stable code only.
+fn audit_refusal(error: &audit::AuditError, ran: bool) -> RpcError {
+    tracing::error!(%error, "the audit log cannot record a call");
+    let message = if ran {
+        "the call ran but its audit record could not be written; its result is withheld"
+    } else {
+        "the audit log is unavailable; the call was refused and did not run"
+    };
+    RpcError::new(AUDIT_UNAVAILABLE, message).with_data(json!({ "error": { "code": "audit_unavailable" } }))
 }
 
 fn pretty(value: &Value) -> String {
@@ -1441,6 +1545,8 @@ mod tests {
             max_result_bytes: 1024 * 1024,
             max_in_flight: 32,
             upload_grants: Vec::new(),
+            audit_log: None,
+            command: None,
         }
     }
 
