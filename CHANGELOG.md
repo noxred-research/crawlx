@@ -72,6 +72,12 @@ project is pre-1.0; minor versions may contain breaking changes.
   refusals recorded). The server refuses to start, and refuses a call, when the log cannot be written.
   `crawlx mcp audit-verify PATH` checks the chain; see `docs/mcp.md`.
 
+### Changed
+
+- Dependency and base-image updates are made by maintainers by hand: `.github/dependabot.yml` is removed, and the base-image digest comments in the Dockerfiles say so. Advisories for the locked Rust dependencies are checked by `cargo deny` in the CI workflow, and the self-hosted `security` workflow reviews dependency changes in pull requests (`dependency-review`) and runs the OpenSSF Scorecard.
+- `ci/lint-runners.sh` (run by the `workflow-lint` job, with a self-test) fails when a job's `runs-on` lacks the `self-hosted` label or an update bot configuration exists, so no job can fall back to a hosted runner.
+- Cleaned for the newest stable toolchain: iterator forms in the XPath axis walks, removal of unused dependencies, and explicit handling of the exit codes tests ignored.
+
 ### Fixed
 
 - The object-store prefix claim retries a transport failure of its marker requests a bounded number of times before refusing the write, and the profile tests assert the claim's request shape (no checksum where the profile forbids it, a checksum where object lock requires it).

@@ -11,8 +11,8 @@
 //! * [`audit`]: verdict audit entries; no admission without a row.
 //! * [`kernel`]: `SafetyKernel`, sealed `AdmittedAction`, live `confirm`.
 //!
-//! The crate depends only on `crawlx-core`, `crawlx-policy` and `crawlx-url`;
-//! it must never depend on `crawlx-model`, strategies, graph or browser.
+//! The crate depends only on `crawlx-core` (scope decisions of `crawlx-policy` and
+//! URL types of `crawlx-url` reach it through `crawlx-core` types); it must never depend on `crawlx-model`, strategies, graph or browser.
 
 pub mod approvals;
 pub mod audit;

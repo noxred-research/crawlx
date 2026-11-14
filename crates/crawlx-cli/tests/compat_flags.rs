@@ -1060,7 +1060,7 @@ async fn comma_lists_list_files_and_flags_are_separate_runs_printed_in_seed_orde
     args.push(list.to_str().unwrap().to_owned());
     args.extend(strings(&["-f", "url"]));
     let (stdout, code) = crawl(&args).await;
-    code.unwrap();
+    let _exit = code.unwrap();
 
     // text lines: seed A's pages, then B's, then C's, each in URL order
     let lines: Vec<&str> = stdout.lines().take_while(|l| !l.starts_with("seed ")).collect();
@@ -1109,7 +1109,7 @@ async fn parallelism_bounds_how_many_seeds_run_at_once() {
                 .join(","),
         );
         let (_, code) = crawl(&args).await;
-        code.unwrap();
+        let _exit = code.unwrap();
         for site in &sites {
             assert_eq!(site.count("/"), 1, "-p {parallelism}");
         }
@@ -1206,7 +1206,7 @@ async fn resume_continues_a_stopped_run_and_removes_the_file_when_the_frontier_r
         &seed,
     ]));
     let (stdout, code) = crawl(&args).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert!(stdout.contains("resume state written to"), "{stdout}");
     let state = ResumeState::from_json(&std::fs::read_to_string(&resume).unwrap()).unwrap();
     assert!(!state.pending.is_empty(), "{state:?}");
@@ -1224,7 +1224,7 @@ async fn resume_continues_a_stopped_run_and_removes_the_file_when_the_frontier_r
         &seed,
     ]));
     let (stdout, code) = crawl(&args).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert!(stdout.contains("terminal_reason=frontier_exhausted"), "{stdout}");
     assert!(!resume.exists(), "an exhausted frontier deletes the resume file");
     assert_eq!(small_pages(&site), ["/", "/p1", "/p2", "/p3", "/p4"]);
@@ -1252,7 +1252,7 @@ async fn resume_with_several_seeds_keeps_one_state_per_seed() {
         "-u",
         &seeds,
     ]));
-    crawl(&args).await.1.unwrap();
+    let _exit = crawl(&args).await.1.unwrap();
     let envelope: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&resume).unwrap()).unwrap();
     assert_eq!(envelope["runs"].as_object().unwrap().len(), 2, "{envelope}");
@@ -1266,7 +1266,7 @@ async fn resume_with_several_seeds_keeps_one_state_per_seed() {
         "-u",
         &seeds,
     ]));
-    crawl(&args).await.1.unwrap();
+    let _exit = crawl(&args).await.1.unwrap();
     assert!(!resume.exists());
     for site in [&a, &b] {
         assert_eq!(small_pages(site), ["/", "/p1", "/p2", "/p3", "/p4"]);
@@ -1338,7 +1338,7 @@ async fn ctrl_c_writes_the_resume_state_and_a_second_run_finishes_the_crawl() {
     let mut args = ctx.base();
     args.extend(strings(&["--resume", resume.to_str().unwrap(), &seed]));
     let (_, code) = crawl(&args).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert!(!resume.exists());
     for target in ["/p1", "/p2", "/p3", "/p4", "/p5", "/p6"] {
         assert_eq!(
@@ -1494,7 +1494,7 @@ async fn a_yaml_config_can_drive_a_whole_crawl() {
         cfg.to_str().unwrap(),
         &format!("{}/", site.base),
     ]));
-    crawl(&args).await.1.unwrap();
+    let _exit = crawl(&args).await.1.unwrap();
     assert_eq!(std::fs::read_to_string(&out).unwrap(), "/\n/a\n/b\n");
 }
 
@@ -1584,7 +1584,7 @@ async fn compat_defaults_leave_technologies_out_of_jsonl_unless_tech_detect_is_g
         args.extend(strings(extra));
         async move {
             let _ctx = ctx;
-            crawl(&args).await.1.unwrap();
+            let _exit = crawl(&args).await.1.unwrap();
             let records = read_jsonl(&file);
             assert_eq!(records.len(), 1);
             records[0]["response"]["technologies"].clone()
@@ -1641,7 +1641,7 @@ async fn javascript_modes_control_inline_and_standalone_crawl_requests() {
         let mut args = ctx.base();
         args.push(format!("{}/", site.base));
         args.extend(strings(&flags));
-        crawl(&args).await.1.unwrap();
+        let _exit = crawl(&args).await.1.unwrap();
         let hits = site.pages_hit();
         assert!(
             hits.iter().any(|path| path == "/structural"),
@@ -1686,7 +1686,7 @@ async fn javascript_cli_selection_overrides_yaml_and_request_config_on_the_wire(
         let mut args = ctx.base();
         args.extend(strings(&["--config", config.to_str().unwrap(), "--jsluice"]));
         args.push(format!("{}/", site.base));
-        crawl(&args).await.1.unwrap();
+        let _exit = crawl(&args).await.1.unwrap();
         let hits = site.pages_hit();
         assert!(hits.iter().any(|path| path == "/structural"), "{hits:?}");
         assert!(hits.iter().any(|path| path == "/selected/ast-only"), "{hits:?}");
@@ -1742,7 +1742,7 @@ async fn depth_limits_the_link_hops() {
         let before = site.hits().len();
         let mut args = ctx.base();
         args.extend(strings(&["-d", depth, &format!("{}/", site.base)]));
-        crawl(&args).await.1.unwrap();
+        let _exit = crawl(&args).await.1.unwrap();
         let mut got: Vec<String> = site
             .hits()
             .into_iter()
@@ -1770,7 +1770,7 @@ async fn path_climb_crawls_the_parent_directories_of_discovered_urls() {
     let ctx = Ctx::new(&[&climbing.base]);
     let mut args = ctx.base();
     args.extend(strings(&["--path-climb", &format!("{}/", climbing.base)]));
-    crawl(&args).await.1.unwrap();
+    let _exit = crawl(&args).await.1.unwrap();
     assert_eq!(
         small_pages(&climbing),
         ["/", "/docs/", "/docs/guide/", "/docs/guide/page"]
@@ -1781,7 +1781,7 @@ async fn path_climb_crawls_the_parent_directories_of_discovered_urls() {
     let ctx = Ctx::new(&[&plain.base]);
     let mut args = ctx.base();
     args.push(format!("{}/", plain.base));
-    crawl(&args).await.1.unwrap();
+    let _exit = crawl(&args).await.1.unwrap();
     assert_eq!(small_pages(&plain), ["/", "/docs/guide/page"]);
 }
 
@@ -1807,7 +1807,7 @@ async fn ignore_query_params_fetches_urls_that_differ_only_in_values_once() {
         args.push(format!("{}/", site.base));
         async move {
             let _ctx = ctx;
-            crawl(&args).await.1.unwrap();
+            let _exit = crawl(&args).await.1.unwrap();
         }
     };
     run(&[]).await;
@@ -1847,7 +1847,7 @@ async fn disable_unique_filter_keeps_pages_with_identical_bodies() {
         args.extend(strings(extra));
         args.push(format!("{}/", site.base));
         async move {
-            crawl(&args).await.1.unwrap();
+            let _exit = crawl(&args).await.1.unwrap();
             let metadata: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(ctx.out().join("metadata.json")).unwrap()).unwrap();
             metadata
@@ -1895,7 +1895,7 @@ async fn a_regex_field_scope_admits_hosts_it_matches() {
         async move {
             let _ctx = ctx;
             let (stdout, code) = crawl(&args).await;
-            code.unwrap();
+            let _exit = code.unwrap();
             stdout
                 .lines()
                 .take_while(|l| !l.starts_with("crawl "))
@@ -2125,7 +2125,7 @@ async fn headers_cookies_and_user_agent_reach_the_site_and_never_reach_the_repor
         &format!("{}/", site.base),
     ]));
     let (stdout, code) = crawl(&args).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     let hits = site.hits();
     assert!(!hits.is_empty());
     for hit in hits.iter().filter(|h| h.target == "/a") {
@@ -2240,7 +2240,7 @@ async fn resolvers_decide_how_the_seed_host_resolves() {
     let mut args = ctx.base();
     args.extend(strings(&["--resolvers", &dns.to_string(), &seed]));
     let (stdout, code) = crawl(&args).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert!(stdout.contains("urls.succeeded"), "{stdout}");
     assert!(
         small_pages(&site).contains(&"/a".to_owned()),
@@ -2285,7 +2285,7 @@ async fn a_resolver_list_file_steers_resolution_but_never_widens_authorization()
         &format!("http://fake-host.test:{port}/"),
     ]));
     let (stdout, code) = crawl(&args).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert!(stdout.contains("urls.succeeded"), "{stdout}");
     let before = site.hits().len();
     assert!(before > 0);
@@ -2330,7 +2330,7 @@ async fn automatic_form_fill_follows_get_forms_with_the_configured_values() {
     let ctx = Ctx::new(&[&site.base]);
     let mut args = ctx.base();
     args.push(seed.clone());
-    crawl(&args).await.1.unwrap();
+    let _exit = crawl(&args).await.1.unwrap();
     let before = site.pages_hit();
     assert!(
         before.iter().all(|t| !t.contains("filled%40")),
@@ -2342,7 +2342,7 @@ async fn automatic_form_fill_follows_get_forms_with_the_configured_values() {
     std::fs::write(&values, "email: filled@example.test\nplaceholder: lorem\n").unwrap();
     let mut args = ctx.base();
     args.extend(strings(&["--form-config", values.to_str().unwrap(), &seed]));
-    crawl(&args).await.1.unwrap();
+    let _exit = crawl(&args).await.1.unwrap();
     let filled: Vec<String> = site
         .pages_hit()
         .into_iter()
@@ -2369,7 +2369,7 @@ async fn output_file_receives_the_urls_and_no_clobber_numbers_the_next_file() {
         &format!("{}/", site.base),
     ]));
     let (stdout, code) = crawl(&args).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     let expected = format!("{b}/\n{b}/a\n{b}/b\n", b = site.base);
     assert_eq!(std::fs::read_to_string(&file).unwrap(), expected);
     assert!(
@@ -2385,7 +2385,7 @@ async fn output_file_receives_the_urls_and_no_clobber_numbers_the_next_file() {
         "--no-clobber",
         &format!("{}/", site.base),
     ]));
-    crawl(&args).await.1.unwrap();
+    let _exit = crawl(&args).await.1.unwrap();
     assert_eq!(std::fs::read_to_string(&file).unwrap(), expected);
     assert_eq!(std::fs::read_to_string(ctx.path("urls1.txt")).unwrap(), expected);
 
@@ -2397,7 +2397,7 @@ async fn output_file_receives_the_urls_and_no_clobber_numbers_the_next_file() {
         file.to_str().unwrap(),
         &format!("{}/", site.base),
     ]));
-    crawl(&args).await.1.unwrap();
+    let _exit = crawl(&args).await.1.unwrap();
     assert_eq!(std::fs::read_to_string(&file).unwrap(), expected);
 }
 
@@ -2412,7 +2412,7 @@ async fn store_response_writes_raw_exchanges_and_an_index() {
         dir.to_str().unwrap(),
         &format!("{}/", site.base),
     ]));
-    crawl(&args).await.1.unwrap();
+    let _exit = crawl(&args).await.1.unwrap();
     let index = std::fs::read_to_string(dir.join("index.txt")).unwrap();
     let lines: Vec<&str> = index.lines().collect();
     assert_eq!(lines.len(), 3, "{index}");
@@ -2442,7 +2442,7 @@ async fn store_response_writes_raw_exchanges_and_an_index() {
         "-ncb",
         &format!("{}/", site.base),
     ]));
-    crawl(&args).await.1.unwrap();
+    let _exit = crawl(&args).await.1.unwrap();
     assert_eq!(std::fs::read_to_string(dir.join("index.txt")).unwrap(), index);
     assert_eq!(
         std::fs::read_to_string(ctx.path("responses1").join("index.txt"))
@@ -2454,7 +2454,7 @@ async fn store_response_writes_raw_exchanges_and_an_index() {
     // -sr alone stores under the output directory
     let mut args = ctx.base();
     args.extend(strings(&["--store-response", &format!("{}/", site.base)]));
-    crawl(&args).await.1.unwrap();
+    let _exit = crawl(&args).await.1.unwrap();
     assert!(ctx.out().join("crawlx_response").join("index.txt").is_file());
 }
 
@@ -2470,7 +2470,7 @@ async fn match_and_filter_regexes_select_output_lines() {
         async move {
             let _ctx = ctx;
             let (stdout, code) = crawl(&args).await;
-            code.unwrap();
+            let _exit = code.unwrap();
             stdout
                 .lines()
                 .take_while(|l| !l.starts_with("crawl "))
@@ -2507,7 +2507,7 @@ async fn several_fields_print_one_line_per_value_in_field_order() {
         &format!("{}/", site.base),
     ]));
     let (stdout, code) = crawl(&args).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     let host = site.authority();
     let lines: Vec<&str> = stdout.lines().take_while(|l| !l.starts_with("crawl ")).collect();
     let fqdn = host.split(':').next().unwrap();
@@ -2535,7 +2535,7 @@ async fn match_and_filter_conditions_select_jsonl_records() {
         args.push(seed.clone());
         async move {
             let _ctx = ctx;
-            crawl(&args).await.1.unwrap();
+            let _exit = crawl(&args).await.1.unwrap();
             let mut urls: Vec<String> = read_jsonl(&file).iter().map(|r| endpoint(r).to_owned()).collect();
             urls.sort();
             urls
@@ -2594,7 +2594,7 @@ async fn filter_page_type_filters_the_output_and_no_expand_page_type_stops_follo
         async move {
             let _ctx = ctx;
             let (stdout, code) = crawl(&args).await;
-            code.unwrap();
+            let _exit = code.unwrap();
             let mut urls: Vec<String> = read_jsonl(&file)
                 .iter()
                 .map(|r| endpoint(r).rsplit('/').next().unwrap().to_owned())
@@ -2642,7 +2642,7 @@ async fn jsonl_carries_body_and_raw_unless_omitted_and_exclude_output_fields_dro
         args.push(seed.clone());
         async move {
             let _ctx = ctx;
-            crawl(&args).await.1.unwrap();
+            let _exit = crawl(&args).await.1.unwrap();
             read_jsonl(&file)
         }
     };
@@ -2687,7 +2687,7 @@ async fn list_output_fields_prints_the_jsonl_field_names_and_exits() {
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("out");
     let (stdout, code) = crawl(&strings(&["-lof", "--output", out.to_str().unwrap()])).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     let names: Vec<&str> = stdout.lines().collect();
     assert!(names.contains(&"status_code"), "{stdout}");
     assert!(names.contains(&"endpoint"), "{stdout}");
@@ -2711,7 +2711,7 @@ async fn the_error_log_lists_failed_urls() {
         &format!("{}/", site.base),
     ]));
     let (stdout, code) = crawl(&args).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     let lines = read_jsonl(&log);
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert_eq!(lines[0]["endpoint"], format!("{}/missing", site.base));
@@ -2726,7 +2726,7 @@ async fn the_error_log_lists_failed_urls() {
         "-ncb",
         &format!("{}/", site.base),
     ]));
-    crawl(&args).await.1.unwrap();
+    let _exit = crawl(&args).await.1.unwrap();
     assert_eq!(read_jsonl(&log).len(), 1);
     assert_eq!(read_jsonl(&ctx.path("errors1.log")).len(), 1);
 }
@@ -2739,7 +2739,7 @@ async fn silent_prints_results_only_and_no_color_controls_ansi() {
     let mut args = ctx.base();
     args.extend(strings(&["--silent", "-f", "path", &seed]));
     let (stdout, code) = crawl(&args).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert_eq!(stdout, "/\n/a\n/b\n");
 
     let mut args = ctx.base();
@@ -2784,7 +2784,7 @@ async fn knowledge_base_adds_the_object_to_jsonl_and_kb_endpoints_classifies_end
         "--kb-endpoints",
         &seed,
     ]));
-    crawl(&args).await.1.unwrap();
+    let _exit = crawl(&args).await.1.unwrap();
     let records = read_jsonl(&file);
     let kb = &records[0]["response"]["knowledgebase"];
     assert!(kb.is_object(), "{}", records[0]);
@@ -2804,7 +2804,7 @@ async fn knowledge_base_adds_the_object_to_jsonl_and_kb_endpoints_classifies_end
     let file = ctx.path("r.jsonl");
     let mut args = ctx.base();
     args.extend(strings(&["--jsonl", "-o", file.to_str().unwrap(), &seed]));
-    crawl(&args).await.1.unwrap();
+    let _exit = crawl(&args).await.1.unwrap();
     assert!(read_jsonl(&file)[0]["response"].get("knowledgebase").is_none());
 }
 
@@ -2825,7 +2825,7 @@ async fn validating_secrets_without_validators_says_so_and_leaves_findings_unkno
     let mut args = ctx.base();
     args.extend(strings(&["--kb-validate-secrets", &format!("{}/", site.base)]));
     let (stdout, code) = crawl(&args).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert!(stdout.contains("no validators configured"), "{stdout}");
     let metadata: serde_json::Value =
         serde_json::from_slice(&std::fs::read(ctx.out().join("metadata.json")).unwrap()).unwrap();
@@ -2844,7 +2844,7 @@ async fn validating_secrets_without_validators_says_so_and_leaves_findings_unkno
     let mut args = ctx.base();
     args.extend(strings(&["--kb-secrets", &format!("{}/", site.base)]));
     let (stdout, code) = crawl(&args).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert!(!stdout.contains("no validators configured"));
 }
 
@@ -2991,7 +2991,7 @@ async fn release_server(
 async fn update_asks_the_release_endpoint_once_and_reports_without_downloading() {
     let (url, hits, _task) = release_server("v99.0.0").await;
     let (stdout, code) = crawl_env(&strings(&["--update"]), &[("CRAWLX_RELEASE_URL", url.as_str())]).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
     assert!(
         stdout.contains("a newer crawlx is available: 99.0.0")
@@ -3025,17 +3025,17 @@ async fn the_automatic_update_check_is_off_by_default_and_disable_update_check_b
     args.push(format!("{}/", site.base));
     let count = || hits.load(std::sync::atomic::Ordering::SeqCst);
 
-    crawl_env(&args, &[("CRAWLX_RELEASE_URL", url.as_str())])
+    let _exit = crawl_env(&args, &[("CRAWLX_RELEASE_URL", url.as_str())])
         .await
         .1
         .unwrap();
     assert_eq!(count(), 0, "off unless CRAWLX_UPDATE_CHECK=1");
     let env = [("CRAWLX_RELEASE_URL", url.as_str()), ("CRAWLX_UPDATE_CHECK", "1")];
-    crawl_env(&args, &env).await.1.unwrap();
+    let _exit = crawl_env(&args, &env).await.1.unwrap();
     assert_eq!(count(), 1, "one request per crawl");
     let mut quiet = args.clone();
     quiet.push("--disable-update-check".to_owned());
-    crawl_env(&quiet, &env).await.1.unwrap();
+    let _exit = crawl_env(&quiet, &env).await.1.unwrap();
     assert_eq!(
         count(),
         1,
@@ -3057,7 +3057,7 @@ async fn no_sandbox_is_refused_without_the_ci_environment_switch() {
     assert!(site.hits().is_empty(), "nothing is crawled after the refusal");
     // with the switch the flag is accepted and the crawl runs
     let (_, code) = crawl_env(&args, &[("CRAWLX_UNSAFE_NO_SANDBOX_FOR_CI", "1")]).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert!(!site.hits().is_empty());
 }
 
@@ -3189,7 +3189,7 @@ async fn enable_diagnostics_prints_one_record_per_browser_session() {
         &format!("{}/", site.base),
     ]));
     let (stdout, code) = crawl(&args).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     let at = stdout
         .find("diagnostics: ")
         .unwrap_or_else(|| panic!("no diagnostics block:\n{stdout}"));
@@ -3218,6 +3218,6 @@ async fn enable_diagnostics_prints_one_record_per_browser_session() {
         &format!("{}/", site.base),
     ]));
     let (stdout, code) = crawl(&args).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert!(!stdout.contains("diagnostics:"), "{stdout}");
 }

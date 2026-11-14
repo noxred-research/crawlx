@@ -124,7 +124,7 @@ fn archive_commands_are_registered_as_native_offline_commands() {
 async fn real_artifact_export_import_inspect_locates_payload_and_declares_omissions() {
     let fixture = fixture().await;
     let mut output = Vec::new();
-    execute_with_clock(fixture.export("first.wacz"), &mut output, &fixture.clock)
+    let _exit = execute_with_clock(fixture.export("first.wacz"), &mut output, &fixture.clock)
         .await
         .unwrap();
     let manifest: serde_json::Value = serde_json::from_slice(&output).unwrap();
@@ -169,7 +169,7 @@ async fn real_artifact_export_import_inspect_locates_payload_and_declares_omissi
         assert!(!text.contains("CANARY_AUTH"));
     }
     let imported = fixture.dir.path().join("imported.wacz");
-    execute_with_clock(
+    let _exit = execute_with_clock(
         ArchiveArgs {
             command: ArchiveCommand::Import(ArchiveImportArgs {
                 input: path.clone(),
@@ -185,7 +185,7 @@ async fn real_artifact_export_import_inspect_locates_payload_and_declares_omissi
     .unwrap();
     assert_eq!(std::fs::read(&imported).unwrap(), std::fs::read(&path).unwrap());
     let payload = fixture.dir.path().join("payload.html");
-    execute_with_clock(
+    let _exit = execute_with_clock(
         ArchiveArgs {
             command: ArchiveCommand::Inspect(ArchiveInspectArgs {
                 input: imported,
@@ -200,7 +200,7 @@ async fn real_artifact_export_import_inspect_locates_payload_and_declares_omissi
     .await
     .unwrap();
     assert_eq!(std::fs::read_to_string(payload).unwrap(), text);
-    execute_with_clock(fixture.export("second.wacz"), &mut Vec::new(), &fixture.clock)
+    let _exit = execute_with_clock(fixture.export("second.wacz"), &mut Vec::new(), &fixture.clock)
         .await
         .unwrap();
     assert_eq!(
@@ -311,7 +311,7 @@ async fn available_capture_preserves_missing_representation_ledger_and_warc_bund
     };
     export.format = FormatArg::Warc;
     let mut output = Vec::new();
-    execute_with_clock(args, &mut output, &fixture.clock)
+    let _exit = execute_with_clock(args, &mut output, &fixture.clock)
         .await
         .unwrap();
     let manifest: serde_json::Value = serde_json::from_slice(&output).unwrap();
@@ -386,7 +386,7 @@ async fn explicit_cli_dependency_import_materializes_real_local_payload_and_refu
         panic!()
     };
     let mut output = Vec::new();
-    execute_with_clock(args, &mut output, &fixture.clock)
+    let _exit = execute_with_clock(args, &mut output, &fixture.clock)
         .await
         .unwrap();
     let result: serde_json::Value = serde_json::from_slice(&output).unwrap();
@@ -422,7 +422,7 @@ async fn explicit_cli_dependency_import_materializes_real_local_payload_and_refu
 #[tokio::test]
 async fn opaque_zip_comment_requires_tenant_rewrite_and_never_survives_import() {
     let fixture = fixture().await;
-    execute_with_clock(fixture.export("source.wacz"), &mut Vec::new(), &fixture.clock)
+    let _exit = execute_with_clock(fixture.export("source.wacz"), &mut Vec::new(), &fixture.clock)
         .await
         .unwrap();
     let input = fixture.dir.path().join("source.wacz");
@@ -453,7 +453,7 @@ async fn opaque_zip_comment_requires_tenant_rewrite_and_never_survives_import() 
         tenant: Some(fixture.tenant),
         ..Default::default()
     };
-    execute_with_clock(
+    let _exit = execute_with_clock(
         ArchiveArgs {
             command: ArchiveCommand::Import(ArchiveImportArgs {
                 input,
@@ -538,7 +538,7 @@ async fn actual_archive_export_cli_refuses_fifo_and_symlink_reports_without_wait
 #[tokio::test]
 async fn wacz_rollover_preserves_exact_ranges_fixities_and_refuses_oversized_members() {
     let fixture = fixture().await;
-    execute_with_clock(fixture.export("baseline.wacz"), &mut Vec::new(), &fixture.clock)
+    let _exit = execute_with_clock(fixture.export("baseline.wacz"), &mut Vec::new(), &fixture.clock)
         .await
         .unwrap();
     let baseline = wacz::inspect(
@@ -559,7 +559,7 @@ async fn wacz_rollover_preserves_exact_ranges_fixities_and_refuses_oversized_mem
             panic!("export expected")
         };
         export.rollover_bytes = Some(cap);
-        execute_with_clock(args, &mut Vec::new(), &fixture.clock)
+        let _exit = execute_with_clock(args, &mut Vec::new(), &fixture.clock)
             .await
             .unwrap();
     }
@@ -640,7 +640,7 @@ async fn native_bundle_verify_inspect_import_and_member_paths_enforce_completene
         panic!("export expected");
     };
     export.format = FormatArg::Warc;
-    execute_with_clock(args, &mut Vec::new(), &fixture.clock)
+    let _exit = execute_with_clock(args, &mut Vec::new(), &fixture.clock)
         .await
         .unwrap();
     let bundle = fixture.dir.path().join("native-complete");

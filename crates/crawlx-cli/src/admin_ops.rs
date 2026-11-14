@@ -455,7 +455,7 @@ async fn run_database<B: Tenancy>(
             )?;
             if a.all {
                 let runs = ops.pause(RunSelector::All).await?;
-                report_runs(out, "paused", &runs)?;
+                write_runs(out, "paused", &runs)?;
             }
             writeln!(out, "resume with: crawlx admin resume --all --admission")?;
             Ok(ExitCode::SUCCESS)
@@ -604,11 +604,16 @@ async fn sqlx_count<B: Sql>(pg: &Store<B>) -> anyhow::Result<i64> {
         .map_err(|e| anyhow!("counting active runs: {}", crate::authz::chain(&e)))
 }
 
-fn report_runs(out: &mut dyn Write, verb: &str, runs: &[CrawlRunId]) -> anyhow::Result<ExitCode> {
+fn write_runs(out: &mut dyn Write, verb: &str, runs: &[CrawlRunId]) -> anyhow::Result<()> {
     writeln!(out, "{verb}: {} run(s)", runs.len())?;
     for r in runs {
         writeln!(out, "{r}")?;
     }
+    Ok(())
+}
+
+fn report_runs(out: &mut dyn Write, verb: &str, runs: &[CrawlRunId]) -> anyhow::Result<ExitCode> {
+    write_runs(out, verb, runs)?;
     Ok(ExitCode::SUCCESS)
 }
 

@@ -217,7 +217,7 @@ impl Source {
             clock: &SystemClock,
         };
         let mut out = Vec::new();
-        crawlx_cli::reparse::execute_with_services(
+        let _exit = crawlx_cli::reparse::execute_with_services(
             &services,
             intent,
             ParserPipeline::new(Default::default()).unwrap(),

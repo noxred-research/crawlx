@@ -44,7 +44,7 @@ async fn s1_static_crawl_matches_the_manifest_counters() {
     ])
     .unwrap();
     let mut out = Vec::new();
-    crawlx_cli::execute(cli, &mut out).await.unwrap();
+    let _exit = crawlx_cli::execute(cli, &mut out).await.unwrap();
     let stdout = String::from_utf8(out).unwrap();
     println!("{stdout}");
     let report: serde_json::Value =
