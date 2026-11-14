@@ -2308,3 +2308,37 @@ fn object_store_lifecycle_expires_each_artifact_prefix_and_never_audit() {
     // the prefix the exporter writes is the exempt one
     assert_eq!(crawlx_storage::audit::EXPORT_PREFIX, "audit/");
 }
+
+#[test]
+fn plain_manifests_carry_the_checkpoint_kek_as_an_optional_patch() {
+    let patch = read("deploy/k8s/checkpoint-kek-patch.yaml");
+    let doc: Value = serde_yaml_ng::from_str(&patch).unwrap();
+    let pod = &doc["spec"]["template"]["spec"];
+    let container = &pod["containers"][0];
+    assert_eq!(container["name"], "worker");
+    assert_eq!(container["env"][0]["name"], "CRAWLX_CHECKPOINT_KEK_FILE");
+    assert_eq!(
+        container["env"][0]["value"],
+        "/run/secrets/crawlx-checkpoint-kek/checkpoint_kek"
+    );
+    assert_eq!(container["volumeMounts"][0]["readOnly"], true);
+    assert!(
+        patch.contains("defaultMode: 0440") && patch.contains("mode: 0440"),
+        "the Secret is mounted 0440"
+    );
+    assert!(
+        !patch.contains("kind: Secret"),
+        "no key material in the manifests"
+    );
+    assert!(
+        !patch.contains("CRAWLX_CHECKPOINT_KMS_KEY_ID\n"),
+        "never both providers"
+    );
+    // the base worker manifest sets no provider and has the fsGroup the 0440 mode relies on
+    let worker = read("deploy/k8s/worker-deployment.yaml");
+    assert!(!worker.contains("CRAWLX_CHECKPOINT_KEK_FILE"));
+    assert!(!worker.contains("CRAWLX_CHECKPOINT_KMS_KEY_ID"));
+    assert!(worker.contains("fsGroup: 10001"));
+    // the API has no checkpoint settings
+    assert!(!read("deploy/k8s/api-deployment.yaml").contains("checkpoint-kek"));
+}

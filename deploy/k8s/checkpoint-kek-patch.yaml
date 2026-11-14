@@ -1,0 +1,32 @@
+# Optional: the local key-encryption-key file for browser checkpoint keys (the alternative to a
+# cloud KMS key; see docs/design/data-and-secrets.md "Checkpoint key providers"). The plain
+# manifests carry no provider by default. Create the Secret, then apply this strategic-merge patch to the worker:
+#
+#   kubectl create -n crawlx secret generic crawlx-checkpoint-kek --from-file=checkpoint_kek=./checkpoint-kek.keys
+#   kubectl patch -n crawlx deployment/crawlx-worker --patch-file deploy/k8s/checkpoint-kek-patch.yaml
+#
+# Exactly one provider: do not also set CRAWLX_CHECKPOINT_KMS_KEY_ID on the worker; a worker that
+# sees both refuses to start (`crawlx config check` reports it). The Secret mode is 0440 and the pod
+# sets fsGroup, so the file is readable by the worker's group only; the loader accepts exactly this
+# shape and refuses anything wider. The API has no checkpoint settings and gets no mount.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crawlx-worker
+  namespace: crawlx
+spec:
+  template:
+    spec:
+      containers:
+        - name: worker
+          env:
+            - name: CRAWLX_CHECKPOINT_KEK_FILE
+              value: /run/secrets/crawlx-checkpoint-kek/checkpoint_kek
+          volumeMounts:
+            - { name: checkpoint-kek, mountPath: /run/secrets/crawlx-checkpoint-kek, readOnly: true }
+      volumes:
+        - name: checkpoint-kek
+          secret:
+            secretName: crawlx-checkpoint-kek
+            defaultMode: 0440
+            items: [{ key: checkpoint_kek, path: checkpoint_kek, mode: 0440 }]
