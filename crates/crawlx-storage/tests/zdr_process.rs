@@ -738,7 +738,15 @@ async fn redis_native_ttl_expires_with_a_frozen_application_clock_without_read_r
     let artifact = insert(&buffer, tenant, run, 1).await;
     let page = buffer.get(tenant, run, 1).await.unwrap().unwrap();
     let client = redis::Client::open(url.as_str()).unwrap();
-    let mut connection = client.get_multiplexed_async_connection().await.unwrap();
+    // `BLPOP` blocks the connection for up to 1.1 s on the server; the client's default
+    // response timeout (500 ms) would cut the wait short, so give this connection a longer one.
+    let mut connection = client
+        .get_multiplexed_async_connection_with_config(
+            &redis::AsyncConnectionConfig::new()
+                .set_response_timeout(Some(std::time::Duration::from_secs(10))),
+        )
+        .await
+        .unwrap();
     let page_key = format!("crawlx:zdr:{{delivery}}:page:{tenant}:{run}:1");
     let wait_key = format!("crawlx:zdr:{{delivery}}:test-wait:{tenant}");
     let initial_ttl: i64 = redis::cmd("PTTL")
