@@ -106,7 +106,9 @@ A record is required for:
 - role credentials (a matching test account) and test sinks under `authorized_security_test`.
 
 Lifecycle, over the API (`/v1/authorizations`, scopes `authorizations:read` and
-`authorizations:write`) or `crawlx authz create|show|revoke|verify`:
+`authorizations:write`) or `crawlx authz create|show|revoke|verify`. Create, evidence upload, re-verify and
+revoke all need `authorizations:write`; a key started as `--api-key TENANT=KEY:agent` holds only the read scope
+(see [`mcp.md`](../mcp.md#recommended-deployment)):
 
 - **Create.** Ownership of the target is proven by a DNS TXT record at `_crawlx-authz.<host>`, a file
   at `/.well-known/crawlx-authorization`, or an operator signature (HMAC-SHA256 under keys from

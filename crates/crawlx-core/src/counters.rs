@@ -180,6 +180,73 @@ impl std::str::FromStr for TerminalDetail {
     }
 }
 
+/// Stable machine code of a run the worker refused before it started.
+///
+/// The closed vocabulary lets clients branch on the cause without parsing the human message.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum RunFailureCode {
+    /// A browser-backed run needs a checkpoint key provider and this worker has none.
+    CheckpointKeysRequired,
+    /// Any other run configuration this worker refused; the message names the setting.
+    ConfigRefused,
+}
+
+impl RunFailureCode {
+    /// Stable `snake_case` name, identical to the serde form.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CheckpointKeysRequired => "checkpoint_keys_required",
+            Self::ConfigRefused => "config_refused",
+        }
+    }
+}
+
+/// Why a run ended `failed` without running: a typed code and a short operator-facing message.
+///
+/// It is recorded in the `failure` field of the run's terminal event, never in the stored run
+/// row, so it adds no storage state. The message names a setting, never a secret value.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct RunFailure {
+    /// Stable machine code.
+    pub code: RunFailureCode,
+    /// Short human-readable explanation, at most [`Self::MAX_MESSAGE_CHARS`] characters.
+    pub message: String,
+}
+
+impl RunFailure {
+    /// Longest stored message, in characters.
+    pub const MAX_MESSAGE_CHARS: usize = 256;
+
+    /// A failure with `message` cut to [`Self::MAX_MESSAGE_CHARS`] characters.
+    #[must_use]
+    pub fn new(code: RunFailureCode, message: &str) -> Self {
+        Self {
+            code,
+            message: message.chars().take(Self::MAX_MESSAGE_CHARS).collect(),
+        }
+    }
+
+    /// Kind of the run event that records a refusal before the run ends `failed`.
+    pub const EVENT_KIND: &'static str = "run.refused";
+
+    /// The body of the [`Self::EVENT_KIND`] event (and of the terminal event's `failure` field).
+    #[must_use]
+    pub fn event_payload(&self) -> serde_json::Value {
+        serde_json::json!({ "failure": self })
+    }
+
+    /// The failure a [`Self::event_payload`] body carries; anything outside the closed code
+    /// vocabulary reads as absent, and the message is cut to its bound.
+    #[must_use]
+    pub fn from_event_payload(payload: &serde_json::Value) -> Option<Self> {
+        let failure = serde_json::from_value::<Self>(payload.get("failure")?.clone()).ok()?;
+        Some(Self::new(failure.code, &failure.message))
+    }
+}
+
 /// Run status.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -332,7 +399,7 @@ impl ReconcileResolution {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use super::{TerminalDetail, TerminalReason};
+    use super::{RunFailure, RunFailureCode, TerminalDetail, TerminalReason};
 
     const ALL: [TerminalDetail; 10] = [
         TerminalDetail::UrlsLimit,
@@ -373,5 +440,37 @@ mod tests {
             TerminalDetail::SeedError.reason(),
             TerminalReason::FrontierExhausted
         );
+    }
+
+    #[test]
+    fn run_failure_event_payload_round_trips_and_stays_bounded() {
+        let failure = RunFailure::new(RunFailureCode::CheckpointKeysRequired, "needs a key provider");
+        let payload = failure.event_payload();
+        assert_eq!(payload["failure"]["code"], "checkpoint_keys_required");
+        assert_eq!(RunFailure::from_event_payload(&payload), Some(failure));
+        let long = RunFailure::new(RunFailureCode::ConfigRefused, &"é".repeat(1_000));
+        assert_eq!(long.message.chars().count(), RunFailure::MAX_MESSAGE_CHARS);
+        let hostile =
+            serde_json::json!({"failure": {"code": "config_refused", "message": "m".repeat(9_999)}});
+        let read = RunFailure::from_event_payload(&hostile).unwrap();
+        assert_eq!(read.message.chars().count(), RunFailure::MAX_MESSAGE_CHARS);
+    }
+
+    #[test]
+    fn run_failure_codes_are_a_closed_vocabulary() {
+        for code in [
+            RunFailureCode::CheckpointKeysRequired,
+            RunFailureCode::ConfigRefused,
+        ] {
+            assert_eq!(serde_json::to_value(code).unwrap(), code.as_str());
+        }
+        for payload in [
+            serde_json::json!({}),
+            serde_json::json!({"failure": {"code": "invented", "message": "x"}}),
+            serde_json::json!({"failure": {"code": "config_refused"}}),
+            serde_json::json!({"failure": "config_refused"}),
+        ] {
+            assert_eq!(RunFailure::from_event_payload(&payload), None, "{payload}");
+        }
     }
 }

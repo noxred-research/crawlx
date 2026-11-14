@@ -223,6 +223,11 @@ pub enum WorkerError {
     #[error("invalid configuration: {0}")]
     /// Config.
     Config(String),
+    /// A browser-backed run needs checkpoint encryption and this worker has no key provider.
+    #[error(
+        "browser checkpoints require a checkpoint key provider: set CRAWLX_CHECKPOINT_KMS_KEY_ID (cloud KMS) or CRAWLX_CHECKPOINT_KEK_FILE (local key-encryption-key file)"
+    )]
+    CheckpointKeysRequired,
     /// Operator request identity configuration failure, retaining the redacted source chain.
     #[error(transparent)]
     RequestIdentityKey(#[from] crawlx_core::secret::RequestIdentityKeyError),
@@ -345,9 +350,12 @@ impl Classify for WorkerError {
             Self::HttpSession(crate::http_sessions::HttpSessionError::Busy) => ErrorClass::Retryable,
             Self::Resume(crate::surface::resume::ResumeError::Store(error)) => error.class(),
             Self::HttpSession(_) | Self::Resume(_) => ErrorClass::Terminal,
-            Self::Config(_) | Self::Url(_) | Self::Telemetry(_) | Self::Other(_) | Self::Discovery(_) => {
-                ErrorClass::Terminal
-            }
+            Self::Config(_)
+            | Self::CheckpointKeysRequired
+            | Self::Url(_)
+            | Self::Telemetry(_)
+            | Self::Other(_)
+            | Self::Discovery(_) => ErrorClass::Terminal,
         }
     }
 }
@@ -508,6 +516,7 @@ mod tests {
                 ErrorClass::Terminal,
             ),
             (WorkerError::Config("c".into()), ErrorClass::Terminal),
+            (WorkerError::CheckpointKeysRequired, ErrorClass::Terminal),
             (
                 WorkerError::Url(crawlx_url::UrlError::NoHost),
                 ErrorClass::Terminal,

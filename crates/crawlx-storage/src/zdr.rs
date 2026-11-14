@@ -339,10 +339,27 @@ impl DeliveryBuffer {
     pub async fn open_redis(
         url: &str,
         clock: Arc<dyn Clock>,
-        mut limits: BufferLimits,
+        limits: BufferLimits,
     ) -> Result<Self, StoreError> {
+        let prefix = crate::redis_namespace::key_prefix_from_env()?;
+        Self::open_redis_prefixed(url, clock, limits, &prefix).await
+    }
+
+    /// As [`Self::open_redis`] under an explicit key prefix (see
+    /// [`crate::redis_namespace::normalize_key_prefix`]): deployments sharing one instance use
+    /// different prefixes and never read, expire or delete each other's keys.
+    ///
+    /// # Errors
+    /// As [`Self::open_redis`], and [`StoreError::Conflict`] for an invalid prefix.
+    pub async fn open_redis_prefixed(
+        url: &str,
+        clock: Arc<dyn Clock>,
+        mut limits: BufferLimits,
+        key_prefix: &str,
+    ) -> Result<Self, StoreError> {
+        let key_prefix = crate::redis_namespace::normalize_key_prefix(key_prefix)?;
         limits.ttl = limits.ttl.min(DEFAULT_TTL);
-        let backend = redis::RedisPages::open(url, limits, clock.now()).await?;
+        let backend = redis::RedisPages::open(url, limits, clock.now(), &key_prefix).await?;
         Ok(Self {
             backend: Backend::Redis(Arc::new(backend)),
             clock,

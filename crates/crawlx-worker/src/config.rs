@@ -717,27 +717,52 @@ impl WorkerConfig {
         crawlx_core::secret::request_identity_key_from_lookup(getenv).map_err(WorkerError::from)
     }
 
-    /// Load the operator's cloud KMS checkpoint key without exposing it in crawl configuration.
+    /// Load the operator's checkpoint key provider without exposing it in crawl configuration.
+    ///
+    /// `CRAWLX_CHECKPOINT_KMS_KEY_ID` selects cloud KMS; `CRAWLX_CHECKPOINT_KEK_FILE` selects a
+    /// local key-encryption-key file (`<key-id>:<64 hex>` lines, mode `0600`, first line primary).
+    /// Setting neither leaves browser checkpoints unavailable.
     ///
     /// # Errors
-    /// Rejects empty key identifiers and provider initialization failures. No production key is generated.
+    /// Rejects setting both providers, empty values, an unreadable, unsafe or malformed key file
+    /// and provider initialization failures. No production key is generated and no value is echoed.
     pub async fn load_checkpoint_keys_from_lookup(
         &mut self,
         getenv: &dyn Fn(&str) -> Option<String>,
     ) -> Result<(), WorkerError> {
-        let Some(key_id) = getenv("CRAWLX_CHECKPOINT_KMS_KEY_ID") else {
-            return Ok(());
-        };
-        if key_id.trim().is_empty() {
-            return Err(WorkerError::Config(
-                "checkpoint KMS key id must not be empty".into(),
-            ));
+        let kms = getenv("CRAWLX_CHECKPOINT_KMS_KEY_ID");
+        let file = getenv("CRAWLX_CHECKPOINT_KEK_FILE");
+        match (kms, file) {
+            (None, None) => Ok(()),
+            (Some(_), Some(_)) => Err(WorkerError::Config(
+                "CRAWLX_CHECKPOINT_KMS_KEY_ID and CRAWLX_CHECKPOINT_KEK_FILE are mutually exclusive".into(),
+            )),
+            (Some(key_id), None) => {
+                if key_id.trim().is_empty() {
+                    return Err(WorkerError::Config(
+                        "checkpoint KMS key id must not be empty".into(),
+                    ));
+                }
+                let keys = crawlx_storage::checkpoint_crypto::KmsCheckpointKeys::from_environment(key_id)
+                    .await
+                    .map_err(crate::error::SessionError::from)?;
+                self.checkpoint_keys = Some(Arc::new(keys));
+                Ok(())
+            }
+            (None, Some(path)) => {
+                if path.trim().is_empty() {
+                    return Err(WorkerError::Config(
+                        "checkpoint key-encryption-key file path must not be empty".into(),
+                    ));
+                }
+                let keys = crawlx_storage::checkpoint_crypto::FileCheckpointKeys::from_file(
+                    std::path::Path::new(&path),
+                )
+                .map_err(|error| WorkerError::Config(format!("CRAWLX_CHECKPOINT_KEK_FILE: {error}")))?;
+                self.checkpoint_keys = Some(Arc::new(keys));
+                Ok(())
+            }
         }
-        let keys = crawlx_storage::checkpoint_crypto::KmsCheckpointKeys::from_environment(key_id)
-            .await
-            .map_err(crate::error::SessionError::from)?;
-        self.checkpoint_keys = Some(Arc::new(keys));
-        Ok(())
     }
 
     /// Load the encrypted-artifact key provider, the volatile secret-registry endpoint and the
@@ -1033,7 +1058,7 @@ impl fmt::Debug for WorkerConfig {
             .field("model", &self.model)
             .field("planner", &self.planner)
             .field("gates", &self.gates)
-            .field("cdp_ws_url", &self.cdp_ws_url)
+            .field("cdp_ws_url", &self.cdp_ws_url.as_ref().map(|_| "[set]"))
             .field("incognito", &self.incognito)
             .field(
                 "retained_profiles",
@@ -1560,5 +1585,16 @@ mod tests {
         let c = WorkerConfig::default();
         assert_eq!((c.max_sessions, c.contexts_per_browser), (4, 4));
         assert!(c.database_url.is_none());
+    }
+
+    #[test]
+    fn debug_output_hides_the_devtools_url() {
+        let mut c = WorkerConfig::default();
+        let url = url::Url::parse("ws://127.0.0.1:9222/devtools/browser/lease-token-4242").unwrap();
+        c.cdp_ws_url = Some(url.clone());
+        c.launch.cdp_ws_url = Some(url);
+        let shown = format!("{c:?}");
+        assert!(!shown.contains("lease-token-4242"), "{shown}");
+        assert!(shown.contains("cdp_ws_url: Some(\"[set]\")"), "{shown}");
     }
 }

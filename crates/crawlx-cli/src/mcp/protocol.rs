@@ -14,6 +14,8 @@ pub(crate) const METHOD_NOT_FOUND: i64 = -32601;
 pub(crate) const INVALID_PARAMS: i64 = -32602;
 /// Implementation-defined: more requests are in flight than the server accepts.
 pub(crate) const SERVER_BUSY: i64 = -32000;
+/// Implementation-defined: the audit log cannot record the call, so the server refuses it.
+pub(crate) const AUDIT_UNAVAILABLE: i64 = -32001;
 
 /// Longest accepted frame. A longer line is discarded up to its newline and answered with
 /// [`INVALID_REQUEST`], so a runaway client cannot grow the server's memory without bound.
@@ -51,7 +53,8 @@ impl RpcError {
         self
     }
 
-    fn to_value(&self) -> Value {
+    /// The JSON-RPC `error` object.
+    pub(crate) fn to_value(&self) -> Value {
         let mut error = json!({ "code": self.code, "message": self.message });
         if let (Some(data), Some(map)) = (&self.data, error.as_object_mut()) {
             map.insert("data".to_owned(), data.clone());

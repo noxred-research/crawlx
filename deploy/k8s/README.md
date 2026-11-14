@@ -55,6 +55,13 @@ above carry them and the pods do not start usefully without them.
   or `CRAWLX_ARTIFACT_KMS_KEY_ID` (a cloud KMS key ID/ARN; replace the key-file env var and volume with it).
   Setting both, or neither on a worker, is a startup error. The API only decrypts for reads: without a
   provider it starts and sealed artifacts fail with a clear error.
+- **Checkpoint keys** (workers, browser-mode runs): the manifests set no provider. Either set
+  `CRAWLX_CHECKPOINT_KMS_KEY_ID` (a cloud KMS key) on the worker, or use a local key-encryption-key
+  file: create the `crawlx-checkpoint-kek` Secret (key `checkpoint_kek`, lines `<key-id>:<64 hex>`, newest
+  first) and apply `checkpoint-kek-patch.yaml`, which mounts it read-only with `defaultMode: 0440` (the pod's
+  `fsGroup` makes it group-readable) and sets `CRAWLX_CHECKPOINT_KEK_FILE`. Setting both providers is a
+  startup error, as in the Helm chart (which also fails the render). The plain manifests have no config-check
+  job, so run `crawlx config check` with the same environment to validate the file before rollout.
 - **Secret registry** (workers only): `CRAWLX_SECRET_REDIS_URL` from the `crawlx-secret-registry` Secret key
   `url` (`redis://:<password>@crawlx-secret-registry:6379/`). It must be a dedicated Redis/Valkey with
   RDB/AOF disabled, no replicas, a positive `maxmemory` and `noeviction`, and not the ZDR delivery Redis.

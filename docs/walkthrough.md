@@ -47,8 +47,10 @@ crawlx migrate --database-url $DB
 # use a protected regular file containing 64 hexadecimal characters, and a persistence-free registry.
 export CRAWLX_ARTIFACT_KEY_FILE=/absolute/path/to/artifact-key
 export CRAWLX_SECRET_REDIS_URL=redis://127.0.0.1:6390
-# Browser runs additionally need a reachable key service and its checkpoint key identifier:
-export CRAWLX_CHECKPOINT_KMS_KEY_ID=<checkpoint-key-id>
+# Browser runs additionally need a checkpoint key provider: a cloud KMS key identifier
+#   export CRAWLX_CHECKPOINT_KMS_KEY_ID=<checkpoint-key-id>
+# or, with no cloud service, a local key-encryption-key file (mode 0600, lines of <key-id>:<64 hex>):
+export CRAWLX_CHECKPOINT_KEK_FILE=/absolute/path/to/checkpoint-keks
 # See docs/design/data-and-secrets.md for key provisioning and registry requirements.
 # static plane: prints discovered 90 / admitted 30 / deduplicated 55 /
 # policy_blocked 3 / robots_blocked 2 / succeeded 28 / failed 2 and writes 28 pages.

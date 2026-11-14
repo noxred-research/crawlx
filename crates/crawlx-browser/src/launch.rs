@@ -61,7 +61,7 @@ pub fn find_executable() -> Option<PathBuf> {
 }
 
 /// How to launch Chromium.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct LaunchConfig {
     /// Path of the Chromium executable to spawn.
     pub executable: PathBuf,
@@ -116,6 +116,55 @@ pub struct LaunchConfig {
     /// Clear inherited process credentials/environment and bind HOME/XDG paths to
     /// the owned temporary profile. Requires a fresh headless owned launch.
     pub isolated_environment: bool,
+}
+
+/// The DevTools URL of `cdp_ws_url` is a bearer token: it is shown as `[set]`, never printed.
+impl std::fmt::Debug for LaunchConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // exhaustive on purpose: a new field must be classified here
+        let Self {
+            executable,
+            headless,
+            user_data_dir,
+            egress_proxy_port,
+            namespace,
+            launch_profile,
+            allow_unpinned,
+            unsafe_no_sandbox_for_ci,
+            extra_args,
+            fixtures_dir,
+            pin_file,
+            launch_timeout,
+            cdp_queue,
+            cdp_ws_url,
+            profiles_dir,
+            profile,
+            auto_download_chromium,
+            chromium_cache,
+            isolated_environment,
+        } = self;
+        f.debug_struct("LaunchConfig")
+            .field("executable", executable)
+            .field("headless", headless)
+            .field("user_data_dir", user_data_dir)
+            .field("egress_proxy_port", egress_proxy_port)
+            .field("namespace", namespace)
+            .field("launch_profile", launch_profile)
+            .field("allow_unpinned", allow_unpinned)
+            .field("unsafe_no_sandbox_for_ci", unsafe_no_sandbox_for_ci)
+            .field("extra_args", extra_args)
+            .field("fixtures_dir", fixtures_dir)
+            .field("pin_file", pin_file)
+            .field("launch_timeout", launch_timeout)
+            .field("cdp_queue", cdp_queue)
+            .field("cdp_ws_url", &cdp_ws_url.as_ref().map(|_| "[set]"))
+            .field("profiles_dir", profiles_dir)
+            .field("profile", profile)
+            .field("auto_download_chromium", auto_download_chromium)
+            .field("chromium_cache", chromium_cache)
+            .field("isolated_environment", isolated_environment)
+            .finish()
+    }
 }
 
 impl LaunchConfig {
@@ -838,5 +887,21 @@ mod tests {
             .err()
             .unwrap();
         assert!(error.to_string().contains("cannot attach"));
+    }
+
+    #[test]
+    fn debug_output_hides_the_devtools_url() {
+        let mut config = LaunchConfig::new();
+        config.cdp_ws_url =
+            Some(url::Url::parse("ws://127.0.0.1:9222/devtools/browser/lease-token-4242").unwrap());
+        let shown = format!("{config:?} {config:#?}");
+        assert!(
+            !shown.contains("lease-token-4242") && !shown.contains("9222"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("cdp_ws_url: Some(\n") || shown.contains("cdp_ws_url: Some(\"[set]\")"),
+            "{shown}"
+        );
     }
 }

@@ -110,7 +110,10 @@ fn malformed_bootstrap_key_diagnostics_never_print_the_supplied_secret() {
     let out = crawlx(&["serve", "--api-key", "secret-sentinel-with-no-tenant"], &[]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(2), "{stderr}");
-    assert!(stderr.contains("--api-key expects TENANT=KEY"), "{stderr}");
+    assert!(
+        stderr.contains("--api-key: expected TENANT=KEY or TENANT=KEY:SCOPES"),
+        "{stderr}"
+    );
     assert!(!stderr.contains("secret-sentinel"), "{stderr}");
 }
 

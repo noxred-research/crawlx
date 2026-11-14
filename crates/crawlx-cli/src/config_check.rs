@@ -74,6 +74,8 @@ const PASSTHROUGH_ENV: &[&str] = &[
     "CRAWLX_GATE_KEYS_FILE",
     "CRAWLX_GATE_KEY_ID",
     "CRAWLX_CHROMIUM_PATH",
+    crate::cdp_attach::URL_ENV,
+    crate::cdp_attach::URL_FILE_ENV,
     "CRAWLX_ALLOW_UNPINNED",
     "CRAWLX_UNSAFE_NO_SANDBOX_FOR_CI",
     "CRAWLX_FAILPOINTS",
@@ -92,7 +94,10 @@ const PASSTHROUGH_ENV: &[&str] = &[
     "CRAWLX_S3_OBJECT_LOCK",
     "CRAWLX_S3_ALLOW_HTTP",
     "CRAWLX_S3_ALLOW_KMS",
+    "CRAWLX_S3_ALLOW_SHARED_PREFIX",
     "CRAWLX_S3_KMS_KEY_ID",
+    "CRAWLX_S3_PREFIX",
+    "CRAWLX_REDIS_KEY_PREFIX",
     "CRAWLX_MODEL_BUNDLE",
     "CRAWLX_PARITY_VECTORS",
     "CRAWLX_MODEL_BUNDLE_URL",
@@ -118,6 +123,7 @@ const PASSTHROUGH_ENV: &[&str] = &[
     "CRAWLX_REQUEST_IDENTITY_KEY",
     "CRAWLX_REQUEST_IDENTITY_KEY_FILE",
     "CRAWLX_CHECKPOINT_KMS_KEY_ID",
+    "CRAWLX_CHECKPOINT_KEK_FILE",
     "CRAWLX_ARTIFACT_KMS_KEY_ID",
     "CRAWLX_PARSE_MEMORY_BYTES",
     "CRAWLX_PARSER_HELPER",
@@ -144,6 +150,7 @@ const PASSTHROUGH_ENV: &[&str] = &[
     "CRAWLX_SOURCE_DISPATCH_CONFIG",
     "CRAWLX_DELIVERY_REGISTRY",
     "CRAWLX_ZDR_REDIS_URL",
+    "CRAWLX_ZDR_REDIS_URL_FILE",
     "CRAWLX_ARTICLE_LANGUAGE_BUNDLE",
     // model-provider, transcription and search settings read by `serve` (`IntelConfig`)
     "CRAWLX_LLM_BASE_URL",
@@ -223,6 +230,11 @@ Database {
     pool_max: u32 = 32,
     /// Session statement timeout.
     statement_timeout_ms: u64 = 5000,
+    /// PostgreSQL schema that holds every CrawlX table and its migration table; created on
+    /// `crawlx migrate`. Lets several products or deployments share one server. Unset keeps the
+    /// role's default search path. PostgreSQL only: MariaDB takes its database from the URL path
+    /// and SQLite uses one file per deployment.
+    schema: Option<String> = None,
 });
 
 section!(/// `[object_store]`.
@@ -379,9 +391,7 @@ impl ProxyArgs {
             .into_iter()
             .filter_map(|name| getenv(&name).map(|value| (name, value)))
             .collect::<Vec<_>>();
-        let file = getenv(CONFIG_ENV)
-            .filter(|p| !p.trim().is_empty())
-            .map(PathBuf::from);
+        let file = config_file(getenv);
         let fetch = load_from(file.as_deref(), &vars)?.config.fetch;
         let mut routes = parse_proxy_routes(
             self.fetch_basic_proxy_url
@@ -550,6 +560,16 @@ Shadow {
     sample_percent: u8 = 5,
 });
 
+section!(/// `[intel]`: the operator's model-processing policy of the native AI endpoints. Keys of
+/// `[intel.policy]` are camelCase, exactly as in the API's JSON configuration, and the section is
+/// read from the file only: no key of it can come from the environment, a flag or a request.
+/// Provider credentials are never configured here, only referenced (`env:NAME`, `file:/path`).
+Intel {
+    /// `[intel.policy]`; unset keeps external model processing off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    policy: Option<crawlx_api::config::PolicySettings> = None,
+});
+
 section!(/// The whole `crawlx.toml` surface.
 CrawlxConfig {
     /// Deployment environment; `CRAWLX_ENVIRONMENT` overrides.
@@ -582,6 +602,10 @@ CrawlxConfig {
     shadow: Shadow = Shadow::default(),
     /// OCR for scanned PDF pages and images (`ocr.backend`: off, tesseract, ocrs).
     ocr: crawlx_extract::parse::ocr::OcrConfig = crawlx_extract::parse::ocr::OcrConfig::default(),
+    /// Model-processing policy. Not serialized with the other sections: the `intel` section of
+    /// the report shows it with endpoints and key references redacted.
+    #[serde(skip_serializing)]
+    intel: Intel = Intel::default(),
 });
 
 /// Output format of `config check`.
@@ -690,9 +714,11 @@ pub(crate) fn validate_operator_environment(
     getenv: &dyn Fn(&str) -> Option<std::ffi::OsString>,
 ) -> anyhow::Result<()> {
     for name in [
+        CONFIG_ENV,
         "CRAWLX_REQUEST_IDENTITY_KEY",
         "CRAWLX_REQUEST_IDENTITY_KEY_FILE",
         "CRAWLX_CHECKPOINT_KMS_KEY_ID",
+        "CRAWLX_CHECKPOINT_KEK_FILE",
         "CRAWLX_ARTIFACT_KMS_KEY_ID",
         "CRAWLX_ARTIFACT_KEY_FILE",
         "CRAWLX_SECRET_REDIS_URL",
@@ -704,6 +730,8 @@ pub(crate) fn validate_operator_environment(
         "CRAWLX_NETNS_BROWSER_UID",
         "CRAWLX_NETNS_BROWSER_GID",
         "CRAWLX_ARTICLE_LANGUAGE_BUNDLE",
+        crate::cdp_attach::URL_ENV,
+        crate::cdp_attach::URL_FILE_ENV,
     ]
     .into_iter()
     .chain(crate::resolver_https_config::ENV.iter().copied())
@@ -987,6 +1015,18 @@ pub fn validate(loaded: &Loaded) -> (Vec<Finding>, Vec<SecretStatus>) {
     if c.database.pool_max == 0 {
         f.push(finding("database.pool_max", "must be at least 1", true));
     }
+    if let Some(schema) = &c.database.schema {
+        let valid = !schema.is_empty()
+            && schema.len() <= 63
+            && schema.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+        if !valid {
+            f.push(finding(
+                "database.schema",
+                "must be 1 to 63 ASCII letters, digits or underscores",
+                true,
+            ));
+        }
+    }
     if c.worker.max_sessions == 0 || c.worker.max_sessions > 64 {
         f.push(finding("worker.max_sessions", "must be in 1..=64", true));
     }
@@ -1200,7 +1240,9 @@ fn validate_capability_inputs(loaded: &Loaded, findings: &mut Vec<Finding>) {
             true,
         )),
         Ok(Some(_)) => {
-            if loaded.passthrough.contains_key("CRAWLX_ZDR_REDIS_URL") {
+            if loaded.passthrough.contains_key("CRAWLX_ZDR_REDIS_URL")
+                || loaded.passthrough.contains_key("CRAWLX_ZDR_REDIS_URL_FILE")
+            {
                 findings.push(finding(
                     "capabilities.retained_profiles",
                     "retained profiles cannot be enabled with ZDR",
@@ -1311,6 +1353,20 @@ async fn validate_artifact_custody(loaded: &Loaded, findings: &mut Vec<Finding>)
     }
 }
 
+/// The Valkey/Redis key prefix that separates deployments on a shared instance must be a valid
+/// prefix; the runtime would otherwise refuse to open the registry.
+fn validate_redis_key_prefix(loaded: &Loaded, findings: &mut Vec<Finding>) {
+    if let Some(prefix) = loaded
+        .passthrough
+        .get("CRAWLX_REDIS_KEY_PREFIX")
+        .filter(|v| !v.trim().is_empty())
+    {
+        if let Err(error) = crawlx_storage::redis_namespace::normalize_key_prefix(prefix) {
+            findings.push(finding("CRAWLX_REDIS_KEY_PREFIX", error.to_string(), true));
+        }
+    }
+}
+
 /// Object-store settings of `serve` and `worker`: when `CRAWLX_S3_BUCKET` names a bucket the
 /// profile and every `CRAWLX_S3_*` setting must parse, exactly as the runtime reads them.
 fn validate_object_store(loaded: &Loaded, findings: &mut Vec<Finding>) {
@@ -1321,6 +1377,68 @@ fn validate_object_store(loaded: &Loaded, findings: &mut Vec<Finding>) {
     if let Err(error) = crawlx_storage::S3Config::from_lookup(&lookup) {
         findings.push(finding("object_store", error.to_string(), true));
     }
+}
+
+/// Largest accepted size of the ZDR Redis endpoint secret file.
+const ZDR_REDIS_FILE_LIMIT: u64 = 4096;
+
+/// The ZDR volatile-buffer endpoint: `CRAWLX_ZDR_REDIS_URL` or the file named by
+/// `CRAWLX_ZDR_REDIS_URL_FILE`, never both, and the file must be readable, within bounds and
+/// not empty. The URL carries credentials: neither it nor the file's content is ever reported.
+fn validate_zdr_redis(loaded: &Loaded, findings: &mut Vec<Finding>) {
+    use std::io::Read as _;
+    let url = loaded.passthrough.get("CRAWLX_ZDR_REDIS_URL");
+    let file = loaded.passthrough.get("CRAWLX_ZDR_REDIS_URL_FILE");
+    let key = "capabilities.zdr_redis";
+    if url.is_some() && file.is_some() {
+        findings.push(finding(
+            key,
+            "CRAWLX_ZDR_REDIS_URL and CRAWLX_ZDR_REDIS_URL_FILE are mutually exclusive",
+            true,
+        ));
+        return;
+    }
+    let Some(path) = file else {
+        return;
+    };
+    let text = std::fs::File::open(path).ok().and_then(|f| {
+        let mut text = String::new();
+        f.take(ZDR_REDIS_FILE_LIMIT + 1).read_to_string(&mut text).ok()?;
+        u64::try_from(text.len())
+            .ok()
+            .filter(|len| *len <= ZDR_REDIS_FILE_LIMIT)?;
+        Some(text)
+    });
+    match text {
+        None => findings.push(finding(
+            key,
+            "the ZDR Redis URL file is unreadable or oversized",
+            true,
+        )),
+        Some(text) if text.trim().is_empty() => {
+            findings.push(finding(key, "the ZDR Redis URL file is empty", true));
+        }
+        Some(_) => {}
+    }
+}
+
+/// The bucket and key prefix `CRAWLX_S3_BUCKET`/`CRAWLX_S3_PREFIX` select, when a bucket is
+/// set. Neither is secret. The prefix is shown normalized when the settings parse.
+fn object_store_target(loaded: &Loaded) -> Option<(String, String)> {
+    let lookup = |name: &str| loaded.passthrough.get(name).cloned();
+    let bucket = lookup("CRAWLX_S3_BUCKET")?.trim().to_owned();
+    if bucket.is_empty() {
+        return None;
+    }
+    let prefix = crawlx_storage::S3Config::from_lookup(&lookup).map_or_else(
+        |_| {
+            lookup("CRAWLX_S3_PREFIX")
+                .map(|prefix| prefix.trim().to_owned())
+                .unwrap_or_default()
+        },
+        |config| config.prefix,
+    );
+    Some((bucket, prefix))
 }
 
 /// The refusals of the selected database engine that can be decided without connecting: an
@@ -1349,6 +1467,18 @@ fn validate_database_url(loaded: &Loaded, findings: &mut Vec<Finding>) {
             return;
         }
     };
+    if parsed.kind() != crawlx_storage::BackendKind::Postgres {
+        if let Some(schema) = &loaded.config.database.schema {
+            findings.push(finding(
+                "database.schema",
+                format!(
+                    "database.schema is {schema:?} but only postgres has schemas; for mariadb name the \
+                     database in the URL, for sqlite use one file per deployment"
+                ),
+                true,
+            ));
+        }
+    }
     if parsed.kind() != crawlx_storage::BackendKind::Sqlite {
         return;
     }
@@ -1565,6 +1695,13 @@ fn effective_json(loaded: &Loaded) -> anyhow::Result<Value> {
     if let Some(egress) = v.get_mut("egress").and_then(Value::as_object_mut) {
         egress.insert("lists".to_owned(), egress_lists_report(loaded));
     }
+    if let (Some(store), Some((bucket, prefix))) = (
+        v.get_mut("object_store").and_then(Value::as_object_mut),
+        object_store_target(loaded),
+    ) {
+        store.insert("bucket".to_owned(), json!(bucket));
+        store.insert("prefix".to_owned(), json!(prefix));
+    }
     v["capabilities"] = capability_report(loaded);
     Ok(v)
 }
@@ -1578,8 +1715,9 @@ fn capability_report(loaded: &Loaded) -> Value {
             "value": "<redacted>"
         },
         "checkpoint_encryption": {
-            "configured": has("CRAWLX_CHECKPOINT_KMS_KEY_ID"),
-            "key_reference": if has("CRAWLX_CHECKPOINT_KMS_KEY_ID") { "<redacted>" } else { "unset" }
+            "configured": has("CRAWLX_CHECKPOINT_KMS_KEY_ID") || has("CRAWLX_CHECKPOINT_KEK_FILE"),
+            "key_provider": if has("CRAWLX_CHECKPOINT_KMS_KEY_ID") { "kms" } else if has("CRAWLX_CHECKPOINT_KEK_FILE") { "file" } else { "unset" },
+            "key_reference": if has("CRAWLX_CHECKPOINT_KMS_KEY_ID") || has("CRAWLX_CHECKPOINT_KEK_FILE") { "<redacted>" } else { "unset" }
         },
         "artifact_custody": {
             "key_provider": if has("CRAWLX_ARTIFACT_KMS_KEY_ID") { "kms" } else if has("CRAWLX_ARTIFACT_KEY_FILE") { "file" } else { "unset" },
@@ -1589,6 +1727,10 @@ fn capability_report(loaded: &Loaded) -> Value {
         "retained_profiles": {
             "enabled": matches!(loaded.passthrough.get("CRAWLX_RETAINED_PROFILES_ENABLED").map(String::as_str), Some("true" | "1")),
             "key_reference": if has("CRAWLX_PROFILE_KEY_REF") { "<redacted>" } else { "unset" }
+        },
+        "zdr_redis": {
+            "source": if has("CRAWLX_ZDR_REDIS_URL_FILE") { "file" } else if has("CRAWLX_ZDR_REDIS_URL") { "inline" } else { "unset" },
+            "value": "<redacted>"
         },
         "protocol_registry": { "configured": has("CRAWLX_PROTOCOL_REGISTRY") },
         "delivery_registry": { "configured": has("CRAWLX_DELIVERY_REGISTRY") },
@@ -1602,6 +1744,15 @@ fn capability_report(loaded: &Loaded) -> Value {
     })
 }
 
+/// The browser attach sources of the environment: more than one, or a URL file that is unsafe or
+/// malformed, is an error. The URL is never reported, only where it comes from.
+fn validate_cdp_attach(loaded: &Loaded, findings: &mut Vec<Finding>) {
+    let lookup = |name: &str| loaded.passthrough.get(name).cloned();
+    if let Err(error) = crate::cdp_attach::CdpArgs::default().resolve(&lookup) {
+        findings.push(finding("browser.attach", error.to_string(), true));
+    }
+}
+
 /// Passthrough variables with secret-bearing values redacted.
 ///
 /// The model-provider, transcription and search variables (`INTEL_ENV_PREFIXES`) are always
@@ -1612,6 +1763,8 @@ fn redacted_passthrough(p: &BTreeMap<String, String>) -> BTreeMap<String, String
         .map(|(k, v)| {
             let secret = !k.ends_with("_FILE")
                 && (k == "CRAWLX_ZDR_REDIS_URL"
+                    // the browser's DevTools URL is a bearer token
+                    || k == crate::cdp_attach::URL_ENV
                     || k.ends_with("_URL") && k.contains("DATABASE")
                     || k.contains("SECRET")
                     || k.contains("KEY")
@@ -1665,13 +1818,16 @@ async fn check(args: &ConfigCheckArgs, out: &mut dyn Write) -> anyhow::Result<Ex
     }
     validate_database_url(&loaded, &mut findings);
     validate_object_store(&loaded, &mut findings);
+    validate_zdr_redis(&loaded, &mut findings);
+    validate_redis_key_prefix(&loaded, &mut findings);
     validate_artifact_custody(&loaded, &mut findings).await;
     validate_checkpoint_keys(&loaded, &mut findings).await;
     validate_article_language_bundle(&loaded, &mut findings).await;
     validate_source_dispatch(&loaded, &mut findings);
+    validate_cdp_attach(&loaded, &mut findings);
     // the LLM provider variables are read from the process environment by `serve` and
     // `worker` themselves, so they are reported from it too (secrets redacted)
-    let intel = crate::config_intel::report(&|k| std::env::var(k).ok());
+    let intel = crate::config_intel::report(&|k| std::env::var(k).ok(), loaded.config.intel.policy.as_ref());
     findings.extend(intel.findings);
     let errors = findings.iter().filter(|f| f.error).count();
     let warnings = findings.len() - errors;
@@ -1707,8 +1863,19 @@ async fn check(args: &ConfigCheckArgs, out: &mut dyn Write) -> anyhow::Result<Ex
             let mut effective = loaded.config.clone();
             // never print anything the env may carry as a secret; paths stay
             effective.environment = loaded.config.environment;
+            // the bucket and prefix come from `CRAWLX_S3_*`, not from the file's `[object_store]`
+            let target = object_store_target(&loaded);
+            if let Some((bucket, _)) = &target {
+                effective.object_store.bucket.clone_from(bucket);
+            }
             writeln!(out, "{}", toml::to_string_pretty(&effective)?)?;
             writeln!(out, "# capabilities = {}", capability_report(&loaded))?;
+            if let Some((bucket, prefix)) = &target {
+                writeln!(
+                    out,
+                    "# object_store.bucket = {bucket:?}, object_store.prefix = {prefix:?}"
+                )?;
+            }
             for (name, list) in egress_lists_report(&loaded).as_object().into_iter().flatten() {
                 writeln!(out, "# egress.{name}: {list}")?;
             }
@@ -1758,11 +1925,55 @@ async fn check(args: &ConfigCheckArgs, out: &mut dyn Write) -> anyhow::Result<Ex
     Ok(if ok { ExitCode::SUCCESS } else { ExitCode::from(1) })
 }
 
-/// The database DSN for a command: the flag/`CRAWLX_DATABASE_URL`, else
-/// `CRAWLX_DATABASE_URL_FILE`, else `database.url_file` from the loaded surface.
+/// The configuration file a command reads: `$CRAWLX_CONFIG` through `getenv` when set and not
+/// blank, else `None`, which makes [`load_from`] discover `./crawlx.toml`. A named file that is
+/// missing, unreadable or invalid is an error there: the choice never falls back to another file.
+///
+/// Every command that reads configuration (`config check`, `serve`, `worker`, `crawl`, `migrate`,
+/// the operator commands, ...) selects its file through this one function.
+#[must_use]
+pub fn config_file(getenv: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
+    getenv(CONFIG_ENV)
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from)
+}
+
+/// [`config_file`] over the process environment.
 ///
 /// # Errors
-/// Fails when the named file cannot be read.
+/// Fails when `CRAWLX_CONFIG` is not valid Unicode, instead of reading `./crawlx.toml`.
+pub fn config_file_from_process() -> anyhow::Result<Option<PathBuf>> {
+    if std::env::var_os(CONFIG_ENV).is_some_and(|value| value.to_str().is_none()) {
+        bail!("{CONFIG_ENV} must be valid Unicode");
+    }
+    Ok(config_file(&|name| std::env::var(name).ok()))
+}
+
+/// The `[database]` section for a running command: the file of [`config_file_from_process`] plus
+/// the `CRAWLX_DATABASE__*` overrides. Only those overrides are read: commands that open a
+/// database also run with development and integration variables that are not configuration
+/// keys, and those must not stop them. `config check` validates the whole environment.
+fn database_section() -> anyhow::Result<Database> {
+    let mut vars = Vec::new();
+    for (name, value) in std::env::vars_os() {
+        let Some(name) = name.to_str().filter(|name| name.starts_with("CRAWLX_DATABASE__")) else {
+            continue;
+        };
+        let value = value
+            .into_string()
+            .map_err(|_| anyhow!("CRAWLX configuration values must be valid Unicode"))?;
+        vars.push((name.to_owned(), value));
+    }
+    let file = config_file_from_process()?;
+    Ok(load_from(file.as_deref(), &vars)?.config.database)
+}
+
+/// The database DSN for a command: the flag/`CRAWLX_DATABASE_URL`, else
+/// `CRAWLX_DATABASE_URL_FILE`, else `database.url_file` of the configuration file
+/// ([`config_file`]).
+///
+/// # Errors
+/// Fails when the configuration file or the named secret file cannot be read.
 pub fn database_url(flag: Option<&str>) -> anyhow::Result<Option<String>> {
     if let Some(url) = flag {
         return Ok(Some(url.to_owned()));
@@ -1771,10 +1982,7 @@ pub fn database_url(flag: Option<&str>) -> anyhow::Result<Option<String>> {
         .transpose()?
         .map_or_else(
             || {
-                let loaded = load(None)?;
-                loaded
-                    .config
-                    .database
+                database_section()?
                     .url_file
                     .as_deref()
                     .map(read_secret)
@@ -1799,17 +2007,7 @@ pub fn database_url(flag: Option<&str>) -> anyhow::Result<Option<String>> {
 /// Fails when the configuration cannot be loaded, the URL scheme is unknown, or a SQLite
 /// URL comes with a non-default `statement_timeout_ms`.
 pub fn store_config(url: Option<&str>) -> anyhow::Result<crawlx_storage::StoreConfig> {
-    let mut vars = Vec::new();
-    for (name, value) in std::env::vars_os() {
-        let Some(name) = name.to_str().filter(|name| name.starts_with("CRAWLX_DATABASE__")) else {
-            continue;
-        };
-        let value = value
-            .into_string()
-            .map_err(|_| anyhow!("CRAWLX configuration values must be valid Unicode"))?;
-        vars.push((name.to_owned(), value));
-    }
-    let database = load_from(None, &vars)?.config.database;
+    let database = database_section()?;
     let default = Database::default().statement_timeout_ms;
     let sqlite = match url {
         Some(url) => {
@@ -1827,9 +2025,26 @@ pub fn store_config(url: Option<&str>) -> anyhow::Result<crawlx_storage::StoreCo
             database.statement_timeout_ms
         );
     }
+    if let Some(schema) = &database.schema {
+        let engine = match url {
+            Some(url) => Some(
+                crawlx_storage::DatabaseUrl::parse(url)
+                    .map_err(|refusal| anyhow::anyhow!("{refusal}"))?
+                    .kind(),
+            ),
+            None => None,
+        };
+        if engine.is_some_and(|kind| kind != crawlx_storage::BackendKind::Postgres) {
+            bail!(
+                "database.schema is {schema:?} but only postgres has schemas; for mariadb name the \
+                 database in the URL, for sqlite use one file per deployment"
+            );
+        }
+    }
     Ok(crawlx_storage::StoreConfig {
         max_connections: database.pool_max,
         statement_timeout: (!sqlite).then(|| std::time::Duration::from_millis(database.statement_timeout_ms)),
+        schema: database.schema.clone(),
         ..crawlx_storage::StoreConfig::default()
     })
 }
@@ -1847,7 +2062,7 @@ pub fn webhook_secret(flag: Option<&str>) -> anyhow::Result<Option<String>> {
         .transpose()?
         .map_or_else(
             || {
-                let loaded = load(None)?;
+                let loaded = load(config_file_from_process()?.as_deref())?;
                 loaded
                     .config
                     .api
@@ -1913,10 +2128,34 @@ pub fn egress_source_from_env(getenv: &dyn Fn(&str) -> Option<String>) -> anyhow
         .iter()
         .filter_map(|name| getenv(name).map(|v| ((*name).to_owned(), v)))
         .collect();
-    let file = getenv(CONFIG_ENV)
-        .filter(|p| !p.trim().is_empty())
-        .map(PathBuf::from);
+    let file = config_file(getenv);
     egress_source(&load_from(file.as_deref(), &vars)?)
+}
+
+/// The model-processing settings `serve` starts with: `[intel.policy]` of the configuration file
+/// (`CRAWLX_CONFIG`, else `./crawlx.toml` when present). The provider settings of the compat
+/// variables (`CRAWLX_LLM_*`, ...) are filled in by the API itself.
+///
+/// # Errors
+/// Fails on an unreadable or malformed configuration file, an unknown key, or a policy that
+/// carries a credential inline (a key reference that is not `env:`/`file:`, or an endpoint with
+/// user info or a query).
+pub fn intel_from_env(
+    getenv: &dyn Fn(&str) -> Option<String>,
+) -> anyhow::Result<crawlx_api::config::IntelConfig> {
+    let vars: Vec<_> = getenv(CONFIG_ENV)
+        .map(|value| (CONFIG_ENV.to_owned(), value))
+        .into_iter()
+        .collect();
+    let file = config_file(getenv);
+    let policy = load_from(file.as_deref(), &vars)?.config.intel.policy;
+    if let Some(policy) = &policy {
+        crate::config_intel::check_policy_inline(policy).map_err(|e| anyhow!("intel.policy: {e}"))?;
+    }
+    Ok(crawlx_api::config::IntelConfig {
+        policy,
+        ..crawlx_api::config::IntelConfig::default()
+    })
 }
 
 /// Read memory-only upload spool limits for a running command.
@@ -1938,9 +2177,7 @@ pub fn artifact_spool_from_env(
         .iter()
         .filter_map(|name| getenv(name).map(|value| ((*name).to_owned(), value)))
         .collect();
-    let file = getenv(CONFIG_ENV)
-        .filter(|p| !p.trim().is_empty())
-        .map(PathBuf::from);
+    let file = config_file(getenv);
     load_from(file.as_deref(), &vars)?
         .config
         .object_store
@@ -2015,6 +2252,29 @@ mod tests {
             .iter()
             .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
             .collect()
+    }
+
+    #[test]
+    fn the_config_file_is_the_named_variable_or_nothing() {
+        let named = |value: &'static str| move |name: &str| (name == CONFIG_ENV).then(|| value.to_owned());
+        assert_eq!(
+            config_file(&named("/etc/crawlx/a.toml")),
+            Some(PathBuf::from("/etc/crawlx/a.toml"))
+        );
+        // blank or absent: no file is named, `load_from` then discovers ./crawlx.toml
+        assert_eq!(config_file(&named("")), None);
+        assert_eq!(config_file(&named("  ")), None);
+        assert_eq!(config_file(&|_| None), None);
+    }
+
+    #[test]
+    fn a_named_file_that_is_missing_never_falls_back_to_the_working_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("gone.toml");
+        let error = load_from(config_file(&|_| Some(gone.display().to_string())).as_deref(), &[])
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("gone.toml"), "{error}");
     }
 
     fn write(dir: &tempfile::TempDir, name: &str, text: &str) -> PathBuf {
@@ -3057,6 +3317,52 @@ mod tests {
         assert!(findings.is_empty());
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn checkpoint_kek_file_is_validated_and_exclusive_with_the_cloud_provider() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("kek");
+        let key = "ab".repeat(32);
+        std::fs::write(&path, format!("k1:{key}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let path_text = path.display().to_string();
+        let kek = |extra: &[(&str, &str)]| {
+            let mut pairs = vec![("CRAWLX_CHECKPOINT_KEK_FILE", path_text.as_str())];
+            pairs.extend_from_slice(extra);
+            load_from(None, &vars(&pairs)).unwrap()
+        };
+
+        let mut findings = Vec::new();
+        let valid = kek(&[]);
+        validate_checkpoint_keys(&valid, &mut findings).await;
+        assert!(findings.is_empty(), "{findings:?}");
+        let report = &capability_report(&valid)["checkpoint_encryption"];
+        assert_eq!(report["configured"], true);
+        assert_eq!(report["key_provider"], "file");
+        assert!(!format!("{valid:?}{report}").contains(&key));
+
+        let both = kek(&[("CRAWLX_CHECKPOINT_KMS_KEY_ID", "operator-key")]);
+        validate_checkpoint_keys(&both, &mut findings).await;
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].error);
+        assert!(findings[0].message.contains("mutually exclusive"), "{findings:?}");
+        findings.clear();
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        validate_checkpoint_keys(&kek(&[]), &mut findings).await;
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].error);
+        assert!(!findings[0].message.contains(&key));
+        findings.clear();
+
+        let missing = dir.path().join("absent").display().to_string();
+        let absent = load_from(None, &vars(&[("CRAWLX_CHECKPOINT_KEK_FILE", missing.as_str())])).unwrap();
+        validate_checkpoint_keys(&absent, &mut findings).await;
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].error);
+    }
+
     #[tokio::test]
     async fn article_language_env_uses_real_loader_and_fails_closed_for_missing_bundle() {
         let dir = tempfile::tempdir().unwrap();
@@ -3079,5 +3385,148 @@ mod tests {
         findings.clear();
         validate_article_language_bundle(&absent, &mut findings).await;
         assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn cdp_url_environment_is_known_redacted_and_validated_without_echo() {
+        let secret = "ws://127.0.0.1:9222/devtools/browser/lease-token-4242";
+        let loaded = load_from(None, &vars(&[("CRAWLX_CDP_WS_URL", secret)])).unwrap();
+        let shown = json!({
+            "effective": effective_json(&loaded).unwrap(),
+            "passthrough": redacted_passthrough(&loaded.passthrough),
+        })
+        .to_string();
+        assert!(!shown.contains("lease-token-4242"), "{shown}");
+        assert_eq!(
+            redacted_passthrough(&loaded.passthrough)["CRAWLX_CDP_WS_URL"],
+            "<redacted>"
+        );
+        let mut findings = Vec::new();
+        validate_cdp_attach(&loaded, &mut findings);
+        assert!(findings.is_empty(), "{findings:?}");
+
+        // two sources and a malformed value are errors that name the sources, never the value
+        let dir = tempfile::tempdir().unwrap();
+        let file = write(&dir, "ws-url", secret);
+        let both = load_from(
+            None,
+            &vars(&[
+                ("CRAWLX_CDP_WS_URL", secret),
+                ("CRAWLX_CDP_WS_URL_FILE", file.to_str().unwrap()),
+            ]),
+        )
+        .unwrap();
+        validate_cdp_attach(&both, &mut findings);
+        let bad = load_from(None, &vars(&[("CRAWLX_CDP_WS_URL", "https://u:hunter2@h/x")])).unwrap();
+        validate_cdp_attach(&bad, &mut findings);
+        assert_eq!(findings.len(), 2, "{findings:?}");
+        let text = format!("{findings:?}");
+        assert!(
+            findings.iter().all(|f| f.error && f.key == "browser.attach"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("lease-token-4242") && !text.contains("hunter2"),
+            "{text}"
+        );
+        // the file variable is a path, reported as such
+        let named = load_from(None, &vars(&[("CRAWLX_CDP_WS_URL_FILE", "/run/secrets/cdp")])).unwrap();
+        assert_eq!(
+            redacted_passthrough(&named.passthrough)["CRAWLX_CDP_WS_URL_FILE"],
+            "/run/secrets/cdp"
+        );
+    }
+
+    const POLICY_TOML: &str = r#"
+[intel.policy]
+externalProcessing = true
+maxRunCalls = 4
+proposalTtlSecs = 600
+
+[intel.policy.providers.analysis]
+endpoint = "https://models.internal.example/v1"
+model = "reviewer-1"
+apiKeyRef = "env:POLICY_PROVIDER_KEY"
+retentionCapability = "none"
+allowedPurposes = ["crawl_spec", "evidence_extraction"]
+"#;
+
+    fn serve_intel(file: &Path) -> anyhow::Result<crawlx_api::config::IntelConfig> {
+        let path = file.display().to_string();
+        intel_from_env(&|name| (name == CONFIG_ENV).then(|| path.clone()))
+    }
+
+    #[test]
+    fn serve_reads_the_intel_policy_of_the_configuration_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write(&dir, "crawlx.toml", POLICY_TOML);
+        let intel = serve_intel(&file).unwrap();
+        let policy = intel.policy.as_ref().expect("the policy reaches serve");
+        assert!(policy.external_processing);
+        assert_eq!(policy.max_run_calls, Some(4));
+        assert_eq!(policy.proposal_ttl_secs, Some(600));
+        let provider = &policy.providers["analysis"];
+        assert_eq!(provider.model.as_deref(), Some("reviewer-1"));
+        assert_eq!(provider.api_key_ref.as_deref(), Some("env:POLICY_PROVIDER_KEY"));
+        assert_eq!(provider.allowed_purposes.len(), 2);
+
+        // the API builds a governor from exactly this configuration
+        let key = |name: &str| (name == "POLICY_PROVIDER_KEY").then(|| "k".to_owned());
+        let ai = crawlx_api::intel::ai_policy_with(&intel, &key).unwrap();
+        assert!(ai.governor.is_some());
+        assert_eq!(ai.proposal_ttl_secs, 600);
+
+        // a file without the section leaves external processing off
+        let bare = write(&dir, "bare.toml", "environment = \"dev\"\n");
+        let off = serve_intel(&bare).unwrap();
+        assert!(off.policy.is_none());
+        assert!(crawlx_api::intel::ai_policy_with(&off, &key)
+            .unwrap()
+            .governor
+            .is_none());
+    }
+
+    #[test]
+    fn serve_refuses_unknown_policy_keys_and_inline_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, text) in [
+            ("typo", "[intel.policy]\nexternalProcesing = true\n"),
+            ("provider-typo", "[intel.policy.providers.a]\nmodle = \"m\"\n"),
+            ("other-intel-key", "[intel]\nllm = \"x\"\n"),
+            ("snake-case", "[intel.policy]\nexternal_processing = true\n"),
+        ] {
+            let file = write(&dir, name, text);
+            assert!(serve_intel(&file).is_err(), "{name} must be rejected");
+        }
+        let inline = write(
+            &dir,
+            "inline",
+            "[intel.policy]\nexternalProcessing = true\n[intel.policy.providers.a]\n\
+             endpoint = \"https://m.example/v1\"\nmodel = \"m\"\napiKeyRef = \"sk-inline-secret-1234\"\n",
+        );
+        let error = format!("{:#}", serve_intel(&inline).unwrap_err());
+        assert!(
+            error.contains("apiKeyRef") && !error.contains("sk-inline-secret-1234"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn the_policy_is_not_part_of_the_serialized_effective_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write(&dir, "crawlx.toml", POLICY_TOML);
+        let loaded = load_from(Some(&file), &[]).unwrap();
+        assert!(loaded.config.intel.policy.is_some());
+        let effective = effective_json(&loaded).unwrap();
+        assert!(effective.get("intel").is_none(), "{effective}");
+        assert!(!toml::to_string_pretty(&loaded.config)
+            .unwrap()
+            .contains("reviewer-1"));
+        // `[intel.policy]` is file-only: an environment override of its keys is refused
+        assert!(load_from(
+            Some(&file),
+            &vars(&[("CRAWLX_INTEL__POLICY__EXTERNALPROCESSING", "false")])
+        )
+        .is_err());
     }
 }

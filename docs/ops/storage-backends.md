@@ -16,6 +16,18 @@ postgres, mariadb or sqlite`. The URL is read from `--database-url`, `CRAWLX_DAT
 `crawlx.toml`. Credentials never appear in logs or error text: diagnostics print the scheme, host,
 port and database (or the file path) only.
 
+Every command that reads database settings (`serve`, `worker`, `crawl`, `migrate`, `export`,
+`replay`, `inspect`, `admin`, `archive`, `profiles`, `reparse`, `replay-response`) selects its
+configuration file the same way as `crawlx config check`: the file named by `CRAWLX_CONFIG`, else
+`./crawlx.toml` when present. A `CRAWLX_CONFIG` that names a missing, unreadable or invalid file is
+an error; it never falls back to `./crawlx.toml`. So `database.url_file`, `database.schema`,
+`database.pool_max` and `database.statement_timeout_ms` apply to all of them, including when the
+URL comes from `CRAWLX_DATABASE_URL` or `CRAWLX_DATABASE_URL_FILE`.
+
+On PostgreSQL, `database.schema` of `crawlx.toml` places every table and the migration table in
+one named schema (`crawlx migrate` creates it), so several deployments can share a database; it is
+refused for MariaDB and SQLite. See [backends.md](backends.md).
+
 `crawlx migrate` runs the migrator of the selected engine and creates a missing SQLite file. Every
 migration exists once per engine and the three schemas are kept in lock step
 (`ci/lint-migrations.sh`). `serve` migrates on start; `worker`, `crawl --database-url` and the
@@ -46,6 +58,15 @@ the key provider (`CRAWLX_ARTIFACT_KEY_FILE` or `CRAWLX_ARTIFACT_KMS_KEY_ID`) an
 secret registry (`CRAWLX_SECRET_REDIS_URL`) are required for `serve` and `worker` on every engine.
 Without them startup is refused with `refused: custody_missing: encrypted artifact custody is not
 configured: ...`.
+
+Browser-backed runs (`dynamic`, `hybrid`) on a database also need a checkpoint key provider, on every
+engine and with any artifact store: `CRAWLX_CHECKPOINT_KMS_KEY_ID` (cloud KMS) or
+`CRAWLX_CHECKPOINT_KEK_FILE` (a local key-encryption-key file for deployments without a cloud
+service), never both. Without one the run ends `failed` with the `checkpoint_keys_required` failure.
+The key file must be mode `0600`/`0400`, or `0440` with a group of the process (a Kubernetes secret
+volume under `fsGroup`); deployment wiring is in `docs/ops/README.md` (Compose overlay
+`docker/compose.checkpoint-kek.yml`, Helm `capabilities.checkpointEncryption.kekFileSecret`).
+See "Checkpoint key providers" in `docs/design/data-and-secrets.md`.
 
 ## Pool size and statement timeout
 
@@ -96,8 +117,9 @@ Artifacts live in the filesystem (`--artifacts-dir`) or in an S3-compatible buck
 the database engine. Set `CRAWLX_S3_BUCKET` (and `CRAWLX_S3_PROFILE`, endpoint, region, ...) for
 `serve`, `worker` and `crawl --database-url`; the profiles `standard`, `compatible`, `edge` and
 `self-hosted`, their defaults and refusals are in [object-storage.md](object-storage.md). With a
-bucket set, nothing is written under `--artifacts-dir`. `serve` and `worker` must name the same
-bucket.
+database and a bucket set, nothing is written under `--artifacts-dir`; `serve` and `crawl`
+without a database always use the filesystem and ignore the bucket. `serve` and `worker` must
+name the same bucket.
 
 ## Deployment
 
@@ -149,3 +171,5 @@ MariaDB replication is monitored with the operator's own MariaDB exporter.
 conformance suite and the database-gated tests at a server; SQLite needs nothing. Tests skip when
 a variable is absent. Each test uses its own schema (PostgreSQL) or database (MariaDB) or file
 (SQLite).
+
+Several deployments can share one PostgreSQL server (`database.schema`), one MariaDB server (one database each) or one SQLite directory; see [backends.md](backends.md) for namespacing and for the non-relational families.

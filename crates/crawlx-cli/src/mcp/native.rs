@@ -197,6 +197,11 @@ impl Native {
         self.capabilities.contains(&Capability::LocalUpload)
     }
 
+    /// Whether the operator enabled `capability`.
+    pub(crate) fn is_enabled(&self, capability: Capability) -> bool {
+        self.capabilities.contains(&capability)
+    }
+
     fn has_inspect(&self) -> bool {
         self.capabilities.contains(&Capability::Inspect)
     }

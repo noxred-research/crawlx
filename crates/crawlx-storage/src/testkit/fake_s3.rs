@@ -6,6 +6,8 @@
 //!
 //! The server is path-style only (`/{bucket}/{key}`) and records every request, headers
 //! included, in [`FakeS3::requests`] so tests can observe addressing and checksum behavior.
+//! `PutObject` honors `If-None-Match: *` (`412` when the key exists) unless
+//! [`FakeS3::without_conditional_writes`] was called, which makes it answer `501` instead.
 //! Signatures are not verified.
 
 use crate::s3::{S3Blobs, S3Config, S3ConfigError, Sse};
@@ -53,6 +55,7 @@ struct Inner {
     objects: BTreeMap<String, (Vec<u8>, chrono::DateTime<Utc>)>,
     log: Vec<LogEntry>,
     requests: Vec<RequestRecord>,
+    conditional_writes: bool,
 }
 
 type Shared = Arc<Mutex<Inner>>;
@@ -81,7 +84,10 @@ impl FakeS3 {
     /// # Errors
     /// The listener could not be bound.
     pub async fn start() -> std::io::Result<Self> {
-        let state: Shared = Arc::default();
+        let state: Shared = Arc::new(Mutex::new(Inner {
+            conditional_writes: true,
+            ..Inner::default()
+        }));
         let app = Router::new()
             .route("/{bucket}", get(list_objects))
             .route("/{bucket}/", get(list_objects))
@@ -187,6 +193,12 @@ impl FakeS3 {
         self.state.lock().requests.clone()
     }
 
+    /// Answer `501 Not Implemented` to a `PutObject` carrying `If-None-Match`, like a server
+    /// without conditional writes.
+    pub fn without_conditional_writes(&self) {
+        self.state.lock().conditional_writes = false;
+    }
+
     /// Forget the request logs (the objects stay).
     pub fn clear_log(&self) {
         let mut inner = self.state.lock();
@@ -249,6 +261,19 @@ async fn put_object(
         header(&headers, "x-amz-server-side-encryption"),
         header(&headers, "x-amz-server-side-encryption-aws-kms-key-id"), // wire-compat: S3 protocol header
     ));
+    if header(&headers, "if-none-match").is_some() {
+        if !g.conditional_writes {
+            return StatusCode::NOT_IMPLEMENTED.into_response();
+        }
+        if g.objects.contains_key(&key) {
+            return (
+                StatusCode::PRECONDITION_FAILED,
+                [("content-type", "application/xml")],
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>PreconditionFailed</Code><Message>At least one of the pre-conditions you specified did not hold</Message></Error>",
+            )
+                .into_response();
+        }
+    }
     g.objects.insert(key, (body.to_vec(), Utc::now()));
     (StatusCode::OK, [("etag", "\"fake\"")]).into_response()
 }

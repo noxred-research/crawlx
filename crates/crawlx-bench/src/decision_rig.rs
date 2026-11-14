@@ -195,7 +195,7 @@ impl DecisionRig {
             .load_checkpoint_keys_from_lookup(&|name| std::env::var(name).ok())
             .await?;
         let keys = worker.checkpoint_keys.ok_or_else(|| {
-            BenchError::Gate("durable evaluation checkpoints require CRAWLX_CHECKPOINT_KMS_KEY_ID".into())
+            BenchError::Gate("durable evaluation checkpoints require CRAWLX_CHECKPOINT_KMS_KEY_ID or CRAWLX_CHECKPOINT_KEK_FILE".into())
         })?;
         Self::open_with_checkpoint_keys(cfg, gym, keys).await
     }

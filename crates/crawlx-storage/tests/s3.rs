@@ -189,6 +189,104 @@ async fn fake_s3_backend_contract_and_store_round_trip() {
     assert!(store.blobs().list("").await.unwrap().is_empty());
 }
 
+/// Two deployments (and an unprefixed legacy one) share one bucket: each sees only its own keys,
+/// lists them without the prefix and deletes only what it owns.
+async fn prefix_isolation(endpoint: &str, bucket: &str, access: &str, secret: &str) {
+    let creds =
+        || aws_sdk_s3::config::Credentials::new(access.to_owned(), secret.to_owned(), None, None, "test");
+    let build = |prefix: &str| {
+        let mut cfg = S3Config::new(bucket, "us-east-1")
+            .with_endpoint(endpoint.to_owned())
+            .with_prefix(prefix)
+            .unwrap();
+        cfg.max_attempts = 2;
+        S3Blobs::with_credentials(&cfg, creds()).unwrap()
+    };
+    let crawlx = build("crawlx");
+    let other = build("other/product/");
+    let legacy = build("");
+    crawlx.put("content/a/x", b"crawlx").await.unwrap();
+    other.put("content/a/x", b"other").await.unwrap();
+    assert_eq!(
+        crawlx.get("content/a/x").await.unwrap().as_deref(),
+        Some(&b"crawlx"[..])
+    );
+    assert_eq!(
+        other.get("content/a/x").await.unwrap().as_deref(),
+        Some(&b"other"[..])
+    );
+    assert!(crawlx.exists("content/a/x").await.unwrap());
+    let own: Vec<String> = crawlx
+        .list("content/")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| e.key)
+        .collect();
+    assert_eq!(
+        own,
+        vec!["content/a/x".to_owned()],
+        "keys are listed without the prefix, never another's"
+    );
+    let all: Vec<String> = legacy
+        .list("")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| e.key)
+        .collect();
+    assert!(
+        all.contains(&"crawlx/content/a/x".to_owned())
+            && all.contains(&"other/product/content/a/x".to_owned()),
+        "{all:?}"
+    );
+    assert_eq!(
+        legacy.get("crawlx/content/a/x").await.unwrap().as_deref(),
+        Some(&b"crawlx"[..])
+    );
+    crawlx.delete("content/a/x").await.unwrap();
+    assert!(!crawlx.exists("content/a/x").await.unwrap());
+    assert_eq!(
+        other.get("content/a/x").await.unwrap().as_deref(),
+        Some(&b"other"[..]),
+        "another prefix is untouched"
+    );
+    other.delete("content/a/x").await.unwrap();
+}
+
+#[test]
+fn key_prefixes_are_normalized_and_refused_when_unsafe() {
+    use crawlx_storage::s3::normalize_prefix;
+    assert_eq!(normalize_prefix("").unwrap(), "");
+    assert_eq!(normalize_prefix("crawlx").unwrap(), "crawlx/");
+    assert_eq!(normalize_prefix("a/b/").unwrap(), "a/b/");
+    for bad in ["/abs", "a//b", "a/../b", "./a", "a b", "a*", &"x".repeat(129)] {
+        assert!(normalize_prefix(bad).is_err(), "{bad}");
+    }
+    let from = |value: &str| {
+        let value = value.to_owned();
+        S3Config::from_lookup(&move |name| match name {
+            "CRAWLX_S3_BUCKET" => Some("b".to_owned()),
+            "CRAWLX_S3_PREFIX" => Some(value.clone()),
+            _ => None,
+        })
+    };
+    assert_eq!(from("crawlx").unwrap().prefix, "crawlx/");
+    assert!(from("../x").is_err());
+}
+
+#[tokio::test]
+async fn fake_s3_prefixes_isolate_deployments_sharing_a_bucket() {
+    let server = fake_s3().await;
+    prefix_isolation(
+        server.endpoint(),
+        "artifacts",
+        "test-access-key",
+        "test-secret-key",
+    )
+    .await;
+}
+
 #[tokio::test]
 async fn fake_s3_orphans_are_collected_after_the_grace_period() {
     let fake = fake_s3().await;
@@ -229,6 +327,401 @@ async fn fake_s3_orphans_are_collected_after_the_grace_period() {
     assert!(!store.blobs().exists(&orphan_key).await.unwrap());
     assert!(store.blobs().exists(&referenced_key).await.unwrap());
     assert_eq!(store.get(&referenced).await.unwrap(), b"<p>kept</p>");
+}
+
+// ---- deployment marker --------------------------------------------------------------------
+
+/// A blob store over `endpoint` under `prefix`; `deployment` is the id of the deployment it
+/// belongs to, `None` for a process without a database.
+fn guarded(endpoint: &str, prefix: &str, deployment: Option<&str>) -> S3Blobs {
+    guarded_with(endpoint, prefix, deployment, false)
+}
+
+fn guarded_with(endpoint: &str, prefix: &str, deployment: Option<&str>, allow_shared: bool) -> S3Blobs {
+    let mut cfg = S3Config::new("artifacts", "us-east-1")
+        .with_endpoint(endpoint.to_owned())
+        .with_prefix(prefix)
+        .unwrap();
+    cfg.max_attempts = 2;
+    cfg.attempt_timeout = Duration::from_secs(10);
+    cfg.allow_shared_prefix = allow_shared;
+    let blobs = S3Blobs::with_credentials(
+        &cfg,
+        aws_sdk_s3::config::Credentials::new(
+            "test-access-key",
+            "test-secret-key",
+            None,
+            None,
+            "crawlx-tests",
+        ),
+    )
+    .unwrap();
+    match deployment {
+        Some(id) => blobs.with_deployment(Arc::new(id.to_owned())),
+        None => blobs,
+    }
+}
+
+/// A TCP front for `target` that closes the first `drops` connections without a reply (the
+/// SDK reports a dispatch failure) and relays every later one.
+async fn flaky_front(target: &str, drops: usize) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let target = target.trim_start_matches("http://").to_owned();
+    tokio::spawn(async move {
+        let mut seen = 0usize;
+        while let Ok((mut inbound, _)) = listener.accept().await {
+            seen += 1;
+            if seen <= drops {
+                drop(inbound);
+                continue;
+            }
+            let target = target.clone();
+            tokio::spawn(async move {
+                if let Ok(mut outbound) = tokio::net::TcpStream::connect(target).await {
+                    let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
+                }
+            });
+        }
+    });
+    format!("http://{address}")
+}
+
+#[tokio::test]
+async fn the_marker_requests_survive_a_server_that_is_briefly_unreachable() {
+    let fake = FakeS3::start().await.unwrap();
+    // `guarded` allows 2 SDK attempts per request, so 3 dropped connections defeat the first
+    // marker read; the marker retry must carry the claim through
+    let front = flaky_front(fake.endpoint(), 3).await;
+    let blobs = guarded(&front, "flaky", Some("deployment-one"));
+    blobs.put("k", b"v").await.unwrap();
+    assert!(
+        fake.keys()
+            .iter()
+            .any(|k| k.ends_with("flaky/.crawlx-deployment")),
+        "the claim was written: {:?}",
+        fake.keys()
+    );
+
+    // a server that never answers still ends in a typed, retryable error after a bounded wait
+    let dead = flaky_front(fake.endpoint(), usize::MAX).await;
+    let blobs = guarded(&dead, "dead", Some("deployment-one"));
+    let error = tokio::time::timeout(Duration::from_secs(60), blobs.put("k", b"v"))
+        .await
+        .expect("the wait is bounded")
+        .unwrap_err();
+    assert!(
+        matches!(error, crawlx_core::StoreError::Unavailable(_)),
+        "{error:?}"
+    );
+}
+
+fn claimed(error: &crawlx_core::StoreError) -> bool {
+    matches!(error, crawlx_core::StoreError::Conflict(message) if message.contains("claimed by another crawlx deployment"))
+}
+
+#[tokio::test]
+async fn the_first_writer_claims_the_prefix_and_a_second_deployment_is_refused() {
+    let fake = fake_s3().await;
+    let first = guarded(fake.endpoint(), "shared", Some("deployment-one"));
+    let second = guarded(fake.endpoint(), "shared", Some("deployment-two"));
+    assert!(fake.keys().is_empty(), "opening a store writes nothing");
+    first.put("content/a/x", b"one").await.unwrap();
+    let marker: serde_json::Value =
+        serde_json::from_slice(&fake.objects()["shared/.crawlx-deployment"]).unwrap();
+    assert_eq!(
+        marker,
+        serde_json::json!({"format": 1, "deployment": "deployment-one", "kind": "deployment"})
+    );
+
+    // every mutation by the other deployment is refused, naming the prefix and not the owner
+    for error in [
+        second.put("content/a/y", b"two").await.unwrap_err(),
+        second
+            .put_shared("content/a/y", bytes::Bytes::from_static(b"two"))
+            .await
+            .unwrap_err(),
+        second.delete("content/a/x").await.unwrap_err(),
+        second.list("").await.unwrap_err(),
+        second.claim_prefix().await.unwrap_err(),
+    ] {
+        assert!(claimed(&error), "{error:?}");
+        let message = error.to_string();
+        assert!(message.contains("\"shared/\""), "{message}");
+        assert!(!message.contains("deployment-one"), "{message}");
+    }
+    let dir = std::env::temp_dir().join(format!("crawlx-s3-guard-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("archive.bin");
+    std::fs::write(&file, b"archive").unwrap();
+    assert!(claimed(
+        &second.put_file("archive/a", &file, 7).await.unwrap_err()
+    ));
+    std::fs::remove_dir_all(&dir).unwrap();
+
+    // reads stay possible, and nothing of the other deployment was touched
+    assert_eq!(
+        second.get("content/a/x").await.unwrap().as_deref(),
+        Some(&b"one"[..])
+    );
+    assert!(second.exists("content/a/x").await.unwrap());
+    assert_eq!(second.list("content/").await.unwrap().len(), 1);
+    assert!(!fake.keys().contains(&"shared/content/a/y".to_owned()));
+    assert!(fake.keys().contains(&"shared/content/a/x".to_owned()));
+}
+
+#[tokio::test]
+async fn the_same_deployment_reopens_and_other_prefixes_are_independent() {
+    let fake = fake_s3().await;
+    guarded(fake.endpoint(), "shared", Some("deployment-one"))
+        .put("content/a/x", b"one")
+        .await
+        .unwrap();
+    // a restart, a second worker and the CLI of one deployment share the claim
+    let again = guarded(fake.endpoint(), "shared", Some("deployment-one"));
+    again.claim_prefix().await.unwrap();
+    again.put("content/a/y", b"y").await.unwrap();
+    assert_eq!(again.list("").await.unwrap().len(), 2);
+    again.delete("content/a/x").await.unwrap();
+    // another deployment under its own prefix in the same bucket is unaffected
+    let other = guarded(fake.endpoint(), "other", Some("deployment-two"));
+    other.put("content/a/x", b"two").await.unwrap();
+    assert!(fake.keys().contains(&"other/.crawlx-deployment".to_owned()));
+    // clones share the claim state: one marker read and no second write
+    fake.clear_log();
+    let clone = again.clone();
+    clone.put("content/a/z", b"z").await.unwrap();
+    again.put("content/a/w", b"w").await.unwrap();
+    let marker_requests = fake
+        .log()
+        .iter()
+        .filter(|(_, key, ..)| key == "shared/.crawlx-deployment")
+        .count();
+    assert_eq!(
+        marker_requests, 0,
+        "a claimed handle does not touch the marker again"
+    );
+}
+
+#[tokio::test]
+async fn the_bucket_root_is_claimed_too_and_existing_objects_are_adopted() {
+    let fake = fake_s3().await;
+    // objects from before the guard existed: no marker yet
+    let legacy = guarded_with(fake.endpoint(), "", None, true);
+    legacy.put("content/a/old", b"old").await.unwrap();
+    assert!(
+        !fake.keys().contains(&".crawlx-deployment".to_owned()),
+        "the override writes no marker"
+    );
+    // the first deployment to write claims the root and adopts what is there
+    let first = guarded(fake.endpoint(), "", Some("deployment-one"));
+    first.put("content/a/new", b"new").await.unwrap();
+    assert!(fake.keys().contains(&".crawlx-deployment".to_owned()));
+    assert_eq!(
+        first.get("content/a/old").await.unwrap().as_deref(),
+        Some(&b"old"[..])
+    );
+    let second = guarded(fake.endpoint(), "", Some("deployment-two"));
+    assert!(claimed(&second.delete("content/a/old").await.unwrap_err()));
+    assert!(fake.keys().contains(&"content/a/old".to_owned()));
+}
+
+#[tokio::test]
+async fn reads_alone_never_create_the_marker() {
+    let fake = fake_s3().await;
+    let reader = guarded(fake.endpoint(), "shared", Some("deployment-one"));
+    assert!(reader.get("content/a/x").await.unwrap().is_none());
+    assert!(!reader.exists("content/a/x").await.unwrap());
+    assert!(reader.list("content/").await.unwrap().is_empty());
+    assert!(
+        reader.list("").await.unwrap().is_empty(),
+        "an unclaimed prefix may be listed"
+    );
+    assert!(fake.keys().is_empty());
+}
+
+#[tokio::test]
+async fn the_override_skips_the_guard() {
+    let fake = fake_s3().await;
+    guarded(fake.endpoint(), "shared", Some("deployment-one"))
+        .put("content/a/x", b"one")
+        .await
+        .unwrap();
+    let blocked = guarded(fake.endpoint(), "shared", Some("deployment-two"));
+    assert!(claimed(&blocked.put("content/a/y", b"y").await.unwrap_err()));
+    let shared = guarded_with(fake.endpoint(), "shared", Some("deployment-two"), true);
+    shared.put("content/a/y", b"y").await.unwrap();
+    assert_eq!(shared.list("").await.unwrap().len(), 2);
+    shared.delete("content/a/x").await.unwrap();
+    let marker: serde_json::Value =
+        serde_json::from_slice(&fake.objects()["shared/.crawlx-deployment"]).unwrap();
+    assert_eq!(
+        marker["deployment"], "deployment-one",
+        "the override leaves the marker alone"
+    );
+
+    let lookup = |value: &'static str| {
+        S3Config::from_lookup(&move |name| match name {
+            "CRAWLX_S3_BUCKET" => Some("b".to_owned()),
+            "CRAWLX_S3_ALLOW_SHARED_PREFIX" => Some(value.to_owned()),
+            _ => None,
+        })
+    };
+    assert!(lookup("1").unwrap().allow_shared_prefix);
+    assert!(!lookup("0").unwrap().allow_shared_prefix);
+    assert!(lookup("maybe").is_err());
+    assert!(
+        !S3Config::from_lookup(&|name| (name == "CRAWLX_S3_BUCKET").then(|| "b".to_owned()))
+            .unwrap()
+            .allow_shared_prefix
+    );
+}
+
+#[tokio::test]
+async fn the_orphan_sweep_neither_lists_nor_deletes_the_marker_and_foreign_sweeps_are_refused() {
+    let fake = fake_s3().await;
+    let runs = Arc::new(MemoryStore::new());
+    let tenant = TenantId::new();
+    let run = memory_run(&runs, tenant).await;
+    let owner = ObjectArtifactStore::new(
+        guarded(fake.endpoint(), "shared", Some("deployment-one")),
+        runs.clone(),
+        Arc::new(SystemClock),
+    );
+    let orphan_key = format!("content/{tenant}/{run}/{}", "0".repeat(64));
+    owner.blobs().put(&orphan_key, b"orphan").await.unwrap();
+    let live = LiveArtifacts {
+        ids: Default::default(),
+        object_keys: Default::default(),
+    };
+    let later = Utc::now() + chrono::Duration::hours(1);
+
+    // the other deployment's sweep (grace 0) is refused before it removes anything
+    let intruder = ObjectArtifactStore::new(
+        guarded(fake.endpoint(), "shared", Some("deployment-two")),
+        runs.clone(),
+        Arc::new(SystemClock),
+    );
+    let error = intruder.collect_orphans(&live, later).await.unwrap_err();
+    assert!(claimed(&error), "{error:?}");
+    assert!(fake.keys().contains(&format!("shared/{orphan_key}")));
+
+    // the owner's sweep collects the orphan and leaves the marker
+    assert_eq!(owner.collect_orphans(&live, later).await.unwrap(), 1);
+    assert_eq!(fake.keys(), vec!["shared/.crawlx-deployment".to_owned()]);
+    assert!(
+        owner.blobs().list("").await.unwrap().is_empty(),
+        "the marker is never listed"
+    );
+    let error = owner.blobs().delete(".crawlx-deployment").await.unwrap_err();
+    assert!(matches!(error, crawlx_core::StoreError::Conflict(_)), "{error:?}");
+    assert!(owner.blobs().put(".crawlx-deployment", b"x").await.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_claimers_have_exactly_one_winner() {
+    for conditional in [true, false] {
+        let fake = fake_s3().await;
+        if !conditional {
+            fake.without_conditional_writes();
+        }
+        let claimers: Vec<_> = (0..8)
+            .map(|n| {
+                let blobs = guarded(fake.endpoint(), "race", Some(&format!("deployment-{n}")));
+                tokio::spawn(async move { blobs.claim_prefix().await })
+            })
+            .collect();
+        let mut winners = 0;
+        let mut refused = 0;
+        for claimer in claimers {
+            match claimer.await.unwrap() {
+                Ok(()) => winners += 1,
+                Err(error) if claimed(&error) => refused += 1,
+                Err(error) => panic!("unexpected error: {error:?}"),
+            }
+        }
+        // without conditional writes the claim is write-then-read-back: two claimers can both
+        // read their own marker only when their writes and reads interleave, so every claimer
+        // that is refused saw a different winner's marker
+        if conditional {
+            assert_eq!(
+                (winners, refused),
+                (1, 7),
+                "conditional put-if-absent admits one claimer"
+            );
+        } else {
+            assert!(winners >= 1 && winners + refused == 8, "{winners} {refused}");
+        }
+        // whoever the marker names is the one deployment that can still write
+        let marker: serde_json::Value =
+            serde_json::from_slice(&fake.objects()["race/.crawlx-deployment"]).unwrap();
+        let owner = marker["deployment"].as_str().unwrap().to_owned();
+        guarded(fake.endpoint(), "race", Some(&owner))
+            .put("content/a/x", b"x")
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn a_server_without_conditional_writes_still_claims_by_reading_back() {
+    let fake = fake_s3().await;
+    fake.without_conditional_writes();
+    let first = guarded(fake.endpoint(), "shared", Some("deployment-one"));
+    first.put("content/a/x", b"one").await.unwrap();
+    let second = guarded(fake.endpoint(), "shared", Some("deployment-two"));
+    assert!(claimed(&second.put("content/a/y", b"y").await.unwrap_err()));
+    assert!(claimed(&second.delete("content/a/x").await.unwrap_err()));
+    assert!(fake.keys().contains(&"shared/content/a/x".to_owned()));
+}
+
+#[tokio::test]
+async fn a_process_without_a_database_claims_softly_and_a_deployment_takes_it_over() {
+    let fake = fake_s3().await;
+    let local_one = guarded(fake.endpoint(), "shared", None);
+    let local_two = guarded(fake.endpoint(), "shared", None);
+    local_one.put("content/a/x", b"x").await.unwrap();
+    // database-less processes share their claim: a restart can still delete what it wrote
+    local_two.put("content/a/y", b"y").await.unwrap();
+    local_two.delete("content/a/x").await.unwrap();
+    // a deployment takes the claim over
+    let deployment = guarded(fake.endpoint(), "shared", Some("deployment-one"));
+    deployment.put("content/a/z", b"z").await.unwrap();
+    let marker: serde_json::Value =
+        serde_json::from_slice(&fake.objects()["shared/.crawlx-deployment"]).unwrap();
+    assert_eq!(marker["deployment"], "deployment-one");
+    // a database-less process that starts now may still write but no longer delete or sweep
+    let late = guarded(fake.endpoint(), "shared", None);
+    late.put("content/a/w", b"w").await.unwrap();
+    assert!(claimed(&late.delete("content/a/y").await.unwrap_err()));
+    assert!(claimed(&late.list("").await.unwrap_err()));
+    assert!(fake.keys().contains(&"shared/content/a/y".to_owned()));
+}
+
+#[tokio::test]
+async fn an_unreadable_marker_fails_closed() {
+    let fake = fake_s3().await;
+    let blobs = guarded(fake.endpoint(), "shared", Some("deployment-one"));
+    // plant garbage where the marker belongs, as a foreign tool or a newer build might
+    let planter = guarded_with(fake.endpoint(), "", None, true);
+    planter
+        .put("shared/.crawlx-deployment", b"not json")
+        .await
+        .unwrap();
+    let error = blobs.put("content/a/x", b"x").await.unwrap_err();
+    assert!(
+        matches!(&error, crawlx_core::StoreError::Conflict(message) if message.contains("unreadable")),
+        "{error:?}"
+    );
+    planter
+        .put(
+            "shared/.crawlx-deployment",
+            br#"{"format":99,"deployment":"deployment-one","kind":"deployment"}"#,
+        )
+        .await
+        .unwrap();
+    assert!(blobs.put("content/a/x", b"x").await.is_err());
+    assert!(!fake.keys().contains(&"shared/content/a/x".to_owned()));
 }
 
 /// Plain HTTP/1.1 `GET` of `url` (the fake S3 ignores signatures); returns `(status, body)`.
@@ -368,7 +861,7 @@ impl Drop for Container {
 /// A server reached at `CRAWLX_TEST_S3_ENDPOINT` (the `integration` CI job's service container;
 /// credentials `CRAWLX_TEST_S3_ACCESS_KEY` / `CRAWLX_TEST_S3_SECRET_KEY`, default
 /// `crawlx` / `crawlx-secret`). Skips when the variable is unset.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn service_endpoint_backend_contract() {
     let Ok(endpoint) = std::env::var("CRAWLX_TEST_S3_ENDPOINT") else {
         eprintln!("skipped: CRAWLX_TEST_S3_ENDPOINT is not set");
@@ -444,6 +937,56 @@ async fn self_hosted_backend_contract_when_docker_can_run_it() {
 }
 
 /// The backend contract plus the SSE-S3 passthrough against a server at `endpoint`.
+/// The deployment marker against a real server: the claim is a conditional write, so of several
+/// concurrent claimers exactly one wins, and a second deployment is refused.
+async fn deployment_guard_contract(endpoint: &str, bucket: &str, access: &str, secret: &str) {
+    let build = |prefix: &str, deployment: &str| {
+        let mut cfg = S3Config::new(bucket, "us-east-1")
+            .with_endpoint(endpoint.to_owned())
+            .with_prefix(prefix)
+            .unwrap();
+        cfg.max_attempts = 3;
+        S3Blobs::with_credentials(
+            &cfg,
+            aws_sdk_s3::config::Credentials::new(access.to_owned(), secret.to_owned(), None, None, "test"),
+        )
+        .unwrap()
+        .with_deployment(Arc::new(deployment.to_owned()))
+    };
+    let one = build("guard", "deployment-one");
+    one.put("content/a/x", b"one").await.unwrap();
+    let two = build("guard", "deployment-two");
+    assert!(claimed(&two.put("content/a/y", b"y").await.unwrap_err()));
+    assert!(claimed(&two.delete("content/a/x").await.unwrap_err()));
+    assert!(claimed(&two.list("").await.unwrap_err()));
+    assert_eq!(
+        two.get("content/a/x").await.unwrap().as_deref(),
+        Some(&b"one"[..])
+    );
+    build("guard", "deployment-one")
+        .put("content/a/z", b"z")
+        .await
+        .unwrap();
+    assert_eq!(one.list("").await.unwrap().len(), 2, "the marker is not listed");
+
+    let claimers: Vec<_> = (0..6)
+        .map(|n| {
+            let blobs = build("race", &format!("deployment-{n}"));
+            tokio::spawn(async move { blobs.claim_prefix().await })
+        })
+        .collect();
+    let mut winners = 0;
+    for claimer in claimers {
+        match claimer.await.unwrap() {
+            Ok(()) => winners += 1,
+            Err(error) => assert!(claimed(&error), "{error:?}"),
+        }
+    }
+    assert_eq!(winners, 1, "a conditional put-if-absent admits one claimer");
+    one.delete("content/a/x").await.unwrap();
+    one.delete("content/a/z").await.unwrap();
+}
+
 async fn service_contract(endpoint: &str, access: &str, secret: &str) {
     let creds =
         || aws_sdk_s3::config::Credentials::new(access.to_owned(), secret.to_owned(), None, None, "test");
@@ -472,6 +1015,8 @@ async fn service_contract(endpoint: &str, access: &str, secret: &str) {
         }
     }
     backend_contract(&b).await;
+    prefix_isolation(endpoint, &bucket, access, secret).await;
+    deployment_guard_contract(endpoint, &bucket, access, secret).await;
 
     // SSE-S3 passthrough: a server without a key service accepts AES256 (SSE-S3) requests
     let sse = S3Blobs::with_credentials(&cfg.clone().with_sse(Sse::Aes256), creds()).unwrap();
@@ -488,6 +1033,14 @@ async fn service_contract(endpoint: &str, access: &str, secret: &str) {
             assert!(msg.starts_with("s3 put content/sse/a/b"), "{msg}")
         }
         Err(other) => panic!("unexpected error class: {other:?}"),
+    }
+    // the deployment markers of the guard checks are the only objects left
+    if let Ok(listing) = b.client().list_objects_v2().bucket(&bucket).send().await {
+        for object in listing.contents() {
+            if let Some(key) = object.key() {
+                let _ = b.client().delete_object().bucket(&bucket).key(key).send().await;
+            }
+        }
     }
     // best-effort: the bucket is empty here, so a failed removal only leaves an empty bucket
     if let Err(e) = b.client().delete_bucket().bucket(&bucket).send().await {

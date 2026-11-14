@@ -13,7 +13,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::Extension;
 use crawlx_core::config::CreateCrawl;
-use crawlx_core::counters::{RunStatus, TerminalReason};
+use crawlx_core::counters::{RunFailure, RunStatus, TerminalReason};
 use crawlx_core::repo::{CrawlRun, SessionStatus};
 use crawlx_core::CrawlRunId;
 use crawlx_policy::{AdmissionError, TenantLimits};
@@ -411,9 +411,46 @@ async fn metadata_resource(state: &AppState, run: &crawlx_core::repo::RunMetadat
         None
     };
     let warnings = crate::resources::metadata_warnings(run.query_policy);
-    Ok(crate::resources::run_metadata_json(
-        run, &sessions, coverage, dead, &warnings,
-    ))
+    let mut body = crate::resources::run_metadata_json(run, &sessions, coverage, dead, &warnings);
+    attach_failure(state, run.id, run.status, run.terminal_reason, &mut body).await?;
+    Ok(body)
+}
+
+/// Events read to find a refusal record: the worker records it before the run's first session
+/// could produce anything, so the first page holds it.
+const REFUSAL_EVENT_PAGE: u32 = 100;
+
+/// Add `failure` (`{code, message}`) to the crawl resource of a run the worker refused over its
+/// configuration, so the cause of `failed`/`fatal_error` is visible without worker logs. Only the
+/// closed [`RunFailureCode`] vocabulary and a bounded message are read from the event.
+///
+/// [`RunFailureCode`]: crawlx_core::counters::RunFailureCode
+async fn attach_failure(
+    state: &AppState,
+    run: CrawlRunId,
+    status: RunStatus,
+    reason: Option<TerminalReason>,
+    body: &mut Value,
+) -> ApiResult<()> {
+    if status != RunStatus::Failed || reason != Some(TerminalReason::FatalError) {
+        return Ok(());
+    }
+    let events = state
+        .repos
+        .events
+        .list_metadata_after(run, 0, REFUSAL_EVENT_PAGE)
+        .await?;
+    let failure = events
+        .iter()
+        .filter(|event| event.kind == RunFailure::EVENT_KIND)
+        .find_map(|event| RunFailure::from_event_payload(&event.payload));
+    if let (Some(failure), Some(object)) = (failure, body.as_object_mut()) {
+        object.insert(
+            "failure".to_owned(),
+            json!({ "code": failure.code.as_str(), "message": failure.message }),
+        );
+    }
+    Ok(())
 }
 
 /// The full crawl resource for `run`.
@@ -433,7 +470,9 @@ pub(crate) async fn run_resource(state: &AppState, run: &CrawlRun, warnings: &[W
             all.push(w.clone());
         }
     }
-    Ok(run_json(run, &sessions, coverage, dead, &all))
+    let mut body = run_json(run, &sessions, coverage, dead, &all);
+    attach_failure(state, run.id, run.status, run.terminal_reason, &mut body).await?;
+    Ok(body)
 }
 
 /// `POST /v1/crawls`.

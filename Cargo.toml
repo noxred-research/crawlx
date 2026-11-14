@@ -125,6 +125,11 @@ pprof = { version = "0.15", default-features = false, features = ["protobuf-code
 parking_lot = "0.13"
 # Shared volatile ZDR delivery; server persistence is refused by the adapter.
 redis = { version = "1.8", default-features = false, features = ["tokio-rustls-comp", "tls-rustls-webpki-roots", "script"] }
+# Native event-stream sinks of the delivery registry (Kafka producer, RabbitMQ publisher with confirms).
+rskafka = { version = "0.6", default-features = false, features = ["transport-tls"] }
+lapin = { version = "4", default-features = false, features = ["tokio", "rustls--ring", "rustls-webpki-roots-certs"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
 indexmap = { version = "2", features = ["serde"] }
 ipnet = { version = "2", features = ["serde"] }
 # public suffix list for `scope.hostScope: rdn`; bundled list, no network

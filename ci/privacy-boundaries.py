@@ -63,6 +63,7 @@ ADAPTERS = {
     "crawlx-storage/src/checkpoint_crypto.rs": ({"aws_sdk_kms"}, "checkpoint key-service adapter"),
     "crawlx-worker/src/delivery.rs": ({"reqwest"}, "authorized feed delivery adapter"),
     "crawlx-worker/src/delivery/config.rs": ({"reqwest"}, "delivery header validation only"),
+    "crawlx-worker/src/delivery/backends/http.rs": ({"reqwest"}, "bounded infrastructure sink HTTP adapter"),
     "crawlx-worker/src/secrets/mod.rs": ({"reqwest"}, "typed secret-provider failure translation"),
     "crawlx-worker/src/secrets/vault.rs": ({"reqwest"}, "secret resolution transport"),
     "crawlx-worker/src/secrets/cloud_sm.rs": ({"aws_sdk_secretsmanager"}, "managed secret resolution adapter"),

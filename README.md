@@ -241,7 +241,7 @@ The OpenAPI document is served at `/v1/openapi.json`. Without Compose, run `craw
 [walkthrough](docs/walkthrough.md) and [operations](docs/ops/README.md).
 
 PostgreSQL, MariaDB and SQLite are supported persistent engines for `serve`, `worker` and the operator
-commands; see [storage backends](docs/ops/storage-backends.md). Foreground CLI crawls can also use
+commands; see [storage backends](docs/ops/storage-backends.md), and the [backends guide](docs/ops/backends.md) for object store, Valkey/Redis, search, ClickHouse, Kafka and RabbitMQ and for sharing instances. Foreground CLI crawls can also use
 in-memory local mode, and `crawlx serve` without a database only queues runs in its own process.
 
 ### Tooling interoperability: compatibility API
@@ -420,7 +420,7 @@ Read more: [architecture](docs/design/architecture.md) · [crawl model](docs/des
 | Filters | `--filter-similar`, `--content-similar off\|simhash\|tfidf\|bm25`, `--match-regex`, `--filter-regex`, `--match-condition`, `--filter-condition`, `--filter-page-type` |
 | Politeness and fetch | `--rate-limit`, `--host-rate-limit`, `--concurrency`, `--delay-ms`, `--timeout`, `--retries`, `--max-response-size`, `--no-redirects`, `--proxy`, `--headers`, `--cookie`, `--user-agent` |
 | Extraction | `--js-crawl`, `--javascript-mode off\|regex\|ast\|both`, `--form-extraction`, `--detect-secrets`, `--tech-detect`, `--knowledge-base`, `--custom-field-config` |
-| Browser | `--page-load-strategy`, `--dom-wait-time`, `--show-browser`, `--cdp-ws-url`, `--no-incognito`, `--auto-download-chromium`, `--interaction-depth`, `--interaction-max-actions` |
+| Browser | `--page-load-strategy`, `--dom-wait-time`, `--show-browser`, `--cdp-ws-url-file` (the DevTools URL is a bearer token: also `CRAWLX_CDP_WS_URL_FILE` / `CRAWLX_CDP_WS_URL`; `--cdp-ws-url` is deprecated), `--no-incognito`, `--auto-download-chromium`, `--interaction-depth`, `--interaction-max-actions` |
 | Output | `--output DIR`, `-j/--jsonl`, `-o/--output-file`, `--output-template`, `--field`, `--store-field`, `--store-response`, `--omit-raw`, `--list-output-fields`, `--silent`, `--verbose` |
 
 Behavior of the less obvious options (source discovery, response cache and replay, adaptive extraction,

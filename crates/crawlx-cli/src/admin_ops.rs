@@ -710,8 +710,13 @@ async fn sweep_retention_on<B: Sql>(
     let runs: Arc<dyn crawlx_core::repo::RunRepo> = Arc::new(pg.clone());
     let reaper: Arc<dyn crawlx_storage::ArtifactReaper> = match &a.store.s3_bucket {
         Some(bucket) => Arc::new(
-            S3ArtifactStore::new(S3Blobs::new(&s3_config(bucket)?)?, runs, clock)
-                .with_index(Arc::new(pg.clone())),
+            S3ArtifactStore::new(
+                // the database's deployment id decides whether this sweep may touch the prefix
+                S3Blobs::new(&s3_config(bucket)?)?.with_deployment(Arc::new(pg.clone())),
+                runs,
+                clock,
+            )
+            .with_index(Arc::new(pg.clone())),
         ),
         None => Arc::new(
             FsArtifactStore::open(&a.store.artifacts_dir, runs, clock)

@@ -23,11 +23,26 @@
 //!   unchanged on every profile.
 //! * Uploads are always one `PutObject` (never multipart); an object above
 //!   [`S3Capabilities::single_put_max_bytes`] is refused with a typed error.
-//! * No conditional write (`If-None-Match`) and no retention call is ever sent. "First write
-//!   wins" for the audit export is a property of the bucket's object lock, declared with
-//!   [`S3Config::object_lock`] and refused on profiles without object lock.
+//! * No retention call is ever sent, and no conditional write except for the deployment marker
+//!   below. "First write wins" for the audit export is a property of the bucket's object lock,
+//!   declared with [`S3Config::object_lock`] and refused on profiles without object lock.
+//!
+//! # Deployment marker
+//!
+//! One prefix belongs to one deployment (one relational database): two deployments writing the
+//! same prefix would each treat the other's objects as orphans and delete them. The first
+//! writer therefore claims the prefix with the object `<prefix>.crawlx-deployment`
+//! ([`DEPLOYMENT_MARKER_KEY`]), created with `If-None-Match: *` so that of two concurrent
+//! claimers exactly one wins (on a server that answers `501`, the claim is an unconditional
+//! write verified by reading the marker back). Any write, delete or whole-prefix listing (the
+//! orphan sweep) under a prefix whose marker names another deployment is refused with
+//! [`S3ConfigError::PrefixClaimed`]; reads are never refused. The marker is created lazily by
+//! the first write, so read-only commands never create it; an object store without a database
+//! identity ([`S3Blobs::with_deployment`] not called) writes a database-less marker that every
+//! such process shares, and refuses only deletes and sweeps under a deployment's marker. `CRAWLX_S3_ALLOW_SHARED_PREFIX=1` switches the guard off.
 
 use crate::artifacts::{ArtifactBlobs, BlobEntry, ObjectArtifactStore};
+use crate::deployment::DeploymentIdentity;
 use async_trait::async_trait;
 use aws_config::environment::EnvironmentVariableCredentialsProvider;
 use aws_sdk_s3::config::retry::RetryConfig;
@@ -46,11 +61,18 @@ use aws_smithy_http_client::tls;
 use bytes::Bytes;
 use chrono::TimeZone;
 use crawlx_core::{StoreError, Timestamp};
+use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, Ipv6Addr};
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::OnceCell;
 
 /// Artifacts in an S3-compatible bucket.
 pub type S3ArtifactStore = ObjectArtifactStore<S3Blobs>;
+
+/// Logical key, under the configured prefix, of the object that names the deployment owning the
+/// prefix. Listings never return it and no write or delete may target it.
+pub const DEPLOYMENT_MARKER_KEY: &str = ".crawlx-deployment";
 
 /// Largest object one `PutObject` carries (5 GiB), the limit every profile shares.
 pub const SINGLE_PUT_MAX_BYTES: u64 = 5 * 1024 * 1024 * 1024;
@@ -98,6 +120,17 @@ pub enum S3ConfigError {
     /// The signing region is blank.
     #[error("s3 region must not be empty")]
     RegionEmpty,
+    /// Another deployment owns the prefix (its marker object names a different deployment).
+    #[error("s3 prefix {prefix:?} in bucket {bucket:?} is claimed by another crawlx deployment; give each deployment its own CRAWLX_S3_PREFIX, or set CRAWLX_S3_ALLOW_SHARED_PREFIX=1 to skip this guard (unsafe: each deployment's orphan sweep deletes the other's objects)")]
+    PrefixClaimed {
+        /// The bucket.
+        bucket: String,
+        /// The configured key prefix (empty for the bucket root).
+        prefix: String,
+    },
+    /// `CRAWLX_S3_PREFIX` is not a safe key prefix.
+    #[error("CRAWLX_S3_PREFIX {0:?} is invalid: use at most 128 characters of letters, digits and . _ - /, no leading slash, no empty or dot segments")]
+    PrefixInvalid(String),
     /// The profile does not support the requested server-side encryption.
     #[error("the {profile} s3 profile does not support server-side encryption {sse}")]
     SseRefused {
@@ -398,6 +431,40 @@ pub struct S3Config {
     pub max_attempts: u32,
     /// Per-attempt timeout.
     pub attempt_timeout: Duration,
+    /// Key prefix every object of this deployment lives under (`CRAWLX_S3_PREFIX`), empty or
+    /// ending in `/`. Several products or deployments can share one bucket by choosing
+    /// different prefixes; CrawlX never lists, reads or deletes outside its own.
+    pub prefix: String,
+    /// Skip the deployment marker guard (`CRAWLX_S3_ALLOW_SHARED_PREFIX`). Unsafe: deployments
+    /// sharing a prefix delete each other's objects as orphans.
+    pub allow_shared_prefix: bool,
+}
+
+/// Normalize and check an object key prefix: empty, or `a/b/` form.
+///
+/// # Errors
+/// [`S3ConfigError::PrefixInvalid`] for a leading slash, an empty, `.` or `..` segment, a
+/// character outside `[A-Za-z0-9._-]` or more than 128 characters.
+pub fn normalize_prefix(prefix: &str) -> Result<String, S3ConfigError> {
+    let trimmed = prefix.trim();
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    let body = trimmed.strip_suffix('/').unwrap_or(trimmed);
+    let ok = body.len() <= 128
+        && body.split('/').all(|segment| {
+            !segment.is_empty()
+                && segment != "."
+                && segment != ".."
+                && segment
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        });
+    if ok {
+        Ok(format!("{body}/"))
+    } else {
+        Err(S3ConfigError::PrefixInvalid(trimmed.to_owned()))
+    }
 }
 
 impl S3Config {
@@ -426,7 +493,18 @@ impl S3Config {
             allow_kms: false,
             max_attempts: 3,
             attempt_timeout: Duration::from_secs(30),
+            prefix: String::new(),
+            allow_shared_prefix: false,
         }
+    }
+
+    /// Keep every object under `prefix` (see [`S3Config::prefix`]).
+    ///
+    /// # Errors
+    /// [`S3ConfigError::PrefixInvalid`].
+    pub fn with_prefix(mut self, prefix: &str) -> Result<Self, S3ConfigError> {
+        self.prefix = normalize_prefix(prefix)?;
+        Ok(self)
     }
 
     /// Settings from the process environment; see [`S3Config::from_lookup`].
@@ -486,6 +564,9 @@ impl S3Config {
             cfg.region = region;
         }
         cfg.endpoint = non_blank(get, "CRAWLX_S3_ENDPOINT");
+        if let Some(prefix) = non_blank(get, "CRAWLX_S3_PREFIX") {
+            cfg.prefix = normalize_prefix(&prefix)?;
+        }
         if let Some(value) = non_blank(get, "CRAWLX_S3_PATH_STYLE") {
             cfg.path_style = parse_bool("CRAWLX_S3_PATH_STYLE", &value)?;
         }
@@ -509,6 +590,7 @@ impl S3Config {
             ("CRAWLX_S3_OBJECT_LOCK", &mut cfg.object_lock),
             ("CRAWLX_S3_ALLOW_HTTP", &mut cfg.allow_http),
             ("CRAWLX_S3_ALLOW_KMS", &mut cfg.allow_kms),
+            ("CRAWLX_S3_ALLOW_SHARED_PREFIX", &mut cfg.allow_shared_prefix),
         ] {
             if let Some(value) = non_blank(get, var) {
                 *slot = parse_bool(var, &value)?;
@@ -560,6 +642,9 @@ impl S3Config {
         }
         if self.region.trim().is_empty() {
             return Err(S3ConfigError::RegionEmpty);
+        }
+        if normalize_prefix(&self.prefix)? != self.prefix {
+            return Err(S3ConfigError::PrefixInvalid(self.prefix.clone()));
         }
         if let Some(sse) = &self.sse {
             let supported = match sse {
@@ -683,6 +768,78 @@ pub struct S3Blobs {
     sse: Option<Sse>,
     profile: S3Profile,
     object_lock: bool,
+    prefix: String,
+    guard: Arc<PrefixGuard>,
+}
+
+/// What the marker of a prefix says about this process.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Standing {
+    /// The marker names this deployment.
+    Owned,
+    /// The marker names another deployment.
+    Foreign,
+}
+
+/// Who wrote a marker: a deployment (identity from the database) or one process without a
+/// database identity, whose marker a deployment may take over.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum MarkerKind {
+    Deployment,
+    Process,
+}
+
+/// Content of the marker object.
+#[derive(Serialize, Deserialize)]
+struct Marker {
+    format: u32,
+    deployment: String,
+    kind: MarkerKind,
+}
+
+/// Format version of the marker object.
+const MARKER_FORMAT: u32 = 1;
+
+/// Outcome of writing the marker.
+enum MarkerWrite {
+    Written,
+    /// Another writer holds the key (`412`, or `409` for a concurrent conditional write).
+    Lost,
+    /// The server does not implement conditional writes (`501`).
+    Unsupported,
+}
+
+/// Claim state shared by every clone of one [`S3Blobs`].
+struct PrefixGuard {
+    identity: Option<Arc<dyn DeploymentIdentity>>,
+    process_id: String,
+    disabled: bool,
+    own: OnceCell<(String, MarkerKind)>,
+    owned: OnceCell<()>,
+    writes_ok: OnceCell<()>,
+}
+
+impl std::fmt::Debug for PrefixGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PrefixGuard")
+            .field("disabled", &self.disabled)
+            .field("database_identity", &self.identity.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl PrefixGuard {
+    fn new(identity: Option<Arc<dyn DeploymentIdentity>>, disabled: bool) -> Self {
+        Self {
+            identity,
+            process_id: uuid::Uuid::now_v7().to_string(),
+            disabled,
+            own: OnceCell::new(),
+            owned: OnceCell::new(),
+            writes_ok: OnceCell::new(),
+        }
+    }
 }
 
 impl S3Blobs {
@@ -748,13 +905,242 @@ impl S3Blobs {
             sse: config.sse.clone(),
             profile: config.profile,
             object_lock: config.object_lock,
+            prefix: config.prefix.clone(),
+            guard: Arc::new(PrefixGuard::new(None, config.allow_shared_prefix)),
         })
+    }
+
+    /// Take the deployment id from `identity` (the relational store of the deployment), so that
+    /// every process of one deployment shares the claim on the prefix and a second deployment
+    /// is refused. The id is read lazily, at the first write or delete. Without this call the
+    /// claim uses a per-process id, which only protects deletes and sweeps.
+    #[must_use]
+    pub fn with_deployment(mut self, identity: Arc<dyn DeploymentIdentity>) -> Self {
+        let disabled = self.guard.disabled;
+        self.guard = Arc::new(PrefixGuard::new(Some(identity), disabled));
+        self
+    }
+
+    /// Claim the prefix now (the first claimer wins): creates the marker when the prefix has
+    /// none, succeeds when it names this deployment.
+    ///
+    /// # Errors
+    /// [`S3ConfigError::PrefixClaimed`] (as [`StoreError::Conflict`]) when another deployment
+    /// owns the prefix; [`StoreError`] when the marker cannot be read or written.
+    pub async fn claim_prefix(&self) -> Result<(), StoreError> {
+        self.authorize_write().await
+    }
+
+    fn claimed_error(&self) -> StoreError {
+        S3ConfigError::PrefixClaimed {
+            bucket: self.bucket.clone(),
+            prefix: self.prefix.clone(),
+        }
+        .into()
+    }
+
+    /// This process's id and marker kind: the deployment id when a database identity is
+    /// attached, otherwise a random per-process id.
+    async fn own_identity(&self) -> Result<&(String, MarkerKind), StoreError> {
+        self.guard
+            .own
+            .get_or_try_init(|| async {
+                match &self.guard.identity {
+                    Some(identity) => Ok((identity.deployment_id().await?, MarkerKind::Deployment)),
+                    None => Ok((self.guard.process_id.clone(), MarkerKind::Process)),
+                }
+            })
+            .await
+    }
+
+    /// Run one marker request again after a transport failure. The SDK's retry budget is spent
+    /// within a few hundred milliseconds, which a server that has just started or is restarting
+    /// can outlast; the marker gates every write, so a short extra bounded wait is better than
+    /// refusing the write. Only `Unavailable` (transport and timeout) is retried; both marker
+    /// requests are safe to repeat (the conditional write answers 412 when the first one landed).
+    async fn marker_retry<T, F, Fut>(&self, mut attempt: F) -> Result<T, StoreError>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Result<T, StoreError>>,
+    {
+        const EXTRA_ATTEMPTS: u32 = 3;
+        let mut tried = 0;
+        loop {
+            match attempt().await {
+                Err(StoreError::Unavailable(_)) if tried < EXTRA_ATTEMPTS => {
+                    tried += 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(250 * u64::from(tried))).await;
+                }
+                other => return other,
+            }
+        }
+    }
+
+    async fn read_marker(&self) -> Result<Option<Marker>, StoreError> {
+        let Some(bytes) = self.marker_retry(|| self.get(DEPLOYMENT_MARKER_KEY)).await? else {
+            return Ok(None);
+        };
+        let marker: Marker = serde_json::from_slice(&bytes).map_err(|_| {
+            StoreError::Conflict(format!(
+                "s3 deployment marker {} is unreadable; remove it only after checking which deployment owns the prefix",
+                self.full(DEPLOYMENT_MARKER_KEY)
+            ))
+        })?;
+        if marker.format > MARKER_FORMAT {
+            return Err(StoreError::Conflict(format!(
+                "s3 deployment marker {} has format {}, newer than this build understands ({MARKER_FORMAT})",
+                self.full(DEPLOYMENT_MARKER_KEY),
+                marker.format
+            )));
+        }
+        Ok(Some(marker))
+    }
+
+    /// Write the marker; `conditional` sends `If-None-Match: *`.
+    async fn write_marker(
+        &self,
+        id: &str,
+        kind: MarkerKind,
+        conditional: bool,
+    ) -> Result<MarkerWrite, StoreError> {
+        let body = serde_json::to_vec(&Marker {
+            format: MARKER_FORMAT,
+            deployment: id.to_owned(),
+            kind,
+        })
+        .map_err(|e| StoreError::Serialization(e.to_string()))?;
+        let body = Bytes::from(body);
+        self.marker_retry(|| async {
+            let mut request = self
+                .put_request(DEPLOYMENT_MARKER_KEY)
+                .content_type("application/json")
+                .content_length(i64::try_from(body.len()).unwrap_or(i64::MAX))
+                .body(ByteStream::from(body.clone()));
+            if conditional {
+                request = request.if_none_match("*");
+            }
+            match request.send().await {
+                Ok(_) => Ok(MarkerWrite::Written),
+                Err(e) => match e.raw_response().map(|r| r.status().as_u16()) {
+                    Some(409 | 412) => Ok(MarkerWrite::Lost),
+                    Some(501) if conditional => Ok(MarkerWrite::Unsupported),
+                    _ => Err(sdk_error("put", DEPLOYMENT_MARKER_KEY, &e)),
+                },
+            }
+        })
+        .await
+    }
+
+    /// Whether `marker` is the claim of a deployment other than `own`. A marker written by a
+    /// process without a database identity names no deployment, so it is nobody's foreign claim.
+    fn is_foreign(marker: &Marker, own: &(String, MarkerKind)) -> bool {
+        marker.kind == MarkerKind::Deployment && marker.deployment != own.0
+    }
+
+    /// Read the marker and claim the prefix when it has none (or only a takeover-able one).
+    async fn settle(&self) -> Result<Standing, StoreError> {
+        let own = self.own_identity().await?;
+        // a few rounds: every write is followed by a read that decides who won
+        for _ in 0..4 {
+            match self.read_marker().await? {
+                Some(marker) if marker.deployment == own.0 => return Ok(Standing::Owned),
+                Some(marker) if Self::is_foreign(&marker, own) => return Ok(Standing::Foreign),
+                // a database-less claim is shared by every database-less process
+                Some(_) if own.1 == MarkerKind::Process => return Ok(Standing::Owned),
+                Some(_) => {
+                    // a deployment takes over a database-less claim, then reads back who holds it
+                    self.write_marker(&own.0, own.1, false).await?;
+                }
+                None => {
+                    if matches!(
+                        self.write_marker(&own.0, own.1, true).await?,
+                        MarkerWrite::Unsupported
+                    ) {
+                        // no conditional writes here: the marker was absent a moment ago, so
+                        // write it and let the read-back show whether another claimer overwrote it
+                        self.write_marker(&own.0, own.1, false).await?;
+                    }
+                }
+            }
+        }
+        Err(StoreError::Unavailable(format!(
+            "s3 deployment marker {} did not settle; retry",
+            self.full(DEPLOYMENT_MARKER_KEY)
+        )))
+    }
+
+    /// Gate for writes: the prefix must not be claimed by another deployment. A database-less
+    /// process also writes under a deployment's claim (it has no identity to compare); only its
+    /// deletes and sweeps are refused.
+    async fn authorize_write(&self) -> Result<(), StoreError> {
+        if self.guard.disabled || self.guard.owned.initialized() {
+            return Ok(());
+        }
+        self.guard
+            .writes_ok
+            .get_or_try_init(|| async {
+                match self.settle().await? {
+                    Standing::Owned => {
+                        let _ = self.guard.owned.set(());
+                        Ok(())
+                    }
+                    Standing::Foreign if self.guard.identity.is_none() => Ok(()),
+                    Standing::Foreign => Err(self.claimed_error()),
+                }
+            })
+            .await
+            .map(|_| ())
+    }
+
+    /// Gate for deletes: the prefix must be ours.
+    async fn authorize_delete(&self) -> Result<(), StoreError> {
+        if self.guard.disabled {
+            return Ok(());
+        }
+        self.guard
+            .owned
+            .get_or_try_init(|| async {
+                match self.settle().await? {
+                    Standing::Owned => Ok(()),
+                    Standing::Foreign => Err(self.claimed_error()),
+                }
+            })
+            .await
+            .map(|_| ())
+    }
+
+    /// Gate for the whole-prefix listing of the orphan sweep: refused under a foreign claim,
+    /// without creating a marker.
+    async fn authorize_sweep_listing(&self) -> Result<(), StoreError> {
+        if self.guard.disabled || self.guard.owned.initialized() {
+            return Ok(());
+        }
+        let own = self.own_identity().await?;
+        match self.read_marker().await? {
+            Some(marker) if Self::is_foreign(&marker, own) => Err(self.claimed_error()),
+            _ => Ok(()),
+        }
+    }
+
+    /// The marker key is reserved for the guard.
+    fn check_not_marker(key: &str) -> Result<(), StoreError> {
+        if key == DEPLOYMENT_MARKER_KEY {
+            return Err(StoreError::Conflict(format!(
+                "s3 key {key} is reserved for the deployment marker"
+            )));
+        }
+        Ok(())
     }
 
     /// The SDK client (for bucket administration in tests and tooling).
     #[must_use]
     pub const fn client(&self) -> &Client {
         &self.client
+    }
+
+    /// The object key of the logical `key`: the deployment prefix, then the key.
+    fn full(&self, key: &str) -> String {
+        format!("{}{key}", self.prefix)
     }
 
     /// The profile this backend was built for.
@@ -766,7 +1152,7 @@ impl S3Blobs {
     /// A `PutObject` for `key` with the configured encryption and, on an object-lock bucket,
     /// the CRC32 checksum the lock requires.
     fn put_request(&self, key: &str) -> PutObjectFluentBuilder {
-        let mut request = self.client.put_object().bucket(&self.bucket).key(key);
+        let mut request = self.client.put_object().bucket(&self.bucket).key(self.full(key));
         match &self.sse {
             Some(Sse::Aes256) => request = request.server_side_encryption(ServerSideEncryption::Aes256),
             Some(Sse::CloudKms { key_id }) => {
@@ -831,7 +1217,7 @@ impl ArtifactBlobs for S3Blobs {
             .client
             .get_object()
             .bucket(&self.bucket)
-            .key(key)
+            .key(self.full(key))
             .send()
             .await
             .map_err(|e| sdk_error("get", key, &e))?;
@@ -839,7 +1225,9 @@ impl ArtifactBlobs for S3Blobs {
     }
     async fn put_file(&self, key: &str, file: &std::path::Path, size: u64) -> Result<(), StoreError> {
         // The SDK retries from the file; it does not buffer the archive in memory.
+        Self::check_not_marker(key)?;
         self.check_single_put(key, size)?;
+        self.authorize_write().await?;
         let body = ByteStream::from_path(file)
             .await
             .map_err(|e| StoreError::Unavailable(format!("archive upload source: {e}")))?;
@@ -859,7 +1247,9 @@ impl ArtifactBlobs for S3Blobs {
     async fn put_shared(&self, key: &str, bytes: Bytes) -> Result<(), StoreError> {
         let size = u64::try_from(bytes.len())
             .map_err(|_| StoreError::Serialization(format!("object {key} too large for content-length")))?;
+        Self::check_not_marker(key)?;
         self.check_single_put(key, size)?;
+        self.authorize_write().await?;
         self.put_request(key)
             .content_length(i64::try_from(size).map_err(|_| {
                 StoreError::Serialization(format!("object {key} too large for content-length"))
@@ -876,7 +1266,7 @@ impl ArtifactBlobs for S3Blobs {
             .client
             .get_object()
             .bucket(&self.bucket)
-            .key(key)
+            .key(self.full(key))
             .send()
             .await
         {
@@ -897,7 +1287,7 @@ impl ArtifactBlobs for S3Blobs {
             .client
             .head_object()
             .bucket(&self.bucket)
-            .key(key)
+            .key(self.full(key))
             .send()
             .await
         {
@@ -908,10 +1298,12 @@ impl ArtifactBlobs for S3Blobs {
     }
 
     async fn delete(&self, key: &str) -> Result<(), StoreError> {
+        Self::check_not_marker(key)?;
+        self.authorize_delete().await?;
         self.client
             .delete_object()
             .bucket(&self.bucket)
-            .key(key)
+            .key(self.full(key))
             .send()
             .await
             .map_err(|e| sdk_error("delete", key, &e))?;
@@ -919,18 +1311,28 @@ impl ArtifactBlobs for S3Blobs {
     }
 
     async fn list(&self, prefix: &str) -> Result<Vec<BlobEntry>, StoreError> {
+        // Listing the whole prefix exists for the orphan sweep; listing the objects another
+        // deployment owns would make every one of them an orphan.
+        if prefix.is_empty() {
+            self.authorize_sweep_listing().await?;
+        }
         let mut pages = self
             .client
             .list_objects_v2()
             .bucket(&self.bucket)
-            .prefix(prefix)
+            .prefix(self.full(prefix))
             .into_paginator()
             .send();
         let mut out = Vec::new();
         while let Some(page) = pages.next().await {
             let page = page.map_err(|e| sdk_error("list", prefix, &e))?;
             for object in page.contents() {
-                let Some(key) = object.key() else { continue };
+                let Some(key) = object.key().and_then(|k| k.strip_prefix(self.prefix.as_str())) else {
+                    continue;
+                };
+                if key == DEPLOYMENT_MARKER_KEY {
+                    continue;
+                }
                 let Some(modified) = to_timestamp(object.last_modified()) else {
                     return Err(StoreError::Backend(format!(
                         "s3 list {prefix}: object {key} has no last-modified time"
@@ -954,7 +1356,7 @@ impl ArtifactBlobs for S3Blobs {
             .client
             .get_object()
             .bucket(&self.bucket)
-            .key(key)
+            .key(self.full(key))
             .presigned(config)
             .await
             .map_err(|e| sdk_error("presign", key, &e))?;

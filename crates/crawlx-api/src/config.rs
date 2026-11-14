@@ -7,30 +7,104 @@ pub use providers::{
     DEFAULT_EXTRACTION_MODEL, DEFAULT_TOP_N, UNSUPPORTED_ENV,
 };
 
+use crate::store::Scope;
 use crawlx_policy::TenantLimits;
+use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-/// A development API key created at startup (`tenant` is a UUID or a name; names
-/// map to a deterministic tenant id).
-#[derive(Clone, PartialEq, Eq, Default)]
+/// Scopes of the `agent` preset: read and create runs, replays and plans, read authorization
+/// records. It lacks the operator scopes (`approvals:decide`, `authorizations:write`) and the
+/// opt-in scopes (`artifacts:read_sensitive`, `metrics:read`).
+pub const AGENT_SCOPES: [Scope; 4] = [
+    Scope::CrawlsRead,
+    Scope::CrawlsWrite,
+    Scope::ReplaysWrite,
+    Scope::AuthorizationsRead,
+];
+
+/// Why a `TENANT=KEY[:SCOPES]` bootstrap key spec is refused. Messages never contain the key.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum KeySpecError {
+    /// The spec is not `TENANT=KEY` with a non-empty tenant and key.
+    #[error("expected TENANT=KEY or TENANT=KEY:SCOPES")]
+    Shape,
+    /// The part after `:` names no scope.
+    #[error("scope list after ':' is empty")]
+    EmptyScopes,
+    /// A scope-list entry is neither a preset (`agent`, `operator`) nor a scope name.
+    #[error("unknown scope or preset {0:?} (presets: agent, operator; scopes: {1})")]
+    UnknownScope(String, String),
+}
+
+/// An API key created at startup (`tenant` is a UUID or a name; names map to a deterministic
+/// tenant id). It carries every scope unless [`ApiKeyBootstrap::scopes`] narrows it.
+#[derive(Clone, PartialEq, Eq)]
 pub struct ApiKeyBootstrap {
     /// Tenant the key belongs to: a UUID, or a name mapped to a deterministic tenant id.
     pub tenant: String,
     /// The full key: `cx_live_<26 base32>`, or `fc-<16..=64 alphanumerics>` when
     /// [`CompatConfig::prefixed_keys`] is on.
     pub key: String,
+    /// Scopes the key grants.
+    pub scopes: BTreeSet<Scope>,
 }
 
 impl ApiKeyBootstrap {
-    /// A bootstrap key for `tenant` (UUID or name) with the full key text `key`.
+    /// An operator key (all scopes) for `tenant` (UUID or name) with the full key text `key`.
     #[must_use]
     pub fn new(tenant: impl Into<String>, key: impl Into<String>) -> Self {
         Self {
             tenant: tenant.into(),
             key: key.into(),
+            scopes: Scope::all_set(),
         }
+    }
+
+    /// The same key limited to `scopes`.
+    #[must_use]
+    pub fn with_scopes(mut self, scopes: BTreeSet<Scope>) -> Self {
+        self.scopes = scopes;
+        self
+    }
+
+    /// Parse `TENANT=KEY` (all scopes, the operator form) or `TENANT=KEY:SCOPES`, where `SCOPES`
+    /// is a comma-separated list of presets (`agent`, `operator`) and scope names
+    /// (`crawls:read`, ...); the union is granted. Keys never contain `:` (they are
+    /// `cx_live_` + `a-z2-7` or `fc-` + alphanumerics), so the first `:` after the `=` starts the
+    /// scope list.
+    ///
+    /// # Errors
+    /// [`KeySpecError`] for a missing tenant or key, an empty scope list or an unknown scope.
+    pub fn parse_spec(spec: &str) -> Result<Self, KeySpecError> {
+        let (tenant, rest) = spec
+            .split_once('=')
+            .filter(|(t, r)| !t.is_empty() && !r.is_empty())
+            .ok_or(KeySpecError::Shape)?;
+        let Some((key, list)) = rest.split_once(':') else {
+            return Ok(Self::new(tenant, rest));
+        };
+        if key.is_empty() {
+            return Err(KeySpecError::Shape);
+        }
+        let mut scopes = BTreeSet::new();
+        for token in list.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+            match token {
+                "agent" => scopes.extend(AGENT_SCOPES),
+                "operator" => scopes.extend(Scope::ALL),
+                name => {
+                    let scope = Scope::parse(name).ok_or_else(|| {
+                        KeySpecError::UnknownScope(name.to_owned(), Scope::ALL.map(Scope::as_str).join(", "))
+                    })?;
+                    scopes.insert(scope);
+                }
+            }
+        }
+        if scopes.is_empty() {
+            return Err(KeySpecError::EmptyScopes);
+        }
+        Ok(Self::new(tenant, key).with_scopes(scopes))
     }
 }
 
@@ -39,6 +113,7 @@ impl std::fmt::Debug for ApiKeyBootstrap {
         f.debug_struct("ApiKeyBootstrap")
             .field("tenant", &self.tenant)
             .field("key", &"<redacted>")
+            .field("scopes", &self.scopes)
             .finish()
     }
 }
@@ -176,7 +251,7 @@ pub struct ApiConfig {
     pub artifacts_dir: PathBuf,
     /// Bounded memory-only upload spool for artifact objects and index records.
     pub artifact_spool: crawlx_storage::UploadSpoolConfig,
-    /// Development keys created (with all scopes) at startup.
+    /// Keys created at startup, each with its own scopes (all scopes unless narrowed).
     pub api_keys: Vec<ApiKeyBootstrap>,
     /// Per-tenant token bucket size/refill per minute; `0` disables rate limiting.
     pub rate_limit_per_minute: u32,
@@ -542,9 +617,10 @@ impl PolicyProviderSettings {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SecretRefError {
-    /// The reference uses a scheme other than `env:` or `file:`.
-    #[error("unsupported secret reference scheme in {0:?} (use env:NAME or file:/path)")]
-    Scheme(String),
+    /// The reference uses a scheme other than `env:` or `file:`. The reference is not echoed: a
+    /// key pasted in place of a reference must not reach a log or a report.
+    #[error("unsupported secret reference scheme (use env:NAME or file:/path)")]
+    Scheme,
     /// The environment variable is not set or empty.
     #[error("environment variable {0} is not set")]
     EnvMissing(String),
@@ -595,7 +671,7 @@ pub fn resolve_secret_ref_with(
                 source,
             });
     }
-    Err(SecretRefError::Scheme(reference.to_owned()))
+    Err(SecretRefError::Scheme)
 }
 
 impl LlmSettings {
@@ -864,7 +940,7 @@ mod intel_tests {
         ));
         assert!(matches!(
             resolve_secret_ref_with("vault://x", env(&[])),
-            Err(SecretRefError::Scheme(_))
+            Err(SecretRefError::Scheme)
         ));
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("k");
@@ -888,5 +964,65 @@ mod intel_tests {
         let cfg = llm.resolve_with(env(&[("K", "abc")])).unwrap();
         assert_eq!(cfg.timeout, Duration::from_millis(1500));
         assert_eq!(cfg.api_key.unwrap().expose(), "abc");
+    }
+}
+
+#[cfg(test)]
+mod key_spec_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+
+    const KEY: &str = "cx_live_abcdefghijklmnopqrstuvwxyz";
+
+    #[test]
+    fn the_agent_preset_lacks_every_operator_and_opt_in_scope() {
+        let b = ApiKeyBootstrap::parse_spec(&format!("acme={KEY}:agent")).unwrap();
+        assert_eq!(b.scopes, AGENT_SCOPES.into_iter().collect());
+        for scope in [
+            Scope::ApprovalsDecide,
+            Scope::AuthorizationsWrite,
+            Scope::ArtifactsReadSensitive,
+            Scope::MetricsRead,
+        ] {
+            assert!(!b.scopes.contains(&scope), "{scope:?}");
+        }
+    }
+
+    #[test]
+    fn plain_spec_is_the_operator_form_and_presets_union_with_scope_names() {
+        assert_eq!(
+            ApiKeyBootstrap::parse_spec(&format!("acme={KEY}"))
+                .unwrap()
+                .scopes,
+            Scope::all_set()
+        );
+        let b = ApiKeyBootstrap::parse_spec(&format!("acme={KEY}:agent,metrics:read")).unwrap();
+        assert!(b.scopes.contains(&Scope::MetricsRead) && b.scopes.contains(&Scope::CrawlsWrite));
+        assert!(!b.scopes.contains(&Scope::AuthorizationsWrite));
+    }
+
+    #[test]
+    fn empty_unknown_and_malformed_specs_are_errors() {
+        assert_eq!(
+            ApiKeyBootstrap::parse_spec(&format!("acme={KEY}:")),
+            Err(KeySpecError::EmptyScopes)
+        );
+        assert!(matches!(
+            ApiKeyBootstrap::parse_spec(&format!("acme={KEY}:agent,crawls:erase")),
+            Err(KeySpecError::UnknownScope(name, _)) if name == "crawls:erase"
+        ));
+        for spec in ["", "acme", "acme=", "=key", "acme=:agent"] {
+            assert_eq!(
+                ApiKeyBootstrap::parse_spec(spec),
+                Err(KeySpecError::Shape),
+                "{spec}"
+            );
+        }
+    }
+
+    #[test]
+    fn debug_never_shows_the_key() {
+        let b = ApiKeyBootstrap::parse_spec(&format!("acme={KEY}:agent")).unwrap();
+        assert!(!format!("{b:?}").contains(KEY));
     }
 }

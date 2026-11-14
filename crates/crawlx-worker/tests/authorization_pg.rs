@@ -202,7 +202,7 @@ async fn missing_checkpoint_custody_refuses_an_authorized_dynamic_run_before_bro
     )
     .await;
 
-    assert!(matches!(result, Err(WorkerError::Config(_))));
+    assert!(matches!(result, Err(WorkerError::CheckpointKeysRequired)));
     assert_eq!(backend.contexts_created(), 0);
     assert!(
         backend.context_handles().is_empty(),
@@ -213,6 +213,45 @@ async fn missing_checkpoint_custody_refuses_an_authorized_dynamic_run_before_bro
         rig.stores.runs.get(run_id).await.unwrap().status,
         RunStatus::Queued
     );
+    rig.teardown().await;
+}
+
+#[tokio::test]
+async fn a_local_key_encryption_key_file_admits_the_dynamic_run_the_keyless_worker_refused() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let Some(mut rig) = Rig::new().await else { return };
+    let run_id = rig.enqueue().await;
+    let run = rig.stores.runs.get(run_id).await.unwrap();
+    let mut cfg = rig.cfg(Duration::from_secs(60));
+    let authorization = authorization_fixture::admit(&rig.stores, &run, &cfg).await;
+    rig.stores.checkpoint_keys = Arc::new(UnavailableCheckpointKeys);
+    let kek = rig.dir.path().join("checkpoint.kek");
+    std::fs::write(&kek, format!("k1:{}\n", "7c".repeat(32))).unwrap();
+    std::fs::set_permissions(&kek, std::fs::Permissions::from_mode(0o600)).unwrap();
+    cfg.load_checkpoint_keys_from_lookup(&|name| {
+        (name == "CRAWLX_CHECKPOINT_KEK_FILE").then(|| kek.display().to_string())
+    })
+    .await
+    .unwrap();
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(mesh(3))
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
+
+    RunContext::build(
+        &run,
+        &cfg,
+        rig.stores.clone(),
+        Some(backend),
+        None,
+        CancellationToken::new(),
+        None,
+        Some(authorization),
+    )
+    .await
+    .expect("the key-encryption-key file satisfies the browser checkpoint requirement");
     rig.teardown().await;
 }
 

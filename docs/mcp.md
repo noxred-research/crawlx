@@ -28,6 +28,7 @@ behaves exactly as before, including its 1 MiB text cut. `--max-in-flight` appli
 | `--max-result-bytes N` | `CRAWLX_MCP_MAX_RESULT_BYTES` | 1048576 | Largest native tool or resource result (1024 to 268435456). |
 | `--max-in-flight N` | `CRAWLX_MCP_MAX_IN_FLIGHT` | 32 | Requests served at once; further ones are answered with a `-32000` error instead of queueing (1 to 1024). |
 | `--upload-grant HANDLE=PATH` | | none | Grant one local file under an opaque handle; repeatable. See [Upload handles](#upload-handles). |
+| `--audit-log PATH` | `CRAWLX_MCP_AUDIT_LOG` | off | Append a hash-chained audit log of every tool call and resource read. See [Audit log](#audit-log). |
 
 ## Capability model
 
@@ -64,6 +65,28 @@ Run the agent and the operator as separate processes with separate API keys:
   and a key that holds the operator scopes. Approval tokens it returns are handed to the agent process by the human
   operator, not by the model.
 * Give the agent `erase`, `export`, `interact` and `local_upload` only deliberately and for as long as needed.
+* Run the agent process with `--audit-log` so what it read and changed is on record outside the model's reach; see
+  [Audit log](#audit-log).
+  The API has no separate scope for them: `crawls:write` covers erasing runs and `crawls:read` covers export, so
+  keep those capabilities off in the agent process.
+
+Create the two keys when starting the API. `--api-key TENANT=KEY` alone holds every scope (the operator form);
+`TENANT=KEY:SCOPES` limits the key to a comma-separated list of presets (`agent`, `operator`) and scope names.
+Keys never contain `:`, so the first `:` after the key starts the scope list.
+
+```sh
+crawlx serve --database-url "$DB" \
+  --api-key "acme=$AGENT_KEY:agent" \
+  --api-key "acme=$OPERATOR_KEY:operator"
+```
+
+`agent` is `crawls:read`, `crawls:write`, `replays:write` and `authorizations:read`. It lacks `approvals:decide`,
+`authorizations:write` (create, upload evidence, verify, revoke), `artifacts:read_sensitive` and `metrics:read`;
+add one deliberately with a list such as `agent,artifacts:read_sensitive`. An unknown scope or an empty list stops
+`serve` at startup. A call outside the key's scopes, from the MCP server or directly over HTTP, is answered
+`403` with the error code `scope_missing` naming the scope. That includes `POST /v1/authorizations/{id}/verify`,
+which needs `authorizations:write` like create and revoke. The API serves plain HTTP and gates no route on the
+transport: terminate TLS in front of it and keep operator keys off shared networks.
 
 ## Tool catalog (native surface)
 
@@ -157,6 +180,13 @@ crawled content, traffic, archive records, stored values, agent traces or genera
 
 Notes:
 
+* The model-assisted tools (`crawlx_compile_spec` with a `prompt`, `crawlx_propose_agent_plan`,
+  `crawlx_extract_evidence`, and the model part of `crawlx_triage_surfaces` and the summaries) call the API,
+  which refuses them with `403 external_processing_disabled` until the operator enables `[intel.policy]` in
+  the `crawlx.toml` read by `crawlx serve`: `externalProcessing = true` plus an approved provider with the
+  purposes it may serve. The complete section, with an example, is in [AI-native features](ai.md#model-processing-policy);
+  `GET /v1/capabilities/ai` (`crawlx_capabilities`) shows what is in force. The MCP server itself holds no
+  model setting and no provider key.
 * `crawlx_summarize_run` and `crawlx_summarize_findings` call the same operation; the tool fixes `body.kind` to
   `run` or `findings`, and a conflicting `body.kind` is refused.
 * `crawlx_decide_approval` takes `decision` (`approve` or `deny`) and calls the matching operation.
@@ -253,6 +283,70 @@ argument. A handle the operator did not grant is rejected with `-32602`, naming 
 handle, the file must exist, be a regular file and be at most 64 MiB at that moment; otherwise the call returns an
 `upload_unavailable` or `upload_invalid` error result and no API request is made. Inline `content` and
 `uploadHandle` are mutually exclusive.
+
+## Audit log
+
+The service's own audit events record authorizations and crawl admissions, not what an agent read. With
+`--audit-log PATH` (or `CRAWLX_MCP_AUDIT_LOG`) the MCP process keeps its own record of every `tools/call` and
+`resources/read`, on both surfaces. **Enable it whenever the server is reachable by an agent or serves a
+network-facing role**; it is off by default so a local one-off session writes nothing.
+
+### Format
+
+The file is JSON Lines, one object per line, written in two phases per call: `intent` before the call runs and
+`result` after it. Refused calls (capability not granted, unknown tool, `401`/`403` from the API) are recorded
+with outcome `refused`.
+
+| Field | Meaning |
+|---|---|
+| `seq` | 1-based sequence number. |
+| `ts` | UTC time, RFC 3339 with nanoseconds. |
+| `prev` | `hash` of the previous line; 64 zeros for the first. |
+| `phase` | `intent` or `result`. |
+| `method`, `tool` | `tools/call` with the tool name, or `resources/read`. A name that is not a registered tool is recorded as `unknown`, never as the text the caller sent. |
+| `capability` | Capability family of the tool (`inspect`, `control`, ...), `compat` for the compatibility tools, `none` for unknown tools. |
+| `args_digest` | SHA-256 (hex) of the canonical JSON (object keys sorted at every level) of the arguments, or of the `resources/read` parameters. |
+| `outcome` | `intent` on the intent line; `ok`, `error` or `refused` on the result line. |
+| `error_code` | A stable code (`capability_not_granted`, `unknown_tool`, `invalid_params`, `not_found`, `cancelled`, the API's error code, `tool_error`, ...) or `null`. Never message text. |
+| `result_digest`, `result_bytes` | SHA-256 and byte length of the canonical JSON of the result (`null` on the intent line). |
+| `resource_ids` | Run, artifact and other ids found in the arguments, only when they are UUIDs (at most 16). |
+| `intent_seq` | On the result line, the `seq` of its intent line. |
+| `hash` | SHA-256 (hex) of the canonical JSON of the line without its `hash` member. |
+
+Argument values, URLs, page content, error messages, API keys and tokens are never written: only digests, sizes,
+the tool name and opaque ids. A caller who knows the arguments can recompute `args_digest` and match it to a line.
+A call cancelled by the client after its intent was recorded gets a `result` line with outcome `error` and code
+`cancelled`.
+
+### Guarantees and limits
+
+* **Fail closed.** If the path is set and the file cannot be opened (missing directory, symlink, not a regular
+  file, readable or writable by group or other, locked by another process, or a last line that does not verify),
+  the server does not start. If an intent record cannot be written, the call is refused before it runs
+  (JSON-RPC error `-32001`). If a result record cannot be written, the result is withheld and the call gets
+  `-32001`; the call already ran and its intent is on record. After any failed write every later call is
+  refused, because a partial line may be on disk.
+* **File.** Created with mode `0600`, opened append-only; the directory must exist. An existing file is continued
+  from its verified last line.
+* **One file, one process.** The process holds an exclusive advisory lock for its lifetime; a second server
+  pointed at the same file refuses to start. Give every server its own file. Writes inside the process are
+  serialized, so the chain stays linear under concurrent calls.
+* **Tamper evidence, not tamper prevention.** The chain shows edited, removed and reordered lines. It cannot show
+  that whole lines were cut off the end, and whoever can rewrite the file can rewrite the chain. Store the last
+  hash that `audit-verify` prints somewhere the server cannot write, set the append-only attribute
+  (`chattr +a`), or ship lines to a separate system.
+
+### Verifying
+
+```
+crawlx mcp audit-verify /var/log/crawlx/mcp-audit.jsonl
+entries: 120
+last_hash: 5b0c...
+```
+
+The command exits `0` when every link and hash checks out. On a broken log it prints
+`broken: line N: <reason>` after the count and hash of the intact prefix and exits `1`. It reports edited
+lines, a removed or moved line, and a truncated or malformed line. A missing or unreadable file is an error.
 
 ## Cancellation
 

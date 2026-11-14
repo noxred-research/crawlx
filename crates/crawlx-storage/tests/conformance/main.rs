@@ -70,6 +70,7 @@ mod bootstrap;
 mod core_repos;
 mod custody;
 mod data;
+mod deployment;
 mod foundation;
 mod leases;
 mod retention;

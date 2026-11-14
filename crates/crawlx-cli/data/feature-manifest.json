@@ -113,11 +113,11 @@
     },
     {
       "id": "SR-11",
-      "flags": ["crawl --system-chrome", "crawl --system-chrome-path", "crawl --show-browser", "crawl --headless-options", "crawl --no-sandbox", "crawl --chrome-data-dir", "crawl --no-incognito", "crawl --chrome-ws-url"],
+      "flags": ["crawl --system-chrome", "crawl --system-chrome-path", "crawl --show-browser", "crawl --headless-options", "crawl --no-sandbox", "crawl --chrome-data-dir", "crawl --no-incognito", "crawl --chrome-ws-url", "crawl --cdp-ws-url", "crawl --cdp-ws-url-file", "worker --cdp-ws-url-file"],
       "compat": ["-sc", "-scp", "-sb", "-ho", "-nos", "-cdd", "-noi", "-cwu"],
       "policy": "deviation",
-      "deviation": "--no-sandbox is refused unless the CI environment switch is set",
-      "gates": ["compat_flags.rs::no_sandbox_is_refused_without_the_ci_environment_switch"]
+      "deviation": "--no-sandbox is refused unless the CI environment switch is set; the attach URL is a bearer token, so --chrome-ws-url (--cdp-ws-url) is deprecated and refused outside test safety profiles in favor of a private file (--cdp-ws-url-file or CRAWLX_CDP_WS_URL_FILE; the URL itself is CRAWLX_CDP_WS_URL), accepted by crawl and worker",
+      "gates": ["compat_flags.rs::no_sandbox_is_refused_without_the_ci_environment_switch", "cdp_attach_sources.rs::crawl_applies_the_same_sources_and_warning", "cdp_attach_sources.rs::worker_takes_the_url_from_a_private_file_or_the_environment_without_a_warning"]
     },
     {
       "id": "SR-12",

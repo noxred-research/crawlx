@@ -12,7 +12,7 @@
 use crate::config_check::Finding;
 use crawlx_api::config::{
     resolve_secret_ref_with, BrandingSettings, EmbeddingSettings, ExtractionSettings, IntelConfig,
-    LlmSettings, UNSUPPORTED_ENV,
+    LlmSettings, PolicySettings, UNSUPPORTED_ENV,
 };
 use crawlx_model::llm::chat_completions::DEFAULT_ENDPOINT;
 use crawlx_model::llm::{ChatCompletionsClient, HttpEmbeddings};
@@ -193,8 +193,132 @@ fn branding_section(
     })
 }
 
-/// The provider settings `serve` and `worker` will read from the environment `get`.
-pub(crate) fn report(get: Env<'_>) -> IntelReport {
+/// Whether `reference` names an `env:` variable or a `file:` path (the only credential references).
+fn is_secret_reference(reference: &str) -> bool {
+    reference.starts_with("env:") || reference.starts_with("file:")
+}
+
+/// Refuse a policy that carries a credential inline: a provider key must be a reference
+/// (`env:NAME`, `file:/path`) and an endpoint must not hold user info, a query or a fragment.
+/// The message names the provider, never the offending value.
+///
+/// # Errors
+/// The first provider with an inline credential.
+pub(crate) fn check_policy_inline(policy: &PolicySettings) -> Result<(), String> {
+    for (id, provider) in &policy.providers {
+        if provider
+            .api_key_ref
+            .as_deref()
+            .is_some_and(|r| !is_secret_reference(r))
+        {
+            return Err(format!(
+                "provider {id}: apiKeyRef must be env:NAME or file:/path; keys are never configured inline"
+            ));
+        }
+        if let Some(endpoint) = &provider.endpoint {
+            let inline = url::Url::parse(endpoint.trim()).is_ok_and(|u| {
+                !u.username().is_empty()
+                    || u.password().is_some()
+                    || u.query().is_some()
+                    || u.fragment().is_some()
+            });
+            if inline {
+                return Err(format!(
+                    "provider {id}: endpoint must not carry user info, a query or a fragment; credentials go in apiKeyRef"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `[intel.policy]` as the commands will apply it: endpoints without user info, key references with
+/// whether they resolve, never a key. Findings: an inline credential, a provider that cannot be
+/// built, and a master switch that disagrees with the approved providers.
+fn policy_section(
+    policy: &PolicySettings,
+    intel: &IntelConfig,
+    get: Env<'_>,
+    findings: &mut Vec<Finding>,
+) -> Value {
+    let inline = check_policy_inline(policy);
+    if let Err(e) = &inline {
+        findings.push(finding("intel.policy", e.clone(), true));
+    } else if let Err(e) = crawlx_api::intel::ai_policy_with(
+        &IntelConfig {
+            policy: Some(policy.clone()),
+            ..intel.clone()
+        },
+        get,
+    ) {
+        findings.push(finding("intel.policy", e.to_string(), true));
+    }
+    if policy.external_processing && policy.providers.is_empty() {
+        findings.push(finding(
+            "intel.policy",
+            "externalProcessing is true but no provider is approved: every model call is refused",
+            false,
+        ));
+    }
+    if !policy.external_processing && !policy.providers.is_empty() {
+        findings.push(finding(
+            "intel.policy",
+            "providers are configured but externalProcessing is false: the native AI endpoints answer 403 external_processing_disabled",
+            false,
+        ));
+    }
+    let llm = intel.llm.as_ref();
+    let providers: Map<String, Value> = policy
+        .providers
+        .iter()
+        .map(|(id, p)| {
+            let endpoint = p.endpoint.as_deref().or_else(|| llm.map(|l| l.endpoint.as_str()));
+            // a credential is inherited only together with the endpoint it belongs to
+            let key_ref = p.api_key_ref.as_deref().or_else(|| {
+                if p.endpoint.is_some() {
+                    None
+                } else {
+                    llm.and_then(|l| l.api_key_ref.as_deref())
+                }
+            });
+            let key = match key_ref {
+                Some(r) if !is_secret_reference(r) => {
+                    json!({ "configured": true, "ref": "<invalid>", "status": "invalid" })
+                }
+                other => key_status(other, get, "intel.policy.apiKey", &mut Vec::new()),
+            };
+            (
+                id.clone(),
+                json!({
+                    "endpoint": endpoint.map(redact_endpoint),
+                    "endpointFrom": if p.endpoint.is_some() { "provider" } else { "default llm" },
+                    "model": p.model.as_deref().or_else(|| llm.map(|l| l.model.as_str())),
+                    "apiKey": key,
+                    "timeoutMs": p.timeout_ms,
+                    "revision": p.revision.as_deref().unwrap_or("1"),
+                    "retentionCapability": p.retention_capability,
+                    "allowedPurposes": p.allowed_purposes,
+                }),
+            )
+        })
+        .collect();
+    json!({
+        "externalProcessing": policy.external_processing,
+        "providers": providers,
+        "maxInputBytes": policy.max_input_bytes,
+        "maxOutputTokens": policy.max_output_tokens,
+        "maxResponseBytes": policy.max_response_bytes,
+        "maxRunCalls": policy.max_run_calls,
+        "maxRunTokens": policy.max_run_tokens,
+        "deadlineMs": policy.deadline_ms,
+        "proposalTtlSecs": policy.proposal_ttl_secs,
+        "allowSelfApproval": policy.allow_self_approval,
+    })
+}
+
+/// The provider settings `serve` and `worker` will read from the environment `get`, and the
+/// `[intel.policy]` of the configuration file when there is one.
+pub(crate) fn report(get: Env<'_>, policy: Option<&PolicySettings>) -> IntelReport {
     let mut findings = Vec::new();
     let mut effective = Map::new();
     let intel = match IntelConfig::default().from_lookup(|k| get(k)) {
@@ -224,6 +348,12 @@ pub(crate) fn report(get: Env<'_>) -> IntelReport {
         effective.insert(
             "branding".to_owned(),
             branding_section(s, llm, get, &mut findings),
+        );
+    }
+    if let Some(policy) = policy {
+        effective.insert(
+            "policy".to_owned(),
+            policy_section(policy, &intel, get, &mut findings),
         );
     }
     let unsupported: Vec<Value> = UNSUPPORTED_ENV
@@ -283,7 +413,7 @@ mod tests {
     }
 
     fn run(vars: &BTreeMap<String, String>) -> IntelReport {
-        report(&|k| vars.get(k).cloned())
+        report(&|k| vars.get(k).cloned(), None)
     }
 
     const SECRETS: [&str; 6] = [
@@ -378,12 +508,15 @@ mod tests {
 
     #[test]
     fn a_key_reference_that_does_not_resolve_is_an_error_without_a_value() {
-        let resolving = report(&|k| match k {
-            "CRAWLX_LLM_BASE_URL" => Some("http://x/v1".to_owned()),
-            "EXTRACTION_PROVIDER_BASE_URL" => Some("http://y/v1".to_owned()),
-            "EXTRACTION_PROVIDER_API_KEY" => Some("k".to_owned()),
-            _ => None,
-        });
+        let resolving = report(
+            &|k| match k {
+                "CRAWLX_LLM_BASE_URL" => Some("http://x/v1".to_owned()),
+                "EXTRACTION_PROVIDER_BASE_URL" => Some("http://y/v1".to_owned()),
+                "EXTRACTION_PROVIDER_API_KEY" => Some("k".to_owned()),
+                _ => None,
+            },
+            None,
+        );
         assert!(
             resolving.findings.iter().all(|f| !f.error),
             "{:?}",
@@ -460,5 +593,98 @@ mod tests {
     fn unparseable_endpoints_are_not_echoed() {
         assert_eq!(redact_endpoint("sk-secret-in-the-url-field"), "<unparseable>");
         assert_eq!(redact_endpoint("http://h:1/v1"), "http://h:1/v1");
+    }
+
+    fn policy_from(json: Value) -> PolicySettings {
+        serde_json::from_value(json).unwrap()
+    }
+
+    fn report_policy(vars: &BTreeMap<String, String>, policy: &PolicySettings) -> IntelReport {
+        report(&|k| vars.get(k).cloned(), Some(policy))
+    }
+
+    #[test]
+    fn a_policy_is_reported_with_redacted_endpoints_and_resolvable_key_references() {
+        let policy = policy_from(json!({
+            "externalProcessing": true,
+            "providers": { "analysis": {
+                "endpoint": "https://models.internal.example/v1",
+                "model": "reviewer-1",
+                "apiKeyRef": "env:POLICY_PROVIDER_KEY",
+                "allowedPurposes": ["crawl_spec"]
+            }},
+            "maxRunCalls": 4,
+        }));
+        let r = report_policy(&env(&[("POLICY_PROVIDER_KEY", "sk-policy-9999")]), &policy);
+        assert!(r.findings.is_empty(), "{:?}", r.findings);
+        let p = &r.effective["policy"];
+        assert_eq!(p["externalProcessing"], true);
+        assert_eq!(p["maxRunCalls"], 4);
+        assert_eq!(p["providers"]["analysis"]["apiKey"]["status"], "present");
+        assert_eq!(
+            p["providers"]["analysis"]["apiKey"]["ref"],
+            "env:POLICY_PROVIDER_KEY"
+        );
+        let text = format!("{}{}", r.effective, to_toml(&r.effective).unwrap());
+        assert!(!text.contains("sk-policy-9999"), "{text}");
+        // a key reference whose variable is missing fails the check, still without a value
+        let r = report_policy(&BTreeMap::new(), &policy);
+        let f = r
+            .findings
+            .iter()
+            .find(|f| f.error && f.key == "intel.policy")
+            .unwrap();
+        assert!(f.message.contains("POLICY_PROVIDER_KEY"), "{f:?}");
+    }
+
+    #[test]
+    fn a_policy_with_an_inline_credential_is_refused_without_echoing_it() {
+        let policy = policy_from(json!({
+            "externalProcessing": true,
+            "providers": { "analysis": { "endpoint": "https://m.example/v1", "model": "m", "apiKeyRef": "sk-inline-5555" } },
+        }));
+        let err = check_policy_inline(&policy).unwrap_err();
+        assert!(err.contains("analysis") && !err.contains("sk-inline"), "{err}");
+        let r = report_policy(&BTreeMap::new(), &policy);
+        let text = format!("{} {:?}", r.effective, r.findings);
+        assert!(
+            r.findings.iter().any(|f| f.error && f.key == "intel.policy"),
+            "{text}"
+        );
+        assert!(!text.contains("sk-inline-5555"), "{text}");
+        let policy = policy_from(json!({
+            "externalProcessing": true,
+            "providers": { "analysis": { "endpoint": "https://svc:hunter2@m.example/v1?token=tok-9", "model": "m" } },
+        }));
+        let err = check_policy_inline(&policy).unwrap_err();
+        assert!(!err.contains("hunter2") && !err.contains("tok-9"), "{err}");
+        let r = report_policy(&BTreeMap::new(), &policy);
+        let text = format!("{} {:?}", r.effective, r.findings);
+        assert!(!text.contains("hunter2") && !text.contains("tok-9"), "{text}");
+    }
+
+    #[test]
+    fn a_policy_whose_switch_and_providers_disagree_warns() {
+        let on = policy_from(json!({ "externalProcessing": true }));
+        let r = report_policy(&BTreeMap::new(), &on);
+        assert!(
+            r.findings
+                .iter()
+                .any(|f| !f.error && f.message.contains("no provider")),
+            "{:?}",
+            r.findings
+        );
+        let off = policy_from(json!({
+            "providers": { "analysis": { "endpoint": "https://m.example/v1", "model": "m" } },
+        }));
+        let r = report_policy(&BTreeMap::new(), &off);
+        assert!(
+            r.findings
+                .iter()
+                .any(|f| !f.error && f.message.contains("external_processing_disabled")),
+            "{:?}",
+            r.findings
+        );
+        assert!(r.findings.iter().all(|f| !f.error), "{:?}", r.findings);
     }
 }

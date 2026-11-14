@@ -29,6 +29,7 @@ use url::Url;
 mod archive_completion;
 pub(crate) use archive_completion::archive_completion_notice;
 pub use archive_completion::ARCHIVE_COMPLETION_SOURCE;
+mod backends;
 mod compression;
 mod config;
 mod feed_policy;

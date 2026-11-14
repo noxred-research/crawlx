@@ -6,7 +6,7 @@ mod common;
 use crawlx_browser::fake::{FakeAxSpec, FakeEffect, FakePage, FakeScript};
 use crawlx_browser::FakeBackend;
 use crawlx_core::config::CrawlMode;
-use crawlx_core::counters::{PlaneCounters, RunStatus, TerminalReason};
+use crawlx_core::counters::{PlaneCounters, RunFailure, RunFailureCode, RunStatus, TerminalReason};
 use crawlx_core::repo::{CrawlRun, SessionStatus};
 use crawlx_core::{Clock, CrawlRunId, CreateCrawl, SystemClock};
 use crawlx_fetch::StaticResolver;
@@ -631,6 +631,183 @@ async fn the_worker_claims_a_queued_dynamic_run_explores_it_and_finalizes() {
     assert!(sessions.iter().all(|s| s.status == SessionStatus::Completed));
 }
 
+/// The failures recorded on `run` by `run.refused` events.
+async fn run_failures(stores: &Stores, run: CrawlRunId) -> Vec<RunFailure> {
+    stores
+        .events
+        .list_after(run, 0, 1_000)
+        .await
+        .unwrap()
+        .iter()
+        .filter(|event| event.kind == RunFailure::EVENT_KIND)
+        .map(|event| RunFailure::from_event_payload(&event.payload).expect("a typed failure"))
+        .collect()
+}
+
+/// A key-encryption-key file in `dir`, readable by its owner only.
+fn kek_file(dir: &std::path::Path, mode: u32) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+    let path = dir.join("checkpoint.kek");
+    std::fs::write(&path, format!("k1:{}\n", "5a".repeat(32))).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+    path
+}
+
+/// Stores that behave like a durable store without a checkpoint key provider.
+async fn keyless_stores(dir: &std::path::Path) -> Stores {
+    let mut stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir)
+        .await
+        .unwrap();
+    stores.checkpoint_keys = Arc::new(crawlx_storage::checkpoint_crypto::UnavailableCheckpointKeys);
+    stores
+}
+
+fn dynamic_crawl() -> CreateCrawl {
+    let mut crawl = CreateCrawl::new(url::Url::parse("https://example.test/").unwrap());
+    crawl.mode = CrawlMode::Dynamic;
+    crawl.limits.interactions = 20;
+    crawl
+}
+
+fn fake_browser() -> Arc<FakeBackend> {
+    Arc::new(
+        FakeBackend::builder()
+            .script(app())
+            .clock(Arc::new(SystemClock))
+            .build(),
+    )
+}
+
+#[tokio::test]
+async fn a_browser_run_without_a_checkpoint_key_provider_fails_with_a_typed_reason() {
+    let dir = tempfile::tempdir().unwrap();
+    let stores = keyless_stores(dir.path()).await;
+    let run = enqueue(&stores, dynamic_crawl()).await;
+    let backend = fake_browser();
+    run_with(
+        cfg(dir.path()),
+        stores.clone(),
+        Some(backend.clone()),
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+
+    let row = stores.runs.get(run).await.unwrap();
+    assert_eq!(row.status, RunStatus::Failed);
+    assert_eq!(row.terminal_reason, Some(TerminalReason::FatalError));
+    assert!(backend.context_handles().is_empty());
+    let failures = run_failures(&stores, run).await;
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert_eq!(failures[0].code, RunFailureCode::CheckpointKeysRequired);
+    assert_eq!(failures[0].code.as_str(), "checkpoint_keys_required");
+    for setting in ["CRAWLX_CHECKPOINT_KMS_KEY_ID", "CRAWLX_CHECKPOINT_KEK_FILE"] {
+        assert!(failures[0].message.contains(setting), "{}", failures[0].message);
+    }
+    // the reason is on the run before the terminal event closes the stream
+    let events = stores.events.list_after(run, 0, 1_000).await.unwrap();
+    let kinds: Vec<&str> = events.iter().map(|event| event.kind.as_str()).collect();
+    let refused = kinds
+        .iter()
+        .position(|kind| *kind == RunFailure::EVENT_KIND)
+        .unwrap();
+    let completed = kinds.iter().position(|kind| *kind == "completed").unwrap();
+    assert!(refused < completed, "{kinds:?}");
+    assert_eq!(events[completed].payload["terminalReason"], "fatal_error");
+    assert_eq!(
+        events[completed].payload["failure"]["code"],
+        "checkpoint_keys_required"
+    );
+}
+
+#[tokio::test]
+async fn a_browser_run_is_accepted_with_a_local_key_encryption_key_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let stores = keyless_stores(dir.path()).await;
+    let run = enqueue(&stores, dynamic_crawl()).await;
+    let kek = kek_file(dir.path(), 0o600);
+    let mut worker = cfg(dir.path());
+    worker
+        .load_checkpoint_keys_from_lookup(&|name| {
+            (name == "CRAWLX_CHECKPOINT_KEK_FILE").then(|| kek.display().to_string())
+        })
+        .await
+        .unwrap();
+    run_with(
+        worker,
+        stores.clone(),
+        Some(fake_browser()),
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+
+    let row = stores.runs.get(run).await.unwrap();
+    assert_eq!(row.status, RunStatus::Completed, "{:?}", row.terminal_reason);
+    assert!(row.counters.interactions.attempted >= 2);
+    assert!(run_failures(&stores, run).await.is_empty());
+}
+
+/// Load the checkpoint key provider from `pairs`; whether a provider was installed.
+async fn load_checkpoint_keys(
+    pairs: Vec<(&'static str, String)>,
+) -> (Result<(), crawlx_worker::WorkerError>, bool) {
+    let mut worker = WorkerConfig::default();
+    let result = worker
+        .load_checkpoint_keys_from_lookup(&|name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.clone())
+        })
+        .await;
+    (result, worker.checkpoint_keys.is_some())
+}
+
+#[tokio::test]
+async fn checkpoint_key_provider_selection_fails_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let kek = kek_file(dir.path(), 0o600);
+    let key_text = "5a".repeat(32);
+
+    // neither provider: unset, so browser runs stay refused
+    let (result, installed) = load_checkpoint_keys(Vec::new()).await;
+    assert!(result.is_ok() && !installed);
+
+    // the file alone installs the provider
+    let (result, installed) =
+        load_checkpoint_keys(vec![("CRAWLX_CHECKPOINT_KEK_FILE", kek.display().to_string())]).await;
+    assert!(result.is_ok() && installed);
+
+    // both providers: refused, nothing installed
+    let (result, installed) = load_checkpoint_keys(vec![
+        ("CRAWLX_CHECKPOINT_KMS_KEY_ID", "operator-key".to_owned()),
+        ("CRAWLX_CHECKPOINT_KEK_FILE", kek.display().to_string()),
+    ])
+    .await;
+    let error = result.unwrap_err();
+    assert!(error.to_string().contains("mutually exclusive"), "{error}");
+    assert!(!installed);
+
+    // empty path, missing file and group-readable file: refused without echoing key text
+    let loose = dir.path().join("loose.kek");
+    std::fs::copy(&kek, &loose).unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&loose, std::fs::Permissions::from_mode(0o640)).unwrap();
+    }
+    for (value, expected) in [
+        (String::new(), "must not be empty"),
+        (dir.path().join("absent").display().to_string(), "unavailable"),
+        (loose.display().to_string(), "0600"),
+    ] {
+        let (result, installed) = load_checkpoint_keys(vec![("CRAWLX_CHECKPOINT_KEK_FILE", value)]).await;
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains(expected), "{error}");
+        assert!(!installed && !error.to_string().contains(&key_text));
+    }
+}
+
 #[tokio::test]
 async fn invalid_retained_profile_run_does_not_stop_a_healthy_run() {
     let dir = tempfile::tempdir().unwrap();
@@ -662,9 +839,14 @@ async fn invalid_retained_profile_run_does_not_stop_a_healthy_run() {
     )
     .await
     .unwrap();
+    let rejected_id = rejected;
     let rejected = stores.runs.get(rejected).await.unwrap();
     assert_eq!(rejected.status, RunStatus::Failed);
     assert_eq!(rejected.terminal_reason, Some(TerminalReason::FatalError));
+    let refused = run_failures(&stores, rejected_id).await;
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    assert_eq!(refused[0].code, RunFailureCode::ConfigRefused);
+    assert!(!refused[0].message.is_empty());
     let healthy = stores.runs.get(healthy).await.unwrap();
     assert_eq!(healthy.status, RunStatus::Completed);
     assert!(healthy.counters.interactions.succeeded > 0);
@@ -743,13 +925,25 @@ async fn shutdown_drains_sessions_checkpoints_and_releases_them_for_recovery() {
     };
     // A claimed lease precedes actor startup. Wait for a durable action, so this
     // fixture drains an initialized actor rather than racing its construction.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    // The deadline only bounds a hung worker; on a loaded host actor startup can
+    // take seconds. A worker that already exited can never act, so fail at once
+    // with the run row instead of waiting out the deadline.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
         let acted = !stores.journal.list(run, None).await.unwrap().is_empty();
         if acted {
             break;
         }
-        assert!(tokio::time::Instant::now() < deadline, "session never acted");
+        assert!(
+            !worker.is_finished(),
+            "worker exited before the session acted: {:?}",
+            stores.runs.get(run).await
+        );
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "session never acted: {:?}",
+            stores.runs.get(run).await
+        );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     cancel.cancel();

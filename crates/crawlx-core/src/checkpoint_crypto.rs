@@ -16,6 +16,8 @@ pub const VERSION: u8 = 1;
 pub const MEMORY: u8 = 1;
 /// KMS-wrapped data-key custody provider identifier.
 pub const KMS: u8 = 2;
+/// Local key-encryption-key file wrapped data-key custody provider identifier.
+pub const FILE: u8 = 3;
 /// AES-GCM nonce length.
 pub const NONCE_BYTES: usize = 12;
 /// AES-GCM authentication tag length.
@@ -24,7 +26,7 @@ pub const TAG_BYTES: usize = 16;
 pub const HEADER_BYTES: usize = 4 + 1 + 1 + 4 + NONCE_BYTES;
 /// Maximum checkpoint plaintext length.
 pub const MAX_PLAINTEXT: usize = 32 * 1024 * 1024;
-/// Maximum KMS-wrapped data-key length.
+/// Maximum wrapped data-key length.
 pub const MAX_WRAPPED_KEY: usize = 64 * 1024;
 /// Maximum complete checkpoint envelope length.
 pub const MAX_ENVELOPE: usize = HEADER_BYTES + MAX_WRAPPED_KEY + MAX_PLAINTEXT + TAG_BYTES;
@@ -85,7 +87,7 @@ pub enum CiphertextError {
 
 /// Encrypt and assemble the complete existing `CXCP` checkpoint envelope.
 ///
-/// `wrapped` is the KMS ciphertext blob, never a plaintext data key. Its bytes
+/// `wrapped` is the provider's wrapped-key blob (KMS ciphertext or local-KEK wrap), never a plaintext data key. Its bytes
 /// must pass the shared binary secret policy unchanged before being serialized.
 /// Ownership AAD is supplied by the custody provider and is not serialized in
 /// the envelope. A fresh nonce is generated internally for every encryption.
@@ -103,9 +105,9 @@ pub fn seal(
     if plaintext.len() > MAX_PLAINTEXT || wrapped.len() > MAX_WRAPPED_KEY {
         return Err(CiphertextError::LimitExceeded);
     }
-    if !matches!(provider, MEMORY | KMS)
+    if !matches!(provider, MEMORY | KMS | FILE)
         || (provider == MEMORY && !wrapped.is_empty())
-        || (provider == KMS && wrapped.is_empty())
+        || (provider != MEMORY && wrapped.is_empty())
     {
         return Err(CiphertextError::InvalidEnvelope);
     }

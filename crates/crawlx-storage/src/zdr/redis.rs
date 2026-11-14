@@ -11,17 +11,18 @@ use crawlx_core::{ArtifactId, ArtifactRef, CrawlRunId, StoreError, TenantId, Tim
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-const PREFIX: &str = "crawlx:zdr:{delivery}:page:";
-const KEYS: [&str; 9] = [
-    "crawlx:zdr:{delivery}:order",
-    "crawlx:zdr:{delivery}:sizes",
-    "crawlx:zdr:{delivery}:application-expiry",
-    "crawlx:zdr:{delivery}:native-expiry",
-    "crawlx:zdr:{delivery}:artifacts",
-    "crawlx:zdr:{delivery}:page-artifacts",
-    "crawlx:zdr:{delivery}:sequence",
-    "crawlx:zdr:{delivery}:limits",
-    "crawlx:zdr:{delivery}:bytes",
+/// Key names under the deployment prefix (`<prefix>zdr:{delivery}:<name>`); all share the
+/// `{delivery}` hash tag, the prefix stays outside it.
+const KEY_NAMES: [&str; 9] = [
+    "order",
+    "sizes",
+    "application-expiry",
+    "native-expiry",
+    "artifacts",
+    "page-artifacts",
+    "sequence",
+    "limits",
+    "bytes",
 ];
 const SCRIPT: &str = include_str!("redis.lua");
 
@@ -44,6 +45,10 @@ struct BlobMetadata {
 pub(super) struct RedisPages {
     connection: ::redis::aio::MultiplexedConnection,
     limits: BufferLimits,
+    /// `<prefix>zdr:{delivery}:page:`
+    page_prefix: String,
+    /// The nine script keys, in the order the script indexes them.
+    keys: Vec<String>,
 }
 
 struct Request<'a> {
@@ -79,7 +84,12 @@ impl Request<'_> {
 }
 
 impl RedisPages {
-    pub(super) async fn open(url: &str, limits: BufferLimits, now: Timestamp) -> Result<Self, StoreError> {
+    pub(super) async fn open(
+        url: &str,
+        limits: BufferLimits,
+        now: Timestamp,
+        key_prefix: &str,
+    ) -> Result<Self, StoreError> {
         // Redis Lua uses exact double integers for accounting and sorted-set scores.
         const MAX_EXACT_INTEGER: u64 = 9_007_199_254_740_990;
         if u64::try_from(limits.max_bytes).map_err(serialization_error)? > MAX_EXACT_INTEGER
@@ -98,7 +108,15 @@ impl RedisPages {
             .get_multiplexed_async_connection_with_config(&config)
             .await
             .map_err(redis_error)?;
-        let pages = Self { connection, limits };
+        let pages = Self {
+            connection,
+            limits,
+            page_prefix: format!("{key_prefix}zdr:{{delivery}}:page:"),
+            keys: KEY_NAMES
+                .iter()
+                .map(|name| format!("{key_prefix}zdr:{{delivery}}:{name}"))
+                .collect(),
+        };
         let _: u64 = pages.invoke(Request::new("startup", now)).await?;
         Ok(pages)
     }
@@ -138,7 +156,7 @@ impl RedisPages {
         self.validate_volatile().await?;
         let script = ::redis::Script::new(SCRIPT);
         let mut invocation = script.prepare_invoke();
-        for key in KEYS {
+        for key in &self.keys {
             invocation.key(key);
         }
         let tenant = request.tenant.map(|id| id.to_string()).unwrap_or_default();
@@ -153,7 +171,7 @@ impl RedisPages {
             .arg(self.limits.max_entries)
             .arg(self.limits.max_bytes)
             .arg(ttl_ms)
-            .arg(PREFIX)
+            .arg(&self.page_prefix)
             .arg(tenant)
             .arg(run)
             .arg(page)

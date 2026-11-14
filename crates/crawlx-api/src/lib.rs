@@ -42,7 +42,9 @@ pub(crate) mod streams;
 pub mod util;
 pub mod webhooks;
 
-pub use config::{ApiConfig, ApiKeyBootstrap, CompatConfig, CompatMode, Settings};
+pub use config::{
+    ApiConfig, ApiKeyBootstrap, CompatConfig, CompatMode, KeySpecError, Settings, AGENT_SCOPES,
+};
 pub use database::{DatabaseApiStore, DatabaseEraser};
 pub use errors::{ApiError, Detail, HttpError};
 pub use memory::MemoryApiStore;
@@ -75,12 +77,12 @@ pub fn admission_policy(cfg: &ApiConfig, clock: Arc<dyn Clock>) -> AdmissionPoli
     }
 }
 
-/// Create the configured bootstrap API keys (all scopes). `fc-` keys are accepted only when
+/// Create the configured bootstrap API keys with their configured scopes. `fc-` keys are accepted only when
 /// [`CompatConfig::prefixed_keys`] is on.
 async fn bootstrap_keys(api: &dyn ApiStore, cfg: &ApiConfig) -> Result<(), ApiError> {
     for b in &cfg.api_keys {
         let tenant = auth::tenant_id_for(&b.tenant);
-        let record = auth::key_record_for(&b.key, tenant, Scope::all_set(), cfg.compat.prefixed_keys)
+        let record = auth::key_record_for(&b.key, tenant, b.scopes.clone(), cfg.compat.prefixed_keys)
             .ok_or_else(|| {
                 ApiError::Config(format!(
                     "API key for tenant {:?} must look like {}<{} lowercase letters a-z or digits 2-7>{}",
@@ -406,9 +408,11 @@ impl state::ArtifactsFactory for FsArtifacts {
             ),
             crawlx_worker::ObjectStoreChoice::S3(config) => Arc::new(
                 crawlx_storage::S3ArtifactStore::new(
-                    crawlx_storage::S3Blobs::new(config).map_err(|error| {
-                        crawlx_core::StoreError::Unavailable(format!("object store: {error}"))
-                    })?,
+                    crawlx_storage::S3Blobs::new(config)
+                        .map_err(|error| {
+                            crawlx_core::StoreError::Unavailable(format!("object store: {error}"))
+                        })?
+                        .with_deployment(Arc::new(store.clone())),
                     runs,
                     self.clock.clone(),
                 )

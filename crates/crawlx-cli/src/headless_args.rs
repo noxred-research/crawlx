@@ -174,25 +174,17 @@ pub struct HeadlessArgs {
     /// `CRAWLX_CHROMIUM_CACHE`).
     #[arg(long, value_name = "DIR", help_heading = "Headless")]
     pub chromium_cache: Option<PathBuf>,
-    /// Attach to the running Chromium at this DevTools websocket instead of launching one
-    /// (compatibility `-chrome-ws-url`, `-cwu`). Refused unless the safety profile is
-    /// `test_environment` or `authorized_security_test`.
-    #[arg(
-        long = "cdp-ws-url",
-        visible_alias = "chrome-ws-url",
-        value_name = "URL",
-        help_heading = "Headless"
-    )]
-    pub cdp_ws_url: Option<url::Url>,
-    /// With `--cdp-ws-url`, reuse the attached browser's default context (its logged-in
-    /// session) instead of opening incognito contexts (compatibility `-no-incognito`, `-noi`).
-    #[arg(long, requires = "cdp_ws_url", help_heading = "Headless")]
-    pub no_incognito: bool,
+    /// Attach to a running Chromium instead of launching one (`--cdp-ws-url-file`,
+    /// `CRAWLX_CDP_WS_URL_FILE`, `CRAWLX_CDP_WS_URL`, deprecated `--cdp-ws-url`).
+    #[command(flatten)]
+    pub cdp: crate::cdp_attach::CdpArgs,
 }
 
 impl HeadlessArgs {
     /// Fill unset fields from `lower`.
-    pub(crate) fn fill_from(&mut self, lower: Self) {
+    pub(crate) fn fill_from(&mut self, mut lower: Self) {
+        // the attach sources layer together (see `CdpArgs::fill_from`), not flag by flag
+        self.cdp.fill_from(std::mem::take(&mut lower.cdp));
         fill_fields!(
             self,
             lower,
@@ -227,8 +219,7 @@ impl HeadlessArgs {
                 profiles_dir,
                 auto_download_chromium,
                 chromium_cache,
-                cdp_ws_url,
-                no_incognito,
+                cdp,
             }
         );
     }
@@ -354,11 +345,11 @@ impl HeadlessArgs {
         if let Some(dir) = &self.chromium_cache {
             cfg.chromium_cache.clone_from(dir);
         }
-        if let Some(ws) = &self.cdp_ws_url {
+        if let Some(attach) = self.cdp.resolve_announced(getenv)? {
             // the policy gate (`test_environment` / `authorized_security_test` only) is the
             // worker's: `RunContext::build` refuses the attach for any other safety profile
-            cfg.cdp_ws_url = Some(ws.clone());
-            cfg.incognito = !self.no_incognito;
+            cfg.cdp_ws_url = Some(attach.url);
+            cfg.incognito = attach.incognito;
         }
         Ok(())
     }
@@ -389,6 +380,13 @@ mod tests {
         let default_cfg = launch(&HeadlessArgs::default(), &no_env).unwrap();
         assert!(!default_cfg.auto_download_chromium && default_cfg.cdp_ws_url.is_none());
 
+        let dir = tempfile::tempdir().unwrap();
+        let ws_file = dir.path().join("cdp-ws-url");
+        std::fs::write(&ws_file, "ws://127.0.0.1:9222/devtools/browser/x\n").unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&ws_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
         let args = HeadlessArgs {
             hook_timer_acceleration: Some(10),
             hook_prevent_form_reset: true,
@@ -400,8 +398,11 @@ mod tests {
             profiles_dir: None,
             auto_download_chromium: true,
             chromium_cache: Some(PathBuf::from("/var/chromium")),
-            cdp_ws_url: Some(url::Url::parse("ws://127.0.0.1:9222/devtools/browser/x").unwrap()),
-            no_incognito: true,
+            cdp: crate::cdp_attach::CdpArgs {
+                cdp_ws_url_file: Some(ws_file.clone()),
+                no_incognito: true,
+                ..crate::cdp_attach::CdpArgs::default()
+            },
             ..HeadlessArgs::default()
         };
         args.apply_request(&mut crawl).unwrap();
@@ -433,7 +434,7 @@ mod tests {
             launch(&legacy, &no_env).is_err(),
             "legacy plaintext roots must never become ignored controls"
         );
-        assert!(!cfg.incognito, "--no-incognito rides with --cdp-ws-url");
+        assert!(!cfg.incognito, "--no-incognito rides with the attach URL");
     }
 
     #[test]

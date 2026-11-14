@@ -1315,6 +1315,7 @@ fn docker_compose(args: &[&str], env: &[(&str, &str)]) -> Option<std::process::O
         "CRAWLX_TAG",
         "CRAWLX_REGISTRY",
         "CRAWLX_CHECKPOINT_KMS_KEY_ID",
+        "CRAWLX_CHECKPOINT_KEK_FILE",
     ] {
         cmd.env_remove(var);
     }
@@ -1521,6 +1522,136 @@ fn checkpoint_kms_deployment_setting_is_opt_in_without_a_default_key() {
     );
     let configured: Value = serde_json::from_slice(&configured.stdout).unwrap();
     assert_eq!(raw_env(service(&configured, "worker"))[setting], key_id);
+}
+
+#[test]
+fn checkpoint_kek_file_is_an_optional_secret_mount_exclusive_with_the_cloud_key() {
+    const KEK_SET: &str = "capabilities.checkpointEncryption.kekFileSecret=crawlx-checkpoint-kek";
+    let values: Value = serde_yaml_ng::from_str(&read("deploy/helm/crawlx/values.yaml")).unwrap();
+    assert_eq!(
+        values["capabilities"]["checkpointEncryption"]["kekFileSecret"],
+        ""
+    );
+    // compose: the overlay adds the secret file to the worker only, never an inline key value
+    // (the overlay's `!reset` tag is not plain YAML, so its text is checked rather than parsed)
+    let overlay = read("docker/compose.checkpoint-kek.yml");
+    assert!(overlay.contains("      CRAWLX_CHECKPOINT_KEK_FILE: /run/secrets/checkpoint_kek\n"));
+    assert!(overlay.contains("      CRAWLX_CHECKPOINT_KMS_KEY_ID: !reset null\n"));
+    assert!(overlay.contains("    secrets: [checkpoint_kek]\n"));
+    assert!(!overlay.contains("  api:"), "the API has no checkpoint settings");
+    assert!(
+        overlay.contains("    file: ${CRAWLX_CHECKPOINT_KEK_FILE:?"),
+        "the host file is required and never defaulted"
+    );
+    assert!(!raw_env(service(&compose(), "worker")).contains_key("CRAWLX_CHECKPOINT_KEK_FILE"));
+    if compose_available() {
+        let arguments = [
+            "-f",
+            COMPOSE,
+            "-f",
+            "docker/compose.checkpoint-kek.yml",
+            "config",
+            "--format",
+            "json",
+        ];
+        let missing = docker_compose(&arguments, &[]).unwrap();
+        assert!(
+            !missing.status.success(),
+            "the overlay needs CRAWLX_CHECKPOINT_KEK_FILE"
+        );
+        // the host pass-through of the cloud key is cleared: the worker never sees both providers
+        let both = docker_compose(
+            &arguments,
+            &[
+                ("CRAWLX_CHECKPOINT_KEK_FILE", "/operator/checkpoint_kek"),
+                ("CRAWLX_CHECKPOINT_KMS_KEY_ID", "operator-canary-key"),
+            ],
+        )
+        .unwrap();
+        assert!(both.status.success(), "{}", String::from_utf8_lossy(&both.stderr));
+        let both: Value = serde_json::from_slice(&both.stdout).unwrap();
+        let env = raw_env(service(&both, "worker"));
+        assert_eq!(env["CRAWLX_CHECKPOINT_KEK_FILE"], "/run/secrets/checkpoint_kek");
+        assert!(!env.contains_key("CRAWLX_CHECKPOINT_KMS_KEY_ID"));
+        assert_eq!(secret_file(&both, "checkpoint_kek"), "/operator/checkpoint_kek");
+        assert!(secret_names(service(&both, "worker")).contains("checkpoint_kek"));
+        assert!(!secret_names(service(&both, "api")).contains("checkpoint_kek"));
+    }
+    // helm: mounted from the operator Secret into workers and the config check, never the API
+    let Some(output) = helm_template(&[HELM_KEY_FILE, HELM_SECRET_REDIS, KEK_SET]) else {
+        return;
+    };
+    let documents = rendered_documents(&output);
+    for (kind, name, present) in [
+        ("Deployment", "custody-worker", true),
+        ("Job", "custody-config-check", true),
+        ("Deployment", "custody-api", false),
+    ] {
+        let workload = named(&documents, kind, name).unwrap();
+        let env = container_env(workload);
+        let spec = &workload["spec"]["template"]["spec"];
+        let volume = spec["volumes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["name"] == "checkpoint-kek");
+        assert_eq!(env.contains_key("CRAWLX_CHECKPOINT_KEK_FILE"), present, "{name}");
+        assert_eq!(volume.is_some(), present, "{name}");
+        if let Some(volume) = volume {
+            assert_eq!(
+                env["CRAWLX_CHECKPOINT_KEK_FILE"],
+                "/run/secrets/crawlx-checkpoint-kek/checkpoint_kek"
+            );
+            assert_eq!(volume["secret"]["secretName"], "crawlx-checkpoint-kek");
+            // an octal literal: YAML parsers read it as 288 or, ignoring the leading zero, 440
+            let mode = volume["secret"]["defaultMode"].to_string();
+            assert!(
+                ["288", "440", "\"0440\""].contains(&mode.as_str()),
+                "{name}: {mode}"
+            );
+            assert_eq!(volume["secret"]["items"][0]["key"], "checkpoint_kek");
+            assert_eq!(
+                spec["securityContext"]["fsGroup"],
+                spec["securityContext"]["runAsGroup"]
+            );
+            let mounts = spec["containers"][0]["volumeMounts"].as_array().unwrap();
+            let mount = mounts.iter().find(|m| m["name"] == "checkpoint-kek").unwrap();
+            assert_eq!(mount["readOnly"], true);
+            assert_eq!(mount["mountPath"], "/run/secrets/crawlx-checkpoint-kek");
+        }
+    }
+    // default: nothing is mounted or passed
+    let Some(default) = helm_template(&[HELM_KEY_FILE, HELM_SECRET_REDIS]) else {
+        return;
+    };
+    assert!(!String::from_utf8_lossy(&default.stdout).contains("checkpoint-kek"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("defaultMode: 0440"));
+    // the cloud key id and the key-encryption-key file are mutually exclusive
+    let Some(both) = helm_template(&[
+        HELM_KEY_FILE,
+        HELM_SECRET_REDIS,
+        KEK_SET,
+        "capabilities.checkpointEncryption.kmsKeyId=operator-canary-key",
+    ]) else {
+        return;
+    };
+    assert!(!both.status.success());
+    let stderr = String::from_utf8_lossy(&both.stderr);
+    assert!(
+        stderr.contains("kekFileSecret are mutually exclusive"),
+        "{stderr}"
+    );
+    // the pre-roll check must be able to open the file
+    let Some(no_check) = helm_template(&[
+        HELM_KEY_FILE,
+        HELM_SECRET_REDIS,
+        KEK_SET,
+        "configCheck.enabled=false",
+    ]) else {
+        return;
+    };
+    assert!(!no_check.status.success());
+    assert!(String::from_utf8_lossy(&no_check.stderr).contains("require configCheck.enabled"));
 }
 
 // ---- database engine overlays and chart values -----------------------------
@@ -2176,4 +2307,38 @@ fn object_store_lifecycle_expires_each_artifact_prefix_and_never_audit() {
     assert!(!expiry.contains_key("audit/") && expiry.len() == 5, "{expiry:?}");
     // the prefix the exporter writes is the exempt one
     assert_eq!(crawlx_storage::audit::EXPORT_PREFIX, "audit/");
+}
+
+#[test]
+fn plain_manifests_carry_the_checkpoint_kek_as_an_optional_patch() {
+    let patch = read("deploy/k8s/checkpoint-kek-patch.yaml");
+    let doc: Value = serde_yaml_ng::from_str(&patch).unwrap();
+    let pod = &doc["spec"]["template"]["spec"];
+    let container = &pod["containers"][0];
+    assert_eq!(container["name"], "worker");
+    assert_eq!(container["env"][0]["name"], "CRAWLX_CHECKPOINT_KEK_FILE");
+    assert_eq!(
+        container["env"][0]["value"],
+        "/run/secrets/crawlx-checkpoint-kek/checkpoint_kek"
+    );
+    assert_eq!(container["volumeMounts"][0]["readOnly"], true);
+    assert!(
+        patch.contains("defaultMode: 0440") && patch.contains("mode: 0440"),
+        "the Secret is mounted 0440"
+    );
+    assert!(
+        !patch.contains("kind: Secret"),
+        "no key material in the manifests"
+    );
+    assert!(
+        !patch.contains("CRAWLX_CHECKPOINT_KMS_KEY_ID\n"),
+        "never both providers"
+    );
+    // the base worker manifest sets no provider and has the fsGroup the 0440 mode relies on
+    let worker = read("deploy/k8s/worker-deployment.yaml");
+    assert!(!worker.contains("CRAWLX_CHECKPOINT_KEK_FILE"));
+    assert!(!worker.contains("CRAWLX_CHECKPOINT_KMS_KEY_ID"));
+    assert!(worker.contains("fsGroup: 10001"));
+    // the API has no checkpoint settings
+    assert!(!read("deploy/k8s/api-deployment.yaml").contains("checkpoint-kek"));
 }

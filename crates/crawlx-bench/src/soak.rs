@@ -801,7 +801,8 @@ pub async fn run(cfg: SoakConfig, out_dir: &Path) -> Result<SoakReport, BenchErr
             .is_none_or(|keys| !keys.is_available())
     {
         return Err(BenchError::Gate(
-            "durable soak checkpoints require CRAWLX_CHECKPOINT_KMS_KEY_ID".into(),
+            "durable soak checkpoints require CRAWLX_CHECKPOINT_KMS_KEY_ID or CRAWLX_CHECKPOINT_KEK_FILE"
+                .into(),
         ));
     }
     run_admitted(cfg, out_dir, worker).await
