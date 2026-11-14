@@ -155,7 +155,14 @@ capabilities:
   requestIdentity:
     existingSecret: "" # key: request_identity_key; same immutable Secret for API and worker
   checkpointEncryption:
+    # Checkpoint key provider for browser-backed runs: set AT MOST ONE (setting both fails rendering).
     kmsKeyId: "" # operator-owned cloud KMS key ID/ARN; no default key or plaintext fallback
+    # Operator Secret, key `checkpoint_kek`: lines `<key-id>:<64 hex characters>`, the first line is the
+    # primary (docs/design/data-and-secrets.md, "Checkpoint key providers"). Empty = not mounted. Mounted
+    # read-only (mode 0440, readable through the pod's fsGroup; the loader accepts 0400/0600 or 0440
+    # with one of the process's groups) at /run/secrets/crawlx-checkpoint-kek into workers and the
+    # config-check job as CRAWLX_CHECKPOINT_KEK_FILE; no key material belongs in these values.
+    kekFileSecret: ""
   retainedProfiles:
     # Unavailable: the worker refuses retained browser profiles while encrypted artifact custody is
     # enabled (always, in PostgreSQL mode) and the chart fails when true.

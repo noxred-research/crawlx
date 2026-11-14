@@ -12,10 +12,15 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 - Local key-encryption-key file for browser checkpoints (`CRAWLX_CHECKPOINT_KEK_FILE`): durable
   API and worker deployments without a cloud service can run `dynamic` and `hybrid` crawls on
-  PostgreSQL, MariaDB or SQLite with any artifact store. One `<key-id>:<64 hex>` per line, mode `0600`
-  enforced, first key primary, older keys still unwrap for rotation. Exclusive with
-  `CRAWLX_CHECKPOINT_KMS_KEY_ID`; checked by `crawlx config check`. See
-  `docs/design/data-and-secrets.md`.
+  PostgreSQL, MariaDB or SQLite with any artifact store. One `<key-id>:<64 hex>` per line, mode `0600`/`0400`
+  (or `0440` with a group of the process, as a Kubernetes secret volume under `fsGroup` presents it;
+  other modes and foreign groups are refused with the mode and gid named), first key primary, older keys
+  still unwrap for rotation. Exclusive with `CRAWLX_CHECKPOINT_KMS_KEY_ID`; checked by `crawlx config check`.
+  Deployable as an optional secret file: `docker/compose.checkpoint-kek.yml` and Helm
+  `capabilities.checkpointEncryption.kekFileSecret` (the chart refuses both providers). See
+  `docs/design/data-and-secrets.md` and `docs/ops/README.md`.
+  The provider is tested end to end on SQLite and MariaDB, each with filesystem and S3-compatible
+  artifact stores (`crates/crawlx-worker/tests/checkpoint_kek_durable.rs`).
 - Backends guide (`docs/ops/backends.md`): support matrix, per-family namespacing and shared-instance
   setup.
   - Delivery destinations for OpenSearch and Elasticsearch (`opensearch`, `elasticsearch`: engine

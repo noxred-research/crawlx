@@ -235,9 +235,16 @@ Overlay inputs are:
 | Overlay | Required host input | Container input |
 |---|---|---|
 | `compose.identity.yml` | `CRAWLX_REQUEST_IDENTITY_KEY_FILE` | same `/run/secrets/request_identity_key` for API and worker |
+| `compose.checkpoint-kek.yml` | `CRAWLX_CHECKPOINT_KEK_FILE` | worker-only `/run/secrets/checkpoint_kek` (`CRAWLX_CHECKPOINT_KEK_FILE`); clears the `CRAWLX_CHECKPOINT_KMS_KEY_ID` pass-through |
 | `compose.profiles.yml` | `CRAWLX_PROFILE_KEY_FILE` | worker-only `file:///run/secrets/profile_key` |
 | `compose.protocol.yml` | `CRAWLX_PROTOCOL_REGISTRY`, `CRAWLX_PROTOCOL_CREDENTIALS_DIR` | registry `/run/secrets/protocol_registry.json`; credentials `/run/secrets/crawlx-protocol/<filename>` |
 | `compose.delivery.yml` | `CRAWLX_DELIVERY_REGISTRY`, `CRAWLX_DELIVERY_CREDENTIALS_DIR` | registry `/run/secrets/delivery_registry.json`; credentials `/run/secrets/crawlx-delivery/<filename>` |
+
+The checkpoint key-encryption-key file (`compose.checkpoint-kek.yml`) must be owned by UID 10001 with
+mode `0400`; the overlay needs no cloud account and replaces `CRAWLX_CHECKPOINT_KMS_KEY_ID`, so the
+worker never sees both providers. Create the file with
+`(umask 077; printf 'kek-1:%s\n' "$(openssl rand -hex 32)" > "$HOME/.config/crawlx/operator/checkpoint_kek")`
+(only for initial provisioning; keep a protected backup).
 
 Registry credential directories must exist, even for a credential-free registry; an empty
 operator-owned directory is valid. Bind mounts never create missing host directories.
@@ -278,6 +285,7 @@ Secrets:
 | `artifactCustody.keyFileSecret` (or `artifactCustody.kmsKeyId`) | `artifact_key` (64 hex characters) | API, worker, pre-roll config-check |
 | `artifactCustody.secretRedis.existingSecret` | `url` (`redis://:<password>@host:6379/`) | worker, pre-roll config-check only |
 | `capabilities.requestIdentity.existingSecret` | `request_identity_key` | API, worker, pre-roll config-check |
+| `capabilities.checkpointEncryption.kekFileSecret` | `checkpoint_kek` (`<key-id>:<64 hex>` per line) | worker, pre-roll config-check only; exclusive with `capabilities.checkpointEncryption.kmsKeyId` (rendering fails if both are set) |
 | `capabilities.protocolRegistry.existingSecret` | `registry.json` | worker, config-check only |
 | `capabilities.protocolRegistry.credentialsSecret` | filenames referenced by registry | worker, config-check only |
 | `capabilities.deliveryRegistry.existingSecret` | `registry.json` | worker, config-check only |
@@ -290,6 +298,8 @@ kubectl -n crawlx create secret generic crawlx-artifact-key \
   --from-file=artifact_key="$HOME/.config/crawlx/operator/artifact_key"
 kubectl -n crawlx create secret generic crawlx-secret-registry \
   --from-file=url=/secure/secret-registry-url.txt
+kubectl -n crawlx create secret generic crawlx-checkpoint-kek \
+  --from-file=checkpoint_kek="$HOME/.config/crawlx/operator/checkpoint_kek"
 kubectl -n crawlx create secret generic crawlx-request-identity-v1 \
   --from-file=request_identity_key="$HOME/.config/crawlx/operator/request_identity_key"
 kubectl -n crawlx create secret generic crawlx-protocol-registry-v1 \
@@ -304,6 +314,7 @@ helm template crawlx deploy/helm/crawlx --namespace crawlx \
   --set artifactCustody.keyFileSecret=crawlx-artifact-key \
   --set artifactCustody.secretRedis.existingSecret=crawlx-secret-registry \
   --set capabilities.requestIdentity.existingSecret=crawlx-request-identity-v1 \
+  --set capabilities.checkpointEncryption.kekFileSecret=crawlx-checkpoint-kek \
   --set capabilities.protocolRegistry.existingSecret=crawlx-protocol-registry-v1 \
   --set capabilities.protocolRegistry.credentialsSecret=crawlx-protocol-credentials-v1 \
   --set capabilities.deliveryRegistry.existingSecret=crawlx-delivery-registry-v1 \

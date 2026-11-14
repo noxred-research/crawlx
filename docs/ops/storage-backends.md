@@ -63,6 +63,9 @@ Browser-backed runs (`dynamic`, `hybrid`) on a database also need a checkpoint k
 engine and with any artifact store: `CRAWLX_CHECKPOINT_KMS_KEY_ID` (cloud KMS) or
 `CRAWLX_CHECKPOINT_KEK_FILE` (a local key-encryption-key file for deployments without a cloud
 service), never both. Without one the run ends `failed` with the `checkpoint_keys_required` failure.
+The key file must be mode `0600`/`0400`, or `0440` with a group of the process (a Kubernetes secret
+volume under `fsGroup`); deployment wiring is in `docs/ops/README.md` (Compose overlay
+`docker/compose.checkpoint-kek.yml`, Helm `capabilities.checkpointEncryption.kekFileSecret`).
 See "Checkpoint key providers" in `docs/design/data-and-secrets.md`.
 
 ## Pool size and statement timeout

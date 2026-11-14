@@ -7,9 +7,13 @@
 //! non-secret labels (`A-Z a-z 0-9 . _ -`, at most [`MAX_KEY_ID_BYTES`] bytes), stored next to
 //! each wrapped data key so the right KEK is found at unwrap time.
 //!
-//! The file is read through its opened descriptor and refused unless it is a regular file with
-//! no group or other permission bits (mode `0600` or `0400`). Symlinks (projected secrets)
-//! are followed. Nothing is generated: a missing, unreadable, oversized, empty or malformed
+//! The file is read through its opened descriptor (symlinks, as in projected secret volumes, are
+//! followed, so the target's metadata is checked) and refused unless it is a regular file whose
+//! mode is either owner-only (no group or other bits, `0600` or `0400`) or group-readable
+//! (`0440`: read for owner and group and nothing else) with the file's group the process's
+//! effective or a supplementary group and its owner the process user or root. The second form
+//! is what a Kubernetes secret volume looks like under `fsGroup` (kubelet writes the file as root
+//! and adds group read). Nothing is generated: a missing, unreadable, oversized, empty or malformed
 //! file, a repeated key id or a key that is not exactly 32 bytes fails closed. Key bytes and
 //! the file buffer are zeroized on drop and never formatted.
 
@@ -30,9 +34,17 @@ pub enum KekFileError {
     /// The file could not be opened, inspected or read.
     #[error("key-encryption-key file is unavailable")]
     File(#[source] std::io::Error),
-    /// The opened descriptor is not a regular file reserved to its owner.
-    #[error("key-encryption-key file must be a regular file with mode 0600 (no group or other access)")]
-    UnsafeFile,
+    /// The opened descriptor is not a regular file with an accepted owner, group and mode.
+    #[error(
+        "key-encryption-key file has mode {mode:04o} and gid {gid}: it must be a regular file with mode 0600 or 0400, or \
+         mode 0440 with a group of this process (owned by this user or root); no group write or execute and no other access"
+    )]
+    UnsafeFile {
+        /// Permission bits of the opened file.
+        mode: u32,
+        /// Group id of the opened file.
+        gid: u32,
+    },
     /// The file exceeds the size bound.
     #[error("key-encryption-key file exceeds 65536 bytes")]
     TooLarge,
@@ -82,6 +94,40 @@ pub fn is_valid_key_id(id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
+/// The user and groups of this process, which decide whether a group-readable file is trusted.
+struct ProcessIdentity {
+    uid: u32,
+    groups: Vec<u32>,
+}
+
+impl ProcessIdentity {
+    fn current() -> Self {
+        let mut groups = vec![rustix::process::getegid().as_raw()];
+        groups.extend(
+            rustix::process::getgroups()
+                .unwrap_or_default()
+                .into_iter()
+                .map(rustix::process::Gid::as_raw),
+        );
+        Self {
+            uid: rustix::process::getuid().as_raw(),
+            groups,
+        }
+    }
+}
+
+/// Is a file with permission bits `mode`, owner `uid` and group `gid` an acceptable KEK file?
+///
+/// Owner-only files (`mode & 0o077 == 0`) always are. Read access for owner and group and nothing
+/// else (`0440`, or the group alone: `mode & !0o440 == 0`) is accepted when the group belongs to this process and the owner is this user or root: that is
+/// how a Kubernetes secret volume under `fsGroup` is presented. Anything else is refused.
+fn mode_is_accepted(mode: u32, uid: u32, gid: u32, process: &ProcessIdentity) -> bool {
+    if mode & 0o077 == 0 {
+        return true;
+    }
+    mode & !0o440 == 0 && (uid == process.uid || uid == 0) && process.groups.contains(&gid)
+}
+
 impl KekFile {
     /// Load and validate the KEK file at `path`.
     ///
@@ -97,9 +143,14 @@ impl KekFile {
         let file = std::fs::File::from(descriptor);
         let metadata = file.metadata().map_err(KekFileError::File)?;
         {
-            use std::os::unix::fs::PermissionsExt as _;
-            if !metadata.is_file() || metadata.permissions().mode() & 0o077 != 0 {
-                return Err(KekFileError::UnsafeFile);
+            use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+            let mode = metadata.permissions().mode() & 0o7777;
+            let process = ProcessIdentity::current();
+            if !metadata.is_file() || !mode_is_accepted(mode, metadata.uid(), metadata.gid(), &process) {
+                return Err(KekFileError::UnsafeFile {
+                    mode,
+                    gid: metadata.gid(),
+                });
             }
         }
         // Capacity covers the bound plus the probe byte, so reading never reallocates a
@@ -176,6 +227,8 @@ mod tests {
 
     fn write(dir: &tempfile::TempDir, body: &str, mode: u32) -> std::path::PathBuf {
         let path = dir.path().join("kek");
+        // an earlier call may have left a read-only file
+        let _ = std::fs::remove_file(&path);
         std::fs::write(&path, body).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
         path
@@ -201,13 +254,73 @@ mod tests {
     }
 
     #[test]
-    fn group_or_other_access_is_refused() {
+    fn group_read_with_one_of_our_groups_is_accepted_for_a_file_we_own() {
         let dir = tempfile::tempdir().unwrap();
-        for mode in [0o640, 0o604, 0o660, 0o644, 0o666, 0o602] {
+        let path = write(&dir, &format!("k:{A}"), 0o440);
+        // a new file takes the effective group of this process
+        assert!(KekFile::load(&path).is_ok());
+    }
+
+    #[test]
+    fn modes_beyond_owner_only_or_group_read_are_refused_with_the_mode_and_gid_named() {
+        let dir = tempfile::tempdir().unwrap();
+        for mode in [
+            0o640, 0o604, 0o660, 0o644, 0o666, 0o602, 0o444, 0o450, 0o441, 0o540,
+        ] {
             let path = write(&dir, &format!("k:{A}"), mode);
-            assert!(
-                matches!(KekFile::load(&path), Err(KekFileError::UnsafeFile)),
-                "mode {mode:o}"
+            let error = KekFile::load(&path).unwrap_err();
+            let KekFileError::UnsafeFile { mode: seen, gid } = error else {
+                panic!("mode {mode:o}: {error:?}");
+            };
+            assert_eq!(seen, mode);
+            let text = error.to_string();
+            assert!(text.contains(&format!("mode {mode:04o}")), "{text}");
+            assert!(text.contains(&format!("gid {gid}")), "{text}");
+        }
+    }
+
+    #[test]
+    fn symlinks_are_judged_by_their_target() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        for (mode, accepted) in [(0o400, true), (0o440, true), (0o640, false), (0o444, false)] {
+            let target = write(&dir, &format!("k:{A}"), mode);
+            let target = {
+                let kept = dir.path().join(format!("target-{mode:o}"));
+                std::fs::rename(&target, &kept).unwrap();
+                kept
+            };
+            let link = dir.path().join(format!("link-{mode:o}"));
+            symlink(&target, &link).unwrap();
+            assert_eq!(KekFile::load(&link).is_ok(), accepted, "mode {mode:o}");
+        }
+    }
+
+    #[test]
+    fn acceptance_depends_on_mode_owner_and_group() {
+        let process = ProcessIdentity {
+            uid: 10001,
+            groups: vec![10001, 2000],
+        };
+        // (mode, owner, group, accepted)
+        for (mode, uid, gid, accepted) in [
+            (0o400, 10001, 10001, true),
+            (0o600, 10001, 99, true),
+            (0o400, 0, 99, true),
+            (0o440, 0, 10001, true),
+            (0o440, 10001, 2000, true),
+            (0o440, 10001, 99, false),
+            (0o440, 4242, 10001, false),
+            (0o640, 0, 10001, false),
+            (0o460, 0, 10001, false),
+            (0o441, 0, 10001, false),
+            (0o444, 0, 10001, false),
+            (0o2440, 0, 10001, false),
+        ] {
+            assert_eq!(
+                mode_is_accepted(mode, uid, gid, &process),
+                accepted,
+                "mode {mode:o} uid {uid} gid {gid}"
             );
         }
     }
@@ -219,7 +332,10 @@ mod tests {
             KekFile::load(&dir.path().join("absent")),
             Err(KekFileError::File(_))
         ));
-        assert!(matches!(KekFile::load(dir.path()), Err(KekFileError::UnsafeFile)));
+        assert!(matches!(
+            KekFile::load(dir.path()),
+            Err(KekFileError::UnsafeFile { .. })
+        ));
     }
 
     #[test]

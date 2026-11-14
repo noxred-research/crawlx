@@ -925,13 +925,25 @@ async fn shutdown_drains_sessions_checkpoints_and_releases_them_for_recovery() {
     };
     // A claimed lease precedes actor startup. Wait for a durable action, so this
     // fixture drains an initialized actor rather than racing its construction.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    // The deadline only bounds a hung worker; on a loaded host actor startup can
+    // take seconds. A worker that already exited can never act, so fail at once
+    // with the run row instead of waiting out the deadline.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
         let acted = !stores.journal.list(run, None).await.unwrap().is_empty();
         if acted {
             break;
         }
-        assert!(tokio::time::Instant::now() < deadline, "session never acted");
+        assert!(
+            !worker.is_finished(),
+            "worker exited before the session acted: {:?}",
+            stores.runs.get(run).await
+        );
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "session never acted: {:?}",
+            stores.runs.get(run).await
+        );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     cancel.cancel();

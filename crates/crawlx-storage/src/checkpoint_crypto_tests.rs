@@ -515,7 +515,7 @@ async fn kek_file_must_be_owner_only_and_valid_to_load() {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
     assert!(matches!(
         FileCheckpointKeys::from_file(&path),
-        Err(KekFileError::UnsafeFile)
+        Err(KekFileError::UnsafeFile { mode: 0o644, .. })
     ));
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     assert!(FileCheckpointKeys::from_file(&path).is_ok());

@@ -1,0 +1,16 @@
+# Opt in with -f docker/compose.checkpoint-kek.yml. Local key-encryption-key file for checkpoint
+# sealing (CRAWLX_CHECKPOINT_KEK_FILE), for deployments without a cloud KMS. The operator supplies
+# the file (`<key-id>:<64 hex>` per line, first line primary); nothing is generated or stored here.
+# The file must be owned by worker UID 10001 with mode 0400 (compose file secrets keep host bits).
+# The checkpoint key provider is exactly one of the file or CRAWLX_CHECKPOINT_KMS_KEY_ID. The base
+# stack passes the latter through from the host; this overlay clears that pass-through, so the
+# worker never sees both (setting both is a startup error).
+services:
+  worker:
+    environment:
+      CRAWLX_CHECKPOINT_KEK_FILE: /run/secrets/checkpoint_kek
+      CRAWLX_CHECKPOINT_KMS_KEY_ID: !reset null
+    secrets: [checkpoint_kek]
+secrets:
+  checkpoint_kek:
+    file: ${CRAWLX_CHECKPOINT_KEK_FILE:?set CRAWLX_CHECKPOINT_KEK_FILE to an operator-provisioned key-encryption-key file}

@@ -177,7 +177,10 @@ capabilities:
 {{- if $c.retainedProfiles.enabled }}
 {{- fail "profile_unavailable: retained browser profiles are unavailable while encrypted artifact custody is enabled; set capabilities.retainedProfiles.enabled=false" }}
 {{- end }}
-{{- if and (or $c.requestIdentity.existingSecret $c.checkpointEncryption.kmsKeyId $c.protocolRegistry.existingSecret $c.deliveryRegistry.existingSecret $c.articleLanguage.existingClaim) (not .root.Values.configCheck.enabled) }}
+{{- if and $c.checkpointEncryption.kmsKeyId $c.checkpointEncryption.kekFileSecret }}
+{{- fail "capabilities.checkpointEncryption.kmsKeyId and capabilities.checkpointEncryption.kekFileSecret are mutually exclusive: set exactly one checkpoint key provider (CRAWLX_CHECKPOINT_KMS_KEY_ID or CRAWLX_CHECKPOINT_KEK_FILE)" }}
+{{- end }}
+{{- if and (or $c.requestIdentity.existingSecret $c.checkpointEncryption.kmsKeyId $c.checkpointEncryption.kekFileSecret $c.protocolRegistry.existingSecret $c.deliveryRegistry.existingSecret $c.articleLanguage.existingClaim) (not .root.Values.configCheck.enabled) }}
 {{- fail "optional operator capabilities require configCheck.enabled" }}
 {{- end }}
 {{- if $c.requestIdentity.existingSecret }}
@@ -188,6 +191,10 @@ capabilities:
 {{- if $c.checkpointEncryption.kmsKeyId }}
 - name: CRAWLX_CHECKPOINT_KMS_KEY_ID
   value: {{ $c.checkpointEncryption.kmsKeyId | quote }}
+{{- end }}
+{{- if $c.checkpointEncryption.kekFileSecret }}
+- name: CRAWLX_CHECKPOINT_KEK_FILE
+  value: /run/secrets/crawlx-checkpoint-kek/checkpoint_kek
 {{- end }}
 {{- if $c.protocolRegistry.existingSecret }}
 - name: CRAWLX_PROTOCOL_REGISTRY
@@ -237,6 +244,9 @@ capabilities:
 - { name: {{ $kind }}-credentials, mountPath: /run/secrets/crawlx-{{ $kind }}, readOnly: true }
 {{- end }}
 {{- end }}
+{{- if .Values.capabilities.checkpointEncryption.kekFileSecret }}
+- { name: checkpoint-kek, mountPath: /run/secrets/crawlx-checkpoint-kek, readOnly: true }
+{{- end }}
 {{- if .Values.capabilities.articleLanguage.existingClaim }}
 - { name: article-language, mountPath: /opt/crawlx/article-language, readOnly: true }
 {{- end }}
@@ -251,6 +261,13 @@ capabilities:
     secretName: {{ $registry.credentialsSecret | quote }}
     defaultMode: 0440
 {{- end }}
+{{- end }}
+{{- if .Values.capabilities.checkpointEncryption.kekFileSecret }}
+- name: checkpoint-kek
+  secret:
+    secretName: {{ .Values.capabilities.checkpointEncryption.kekFileSecret | quote }}
+    defaultMode: 0440
+    items: [{ key: checkpoint_kek, path: checkpoint_kek, mode: 0440 }]
 {{- end }}
 {{- if .Values.capabilities.articleLanguage.existingClaim }}
 - name: article-language

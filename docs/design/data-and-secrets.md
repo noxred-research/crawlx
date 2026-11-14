@@ -207,11 +207,19 @@ example `openssl rand -hex 32`). Blank lines and lines starting with `#` are ign
 The **first** key is the primary: every new checkpoint is wrapped with it. Every listed key can still
 unwrap checkpoints that name it. The wrapped data key records its key id, so no other state is needed.
 
-**Protection.** The file must be a regular file that no group or other user can access (mode `0600`
-or `0400`); a Kubernetes secret volume needs `defaultMode: 0400`. Symlinks are followed. The check
-runs on the opened descriptor. Nothing generates a key: a missing, unreadable, empty, oversized or
-malformed file, a repeated key id, a key that is not exactly 32 bytes, a group- or world-accessible
-mode, or a checkpoint that names a key id the file no longer lists all fail closed with an error
+**Protection.** The file must be a regular file in one of two shapes:
+
+| Mode | Also required |
+|---|---|
+| `0600` or `0400` (owner only) | nothing |
+| `0440` (read for owner and group, nothing else) | the file's group is the process's effective or a supplementary group, and its owner is the process user or root |
+
+The second shape is a Kubernetes secret volume under `fsGroup`: the kubelet writes the file as root and
+adds group read, so the Helm chart mounts it with `defaultMode: 0440`. Any other bit (`0640`, `0444`, group write or execute) and a foreign group are refused; the error names the actual mode and gid.
+Symlinks are followed and the target's metadata is judged. The check runs on the opened descriptor.
+Nothing generates a key: a missing, unreadable, empty, oversized or
+malformed file, a repeated key id, a key that is not exactly 32 bytes, a mode or group outside the
+table, or a checkpoint that names a key id the file no longer lists all fail closed with an error
 that never contains key material. Key bytes are zeroized in memory and never logged or serialized.
 Back the file up with the database: losing a key loses every checkpoint wrapped under it.
 

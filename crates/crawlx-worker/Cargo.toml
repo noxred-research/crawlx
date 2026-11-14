@@ -76,6 +76,7 @@ zeroize.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
+crawlx-storage = { path = "../crawlx-storage", features = ["fake-s3"] }
 proptest.workspace = true
 rand.workspace = true
 wiremock.workspace = true
