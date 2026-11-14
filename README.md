@@ -241,7 +241,7 @@ The OpenAPI document is served at `/v1/openapi.json`. Without Compose, run `craw
 [walkthrough](docs/walkthrough.md) and [operations](docs/ops/README.md).
 
 PostgreSQL, MariaDB and SQLite are supported persistent engines for `serve`, `worker` and the operator
-commands; see [storage backends](docs/ops/storage-backends.md). Foreground CLI crawls can also use
+commands; see [storage backends](docs/ops/storage-backends.md), and the [backends guide](docs/ops/backends.md) for object store, Valkey/Redis, search, ClickHouse, Kafka and RabbitMQ and for sharing instances. Foreground CLI crawls can also use
 in-memory local mode, and `crawlx serve` without a database only queues runs in its own process.
 
 ### Tooling interoperability: compatibility API

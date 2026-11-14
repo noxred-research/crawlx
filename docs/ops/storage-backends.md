@@ -16,6 +16,10 @@ postgres, mariadb or sqlite`. The URL is read from `--database-url`, `CRAWLX_DAT
 `crawlx.toml`. Credentials never appear in logs or error text: diagnostics print the scheme, host,
 port and database (or the file path) only.
 
+On PostgreSQL, `database.schema` of `crawlx.toml` places every table and the migration table in
+one named schema (`crawlx migrate` creates it), so several deployments can share a database; it is
+refused for MariaDB and SQLite. See [backends.md](backends.md).
+
 `crawlx migrate` runs the migrator of the selected engine and creates a missing SQLite file. Every
 migration exists once per engine and the three schemas are kept in lock step
 (`ci/lint-migrations.sh`). `serve` migrates on start; `worker`, `crawl --database-url` and the
@@ -149,3 +153,5 @@ MariaDB replication is monitored with the operator's own MariaDB exporter.
 conformance suite and the database-gated tests at a server; SQLite needs nothing. Tests skip when
 a variable is absent. Each test uses its own schema (PostgreSQL) or database (MariaDB) or file
 (SQLite).
+
+Several deployments can share one PostgreSQL server (`database.schema`), one MariaDB server (one database each) or one SQLite directory; see [backends.md](backends.md) for namespacing and for the non-relational families.

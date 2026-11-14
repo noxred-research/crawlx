@@ -189,6 +189,104 @@ async fn fake_s3_backend_contract_and_store_round_trip() {
     assert!(store.blobs().list("").await.unwrap().is_empty());
 }
 
+/// Two deployments (and an unprefixed legacy one) share one bucket: each sees only its own keys,
+/// lists them without the prefix and deletes only what it owns.
+async fn prefix_isolation(endpoint: &str, bucket: &str, access: &str, secret: &str) {
+    let creds =
+        || aws_sdk_s3::config::Credentials::new(access.to_owned(), secret.to_owned(), None, None, "test");
+    let build = |prefix: &str| {
+        let mut cfg = S3Config::new(bucket, "us-east-1")
+            .with_endpoint(endpoint.to_owned())
+            .with_prefix(prefix)
+            .unwrap();
+        cfg.max_attempts = 2;
+        S3Blobs::with_credentials(&cfg, creds()).unwrap()
+    };
+    let crawlx = build("crawlx");
+    let other = build("other/product/");
+    let legacy = build("");
+    crawlx.put("content/a/x", b"crawlx").await.unwrap();
+    other.put("content/a/x", b"other").await.unwrap();
+    assert_eq!(
+        crawlx.get("content/a/x").await.unwrap().as_deref(),
+        Some(&b"crawlx"[..])
+    );
+    assert_eq!(
+        other.get("content/a/x").await.unwrap().as_deref(),
+        Some(&b"other"[..])
+    );
+    assert!(crawlx.exists("content/a/x").await.unwrap());
+    let own: Vec<String> = crawlx
+        .list("content/")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| e.key)
+        .collect();
+    assert_eq!(
+        own,
+        vec!["content/a/x".to_owned()],
+        "keys are listed without the prefix, never another's"
+    );
+    let all: Vec<String> = legacy
+        .list("")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| e.key)
+        .collect();
+    assert!(
+        all.contains(&"crawlx/content/a/x".to_owned())
+            && all.contains(&"other/product/content/a/x".to_owned()),
+        "{all:?}"
+    );
+    assert_eq!(
+        legacy.get("crawlx/content/a/x").await.unwrap().as_deref(),
+        Some(&b"crawlx"[..])
+    );
+    crawlx.delete("content/a/x").await.unwrap();
+    assert!(!crawlx.exists("content/a/x").await.unwrap());
+    assert_eq!(
+        other.get("content/a/x").await.unwrap().as_deref(),
+        Some(&b"other"[..]),
+        "another prefix is untouched"
+    );
+    other.delete("content/a/x").await.unwrap();
+}
+
+#[test]
+fn key_prefixes_are_normalized_and_refused_when_unsafe() {
+    use crawlx_storage::s3::normalize_prefix;
+    assert_eq!(normalize_prefix("").unwrap(), "");
+    assert_eq!(normalize_prefix("crawlx").unwrap(), "crawlx/");
+    assert_eq!(normalize_prefix("a/b/").unwrap(), "a/b/");
+    for bad in ["/abs", "a//b", "a/../b", "./a", "a b", "a*", &"x".repeat(129)] {
+        assert!(normalize_prefix(bad).is_err(), "{bad}");
+    }
+    let from = |value: &str| {
+        let value = value.to_owned();
+        S3Config::from_lookup(&move |name| match name {
+            "CRAWLX_S3_BUCKET" => Some("b".to_owned()),
+            "CRAWLX_S3_PREFIX" => Some(value.clone()),
+            _ => None,
+        })
+    };
+    assert_eq!(from("crawlx").unwrap().prefix, "crawlx/");
+    assert!(from("../x").is_err());
+}
+
+#[tokio::test]
+async fn fake_s3_prefixes_isolate_deployments_sharing_a_bucket() {
+    let server = fake_s3().await;
+    prefix_isolation(
+        server.endpoint(),
+        "artifacts",
+        "test-access-key",
+        "test-secret-key",
+    )
+    .await;
+}
+
 #[tokio::test]
 async fn fake_s3_orphans_are_collected_after_the_grace_period() {
     let fake = fake_s3().await;
@@ -472,6 +570,7 @@ async fn service_contract(endpoint: &str, access: &str, secret: &str) {
         }
     }
     backend_contract(&b).await;
+    prefix_isolation(endpoint, &bucket, access, secret).await;
 
     // SSE-S3 passthrough: a server without a key service accepts AES256 (SSE-S3) requests
     let sse = S3Blobs::with_credentials(&cfg.clone().with_sse(Sse::Aes256), creds()).unwrap();

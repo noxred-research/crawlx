@@ -10,6 +10,20 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ### Added
 
+- Backends guide (`docs/ops/backends.md`): support matrix, per-family namespacing and shared-instance
+  setup.
+  - Delivery destinations for OpenSearch and Elasticsearch (`opensearch`, `elasticsearch`: engine
+    and version detection, a versioned index template, stable document ids), ClickHouse
+    (`clickhouse`: versioned migrations, insert deduplication), Kafka (`kafka`: topic creation,
+    SASL/PLAIN, TLS, keyed records) and RabbitMQ (`amqp`: publisher confirms, mandatory publish,
+    `message_id`). Pure-Rust clients, no native libraries. Kafka is at-least-once: the client has no
+    idempotent producer, so consumers deduplicate on the record key.
+  - Namespacing for shared instances: `database.schema` (PostgreSQL schema, validated, refused for
+    other engines), `CRAWLX_S3_PREFIX` (object-store key prefix) and `CRAWLX_REDIS_KEY_PREFIX`
+    (Valkey/Redis key prefix, default `crawlx:` so existing keys are unchanged), plus the index,
+    database and topic/exchange prefixes of the new destinations. `crawlx config check` validates them.
+  - `ci/backend-services.sh` starts throwaway search, analytics and broker containers for the
+    real-service tests.
 - AI-native features, off by default and advisory only (see `docs/ai.md`):
   - A uniform untrusted-content and model-egress policy (`intel.policy`): an operator switch for
     external processing, approved providers per purpose with a retention capability, typed input and

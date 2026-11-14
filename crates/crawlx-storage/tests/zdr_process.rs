@@ -486,6 +486,81 @@ fn redis_child_command(url: &str, tenant: TenantId, run: CrawlRunId, role: &str)
 // Redis capacity is deployment-global. Keep this executable's Redis scenarios serial.
 static REDIS_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// Two key prefixes on one instance: neither sees, counts, purges or expires the other's pages.
+#[tokio::test]
+async fn redis_key_prefixes_isolate_deployments_sharing_an_instance() {
+    let Ok(url) = std::env::var(REDIS_ENV) else {
+        eprintln!("skipped: CRAWLX_TEST_ZDR_REDIS_URL is not set");
+        return;
+    };
+    let _guard = REDIS_LOCK.lock().await;
+    let clock = clock();
+    let unique = CrawlRunId::new().0.simple().to_string();
+    let (prefix_a, prefix_b) = (format!("t{unique}a"), format!("t{unique}b"));
+    let a = DeliveryBuffer::open_redis_prefixed(&url, clock.clone(), limits(8, 64), &prefix_a)
+        .await
+        .unwrap();
+    let b = DeliveryBuffer::open_redis_prefixed(&url, clock.clone(), limits(8, 64), &prefix_b)
+        .await
+        .unwrap();
+    assert!(
+        DeliveryBuffer::open_redis_prefixed(&url, clock.clone(), limits(8, 64), "bad{tag}")
+            .await
+            .is_err()
+    );
+    let (tenant, run) = (TenantId::new(), CrawlRunId::new());
+    let artifact = insert(&a, tenant, run, 1).await;
+    assert_eq!(a.list(tenant, run).await.unwrap().len(), 1);
+    assert!(
+        b.list(tenant, run).await.unwrap().is_empty(),
+        "the other prefix does not see the page"
+    );
+    assert!(b.read(&artifact).await.unwrap().is_none());
+    // the same capacity is not shared: B can fill its own limits
+    for page in 1..=8 {
+        insert(&b, tenant, run, page).await;
+    }
+    assert_eq!(
+        a.list(tenant, run).await.unwrap().len(),
+        1,
+        "B's pages never evict A's"
+    );
+    assert_eq!(b.purge_run(tenant, run).await.unwrap(), 8);
+    assert_eq!(
+        a.list(tenant, run).await.unwrap().len(),
+        1,
+        "B's purge never touches A"
+    );
+    assert_eq!(a.purge_run(tenant, run).await.unwrap(), 1);
+    // only keys under each prefix existed, and none is left
+    let mut connection = redis::Client::open(url.as_str())
+        .unwrap()
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    for prefix in [&prefix_a, &prefix_b] {
+        let mut cursor = 0_u64;
+        let mut left = 0usize;
+        loop {
+            let (next, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(format!("{prefix}:zdr:*"))
+                .arg("COUNT")
+                .arg(100)
+                .query_async(&mut connection)
+                .await
+                .unwrap();
+            left += keys.iter().filter(|k| k.contains(":page:")).count();
+            cursor = next;
+            if cursor == 0 {
+                break;
+            }
+        }
+        assert_eq!(left, 0, "page keys of {prefix} remain");
+    }
+}
+
 #[tokio::test]
 async fn redis_process_exchange_ack_expiry_and_crash_preserve_tenant_boundaries() {
     let Ok(url) = std::env::var(REDIS_ENV) else {

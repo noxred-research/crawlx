@@ -278,6 +278,8 @@ impl ArtifactKeyEnvelope {
 pub struct SecretAuthority<B: Sql> {
     store: Store<B>,
     connection: Option<redis::aio::MultiplexedConnection>,
+    /// Redis key prefix of this deployment (`<prefix>secrets:{tenant:run}`).
+    key_prefix: String,
     ttl: Duration,
     hard_max: Duration,
 }
@@ -699,6 +701,23 @@ impl<B: Sql> SecretAuthority<B> {
         ttl: Duration,
         hard_max: Duration,
     ) -> Result<Self, StoreError> {
+        let prefix = crate::redis_namespace::key_prefix_from_env()?;
+        Self::open_with_policy_prefixed(store, url, ttl, hard_max, &prefix).await
+    }
+
+    /// As [`Self::open_with_policy`] under an explicit Redis key prefix
+    /// ([`crate::redis_namespace::normalize_key_prefix`]).
+    ///
+    /// # Errors
+    /// As [`Self::open_with_policy`], and [`StoreError::Conflict`] for an invalid prefix.
+    pub async fn open_with_policy_prefixed(
+        store: Store<B>,
+        url: &str,
+        ttl: Duration,
+        hard_max: Duration,
+        key_prefix: &str,
+    ) -> Result<Self, StoreError> {
+        let key_prefix = crate::redis_namespace::normalize_key_prefix(key_prefix)?;
         if ttl.as_millis() <= 2000 || ttl > MAX_AUTHORITY_TTL || hard_max.as_millis() <= 2000 {
             return Err(denied(
                 "secret authority use window must exceed two seconds and be at most 24 hours",
@@ -717,6 +736,7 @@ impl<B: Sql> SecretAuthority<B> {
         let authority = Self {
             store,
             connection: Some(connection),
+            key_prefix,
             ttl,
             hard_max,
         };
@@ -732,6 +752,7 @@ impl<B: Sql> SecretAuthority<B> {
         Self {
             store,
             connection: None,
+            key_prefix: String::new(),
             ttl: Duration::ZERO,
             hard_max: Duration::ZERO,
         }
@@ -842,7 +863,10 @@ impl<B: Sql> SecretAuthority<B> {
         self.validate_volatile().await?;
         let mut connection = self.connection()?;
         let response: Vec<String> = redis::Script::new(SCRIPT)
-            .key(format!("crawlx:secrets:{{{}:{}}}", row.tenant, row.run))
+            .key(format!(
+                "{}secrets:{{{}:{}}}",
+                self.key_prefix, row.tenant, row.run
+            ))
             .arg(action)
             .arg(row.incarnation.to_string())
             .arg(expected)

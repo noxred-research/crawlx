@@ -614,16 +614,16 @@ async fn governed_clients_are_admitted_up_front_and_bound_every_call() {
     let client = gov
         .client("t", "scope", Purpose::RunSummary, RetentionClass::Standard)
         .unwrap();
-    let secret = "cxcanary-0a1b2c3d4e5f6071";
-    assert!(crawlx_core::secret::register_secret(secret));
+    let canary = "cxcanary-0a1b2c3d4e5f6071";
+    assert!(crawlx_core::secret::register_secret(canary));
     client
-        .complete("system", &format!("user {secret}"), None)
+        .complete("system", &format!("user {canary}"), None)
         .await
         .unwrap();
     client.complete("system", "second", None).await.unwrap();
     let err = client.complete("system", "third", None).await.unwrap_err();
     assert!(matches!(err, LlmError::InvalidRequest(_)), "{err:?}");
-    assert!(llm.calls().iter().all(|c| !c.user.contains(secret)));
+    assert!(llm.calls().iter().all(|c| !c.user.contains(canary)));
     assert_eq!(client.take_records().len(), 2);
     assert!(client.take_records().is_empty());
 }

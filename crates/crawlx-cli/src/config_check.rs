@@ -93,6 +93,8 @@ const PASSTHROUGH_ENV: &[&str] = &[
     "CRAWLX_S3_ALLOW_HTTP",
     "CRAWLX_S3_ALLOW_KMS",
     "CRAWLX_S3_KMS_KEY_ID",
+    "CRAWLX_S3_PREFIX",
+    "CRAWLX_REDIS_KEY_PREFIX",
     "CRAWLX_MODEL_BUNDLE",
     "CRAWLX_PARITY_VECTORS",
     "CRAWLX_MODEL_BUNDLE_URL",
@@ -223,6 +225,11 @@ Database {
     pool_max: u32 = 32,
     /// Session statement timeout.
     statement_timeout_ms: u64 = 5000,
+    /// PostgreSQL schema that holds every CrawlX table and its migration table; created on
+    /// `crawlx migrate`. Lets several products or deployments share one server. Unset keeps the
+    /// role's default search path. PostgreSQL only: MariaDB takes its database from the URL path
+    /// and SQLite uses one file per deployment.
+    schema: Option<String> = None,
 });
 
 section!(/// `[object_store]`.
@@ -987,6 +994,18 @@ pub fn validate(loaded: &Loaded) -> (Vec<Finding>, Vec<SecretStatus>) {
     if c.database.pool_max == 0 {
         f.push(finding("database.pool_max", "must be at least 1", true));
     }
+    if let Some(schema) = &c.database.schema {
+        let valid = !schema.is_empty()
+            && schema.len() <= 63
+            && schema.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+        if !valid {
+            f.push(finding(
+                "database.schema",
+                "must be 1 to 63 ASCII letters, digits or underscores",
+                true,
+            ));
+        }
+    }
     if c.worker.max_sessions == 0 || c.worker.max_sessions > 64 {
         f.push(finding("worker.max_sessions", "must be in 1..=64", true));
     }
@@ -1311,6 +1330,20 @@ async fn validate_artifact_custody(loaded: &Loaded, findings: &mut Vec<Finding>)
     }
 }
 
+/// The Valkey/Redis key prefix that separates deployments on a shared instance must be a valid
+/// prefix; the runtime would otherwise refuse to open the registry.
+fn validate_redis_key_prefix(loaded: &Loaded, findings: &mut Vec<Finding>) {
+    if let Some(prefix) = loaded
+        .passthrough
+        .get("CRAWLX_REDIS_KEY_PREFIX")
+        .filter(|v| !v.trim().is_empty())
+    {
+        if let Err(error) = crawlx_storage::redis_namespace::normalize_key_prefix(prefix) {
+            findings.push(finding("CRAWLX_REDIS_KEY_PREFIX", error.to_string(), true));
+        }
+    }
+}
+
 /// Object-store settings of `serve` and `worker`: when `CRAWLX_S3_BUCKET` names a bucket the
 /// profile and every `CRAWLX_S3_*` setting must parse, exactly as the runtime reads them.
 fn validate_object_store(loaded: &Loaded, findings: &mut Vec<Finding>) {
@@ -1349,6 +1382,18 @@ fn validate_database_url(loaded: &Loaded, findings: &mut Vec<Finding>) {
             return;
         }
     };
+    if parsed.kind() != crawlx_storage::BackendKind::Postgres {
+        if let Some(schema) = &loaded.config.database.schema {
+            findings.push(finding(
+                "database.schema",
+                format!(
+                    "database.schema is {schema:?} but only postgres has schemas; for mariadb name the \
+                     database in the URL, for sqlite use one file per deployment"
+                ),
+                true,
+            ));
+        }
+    }
     if parsed.kind() != crawlx_storage::BackendKind::Sqlite {
         return;
     }
@@ -1665,6 +1710,7 @@ async fn check(args: &ConfigCheckArgs, out: &mut dyn Write) -> anyhow::Result<Ex
     }
     validate_database_url(&loaded, &mut findings);
     validate_object_store(&loaded, &mut findings);
+    validate_redis_key_prefix(&loaded, &mut findings);
     validate_artifact_custody(&loaded, &mut findings).await;
     validate_checkpoint_keys(&loaded, &mut findings).await;
     validate_article_language_bundle(&loaded, &mut findings).await;
@@ -1827,9 +1873,26 @@ pub fn store_config(url: Option<&str>) -> anyhow::Result<crawlx_storage::StoreCo
             database.statement_timeout_ms
         );
     }
+    if let Some(schema) = &database.schema {
+        let engine = match url {
+            Some(url) => Some(
+                crawlx_storage::DatabaseUrl::parse(url)
+                    .map_err(|refusal| anyhow::anyhow!("{refusal}"))?
+                    .kind(),
+            ),
+            None => None,
+        };
+        if engine.is_some_and(|kind| kind != crawlx_storage::BackendKind::Postgres) {
+            bail!(
+                "database.schema is {schema:?} but only postgres has schemas; for mariadb name the \
+                 database in the URL, for sqlite use one file per deployment"
+            );
+        }
+    }
     Ok(crawlx_storage::StoreConfig {
         max_connections: database.pool_max,
         statement_timeout: (!sqlite).then(|| std::time::Duration::from_millis(database.statement_timeout_ms)),
+        schema: database.schema.clone(),
         ..crawlx_storage::StoreConfig::default()
     })
 }

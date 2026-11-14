@@ -110,6 +110,7 @@ pub mod leases;
 pub mod memory;
 pub mod origin;
 pub mod profiles;
+pub mod redis_namespace;
 pub mod report_history;
 mod repos;
 pub mod retention;

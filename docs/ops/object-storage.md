@@ -89,6 +89,7 @@ Notes on the rows:
 | `CRAWLX_S3_ALLOW_HTTP` | Opt in to plain `http` to any host |
 | `CRAWLX_S3_CHECKSUM` | `when_required` (default) or `when_supported` |
 | `CRAWLX_S3_OBJECT_LOCK` | The bucket is under object lock (WORM) |
+| `CRAWLX_S3_PREFIX` | Key prefix that confines this deployment inside a shared bucket (`crawlx/` or `a/b`); empty (the default) keeps the legacy layout. See [backends.md](backends.md) |
 
 Blank values count as unset; any other unrecognized value is an error that names the variable.
 Credentials are not part of this configuration: the SDK reads its standard environment

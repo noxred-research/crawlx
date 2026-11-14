@@ -38,6 +38,7 @@ aws-sdk-secretsmanager.workspace = true
 aws-smithy-http-client.workspace = true
 base32.workspace = true
 base64.workspace = true
+blake3.workspace = true
 bytes.workspace = true
 bzip2 = "0.6"
 chrono.workspace = true
@@ -47,11 +48,14 @@ http.workspace = true
 hmac.workspace = true
 ipnet.workspace = true
 image.workspace = true
+lapin.workspace = true
 lzma-rust2 = { version = "=0.25.0", default-features = false, features = ["std", "encoder", "xz"] }
 parking_lot.workspace = true
 rand.workspace = true
 regex.workspace = true
 reqwest.workspace = true
+rskafka.workspace = true
+rustls.workspace = true
 scraper.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -67,6 +71,7 @@ tokio-metrics = { version = "0.5.2", optional = true }
 tracing.workspace = true
 url.workspace = true
 uuid.workspace = true
+webpki-roots.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]

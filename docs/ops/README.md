@@ -11,6 +11,7 @@ production qualification is in progress; see the [README](../../README.md#releas
 | [`release-gates.md`](release-gates.md) | The release-gate checklist computed by CI from evidence files (`release-gate check`), its items, thresholds, evidence layout and waivers |
 | [`flaky-tests.md`](flaky-tests.md) | Flake handling: one classifying rerun, quarantine to the nightly suite after 3 events in 14 days, the 30-day flake rate and the `flake-report` tool |
 | [`storage-backends.md`](storage-backends.md) | Database engines (PostgreSQL, MariaDB, SQLite): URLs, what each provides, pool size and statement timeout, startup refusals, Compose overlays, chart values |
+| [`backends.md`](backends.md) | Backend support matrix (relational, object store, Valkey/Redis, search, ClickHouse, Kafka, RabbitMQ), namespacing on shared instances and the new delivery destination kinds |
 | [`object-storage.md`](object-storage.md) | Filesystem and S3-compatible store profiles, credentials, admission and deployment checks |
 | This file | Provisioning, validation and rotation of the optional operator capabilities (request-identity key, protocol and delivery registries, language bundle) |
 

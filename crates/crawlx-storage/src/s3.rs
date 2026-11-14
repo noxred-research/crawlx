@@ -98,6 +98,9 @@ pub enum S3ConfigError {
     /// The signing region is blank.
     #[error("s3 region must not be empty")]
     RegionEmpty,
+    /// `CRAWLX_S3_PREFIX` is not a safe key prefix.
+    #[error("CRAWLX_S3_PREFIX {0:?} is invalid: use at most 128 characters of letters, digits and . _ - /, no leading slash, no empty or dot segments")]
+    PrefixInvalid(String),
     /// The profile does not support the requested server-side encryption.
     #[error("the {profile} s3 profile does not support server-side encryption {sse}")]
     SseRefused {
@@ -398,6 +401,37 @@ pub struct S3Config {
     pub max_attempts: u32,
     /// Per-attempt timeout.
     pub attempt_timeout: Duration,
+    /// Key prefix every object of this deployment lives under (`CRAWLX_S3_PREFIX`), empty or
+    /// ending in `/`. Several products or deployments can share one bucket by choosing
+    /// different prefixes; CrawlX never lists, reads or deletes outside its own.
+    pub prefix: String,
+}
+
+/// Normalize and check an object key prefix: empty, or `a/b/` form.
+///
+/// # Errors
+/// [`S3ConfigError::PrefixInvalid`] for a leading slash, an empty, `.` or `..` segment, a
+/// character outside `[A-Za-z0-9._-]` or more than 128 characters.
+pub fn normalize_prefix(prefix: &str) -> Result<String, S3ConfigError> {
+    let trimmed = prefix.trim();
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    let body = trimmed.strip_suffix('/').unwrap_or(trimmed);
+    let ok = body.len() <= 128
+        && body.split('/').all(|segment| {
+            !segment.is_empty()
+                && segment != "."
+                && segment != ".."
+                && segment
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        });
+    if ok {
+        Ok(format!("{body}/"))
+    } else {
+        Err(S3ConfigError::PrefixInvalid(trimmed.to_owned()))
+    }
 }
 
 impl S3Config {
@@ -426,7 +460,17 @@ impl S3Config {
             allow_kms: false,
             max_attempts: 3,
             attempt_timeout: Duration::from_secs(30),
+            prefix: String::new(),
         }
+    }
+
+    /// Keep every object under `prefix` (see [`S3Config::prefix`]).
+    ///
+    /// # Errors
+    /// [`S3ConfigError::PrefixInvalid`].
+    pub fn with_prefix(mut self, prefix: &str) -> Result<Self, S3ConfigError> {
+        self.prefix = normalize_prefix(prefix)?;
+        Ok(self)
     }
 
     /// Settings from the process environment; see [`S3Config::from_lookup`].
@@ -486,6 +530,9 @@ impl S3Config {
             cfg.region = region;
         }
         cfg.endpoint = non_blank(get, "CRAWLX_S3_ENDPOINT");
+        if let Some(prefix) = non_blank(get, "CRAWLX_S3_PREFIX") {
+            cfg.prefix = normalize_prefix(&prefix)?;
+        }
         if let Some(value) = non_blank(get, "CRAWLX_S3_PATH_STYLE") {
             cfg.path_style = parse_bool("CRAWLX_S3_PATH_STYLE", &value)?;
         }
@@ -560,6 +607,9 @@ impl S3Config {
         }
         if self.region.trim().is_empty() {
             return Err(S3ConfigError::RegionEmpty);
+        }
+        if normalize_prefix(&self.prefix)? != self.prefix {
+            return Err(S3ConfigError::PrefixInvalid(self.prefix.clone()));
         }
         if let Some(sse) = &self.sse {
             let supported = match sse {
@@ -683,6 +733,7 @@ pub struct S3Blobs {
     sse: Option<Sse>,
     profile: S3Profile,
     object_lock: bool,
+    prefix: String,
 }
 
 impl S3Blobs {
@@ -748,6 +799,7 @@ impl S3Blobs {
             sse: config.sse.clone(),
             profile: config.profile,
             object_lock: config.object_lock,
+            prefix: config.prefix.clone(),
         })
     }
 
@@ -755,6 +807,11 @@ impl S3Blobs {
     #[must_use]
     pub const fn client(&self) -> &Client {
         &self.client
+    }
+
+    /// The object key of the logical `key`: the deployment prefix, then the key.
+    fn full(&self, key: &str) -> String {
+        format!("{}{key}", self.prefix)
     }
 
     /// The profile this backend was built for.
@@ -766,7 +823,7 @@ impl S3Blobs {
     /// A `PutObject` for `key` with the configured encryption and, on an object-lock bucket,
     /// the CRC32 checksum the lock requires.
     fn put_request(&self, key: &str) -> PutObjectFluentBuilder {
-        let mut request = self.client.put_object().bucket(&self.bucket).key(key);
+        let mut request = self.client.put_object().bucket(&self.bucket).key(self.full(key));
         match &self.sse {
             Some(Sse::Aes256) => request = request.server_side_encryption(ServerSideEncryption::Aes256),
             Some(Sse::CloudKms { key_id }) => {
@@ -831,7 +888,7 @@ impl ArtifactBlobs for S3Blobs {
             .client
             .get_object()
             .bucket(&self.bucket)
-            .key(key)
+            .key(self.full(key))
             .send()
             .await
             .map_err(|e| sdk_error("get", key, &e))?;
@@ -876,7 +933,7 @@ impl ArtifactBlobs for S3Blobs {
             .client
             .get_object()
             .bucket(&self.bucket)
-            .key(key)
+            .key(self.full(key))
             .send()
             .await
         {
@@ -897,7 +954,7 @@ impl ArtifactBlobs for S3Blobs {
             .client
             .head_object()
             .bucket(&self.bucket)
-            .key(key)
+            .key(self.full(key))
             .send()
             .await
         {
@@ -911,7 +968,7 @@ impl ArtifactBlobs for S3Blobs {
         self.client
             .delete_object()
             .bucket(&self.bucket)
-            .key(key)
+            .key(self.full(key))
             .send()
             .await
             .map_err(|e| sdk_error("delete", key, &e))?;
@@ -923,14 +980,16 @@ impl ArtifactBlobs for S3Blobs {
             .client
             .list_objects_v2()
             .bucket(&self.bucket)
-            .prefix(prefix)
+            .prefix(self.full(prefix))
             .into_paginator()
             .send();
         let mut out = Vec::new();
         while let Some(page) = pages.next().await {
             let page = page.map_err(|e| sdk_error("list", prefix, &e))?;
             for object in page.contents() {
-                let Some(key) = object.key() else { continue };
+                let Some(key) = object.key().and_then(|k| k.strip_prefix(self.prefix.as_str())) else {
+                    continue;
+                };
                 let Some(modified) = to_timestamp(object.last_modified()) else {
                     return Err(StoreError::Backend(format!(
                         "s3 list {prefix}: object {key} has no last-modified time"
@@ -954,7 +1013,7 @@ impl ArtifactBlobs for S3Blobs {
             .client
             .get_object()
             .bucket(&self.bucket)
-            .key(key)
+            .key(self.full(key))
             .presigned(config)
             .await
             .map_err(|e| sdk_error("presign", key, &e))?;
