@@ -31,6 +31,10 @@ const CRAWL_SLACK: Duration = Duration::from_secs(15);
 /// Wall time within which the exporters must shut down after a crawl against a dead collector.
 const SHUTDOWN_BOUND: Duration = Duration::from_secs(45);
 
+/// Wall-clock limit of a crawl in these tests: far beyond what the finite fixture needs, so a
+/// slow machine cannot end a crawl early.
+const UNREACHABLE_DEADLINE_SECONDS: u32 = 3_600;
+
 /// Names of the SDK's internal error events recorded on any thread, in arrival order.
 static EXPORT_ERRORS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
@@ -116,6 +120,11 @@ async fn crawl_s1() -> Crawl {
     let mut req = crawl_request(&manifest, &gym.base_url, 20_261_019, SafetyProfile::ReadOnly).unwrap();
     req.mode = CrawlMode::Static;
     req.dynamic.enabled = false;
+    // The fixture is finite: the crawl ends when its frontier is exhausted. The shared gym
+    // default of 20 s of wall clock would end a crawl on a slow or loaded machine mid-way, and
+    // the result would then depend on machine speed instead of on the collector. Give the run a
+    // deadline it cannot reach; the callers' own timeouts bound a run that hangs.
+    req.limits.duration_seconds = UNREACHABLE_DEADLINE_SECONDS;
     let dir = tempfile::tempdir().unwrap();
     let mut cfg = worker_config(&manifest, dir.path()).unwrap();
     cfg.gates = crawlx_worker::Gates::from_status(crawlx_core::gates::GateStatus::ALL);
@@ -125,6 +134,14 @@ async fn crawl_s1() -> Crawl {
         .unwrap();
     let elapsed = started.elapsed();
     gym.shutdown().await;
+    // Runs are only comparable when each one ran to the end of the fixture.
+    assert_eq!(
+        format!("{:?}", report.terminal_reason),
+        "Some(FrontierExhausted)",
+        "the s1 crawl stopped before its frontier was exhausted ({:?}); the comparison would not \
+         be between whole crawls",
+        report.counters.urls
+    );
     assert!(
         report.counters.urls.invariants_hold(),
         "{:?}",
