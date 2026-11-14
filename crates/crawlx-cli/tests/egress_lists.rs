@@ -130,7 +130,7 @@ async fn a_blocklisted_address_stops_an_authorized_private_crawl_and_an_unrelate
     let out_ok = dir.path().join("ok");
     let unrelated = write(dir.path(), "other.txt", "takedown.test\n203.0.113.0/24\n");
     let args = local_args(&seed, authz.to_str().unwrap(), out_ok.to_str().unwrap());
-    crawl(&args, &[(BLOCKLIST_FILE, unrelated.to_str().unwrap())])
+    let _exit = crawl(&args, &[(BLOCKLIST_FILE, unrelated.to_str().unwrap())])
         .await
         .unwrap();
     assert!(out_ok.join("report.json").exists());
@@ -167,7 +167,7 @@ async fn a_record_whose_networks_lie_outside_the_deployment_allowlist_is_refused
     let out_ok = dir.path().join("ok");
     let inside = write(dir.path(), "inside.txt", "127.0.0.0/8\n");
     let args = local_args(&seed, authz.to_str().unwrap(), out_ok.to_str().unwrap());
-    crawl(&args, &[(ALLOWLIST_FILE, inside.to_str().unwrap())])
+    let _exit = crawl(&args, &[(ALLOWLIST_FILE, inside.to_str().unwrap())])
         .await
         .unwrap();
     assert!(out_ok.join("report.json").exists());

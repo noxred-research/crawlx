@@ -178,6 +178,10 @@ jobs:
           tar -xzf "$archive" -C "$RUNNER_TEMP/actionlint-bin" actionlint
           echo "$RUNNER_TEMP/actionlint-bin" >> "$GITHUB_PATH"
       - run: actionlint
+      - name: Every job runs on a self-hosted runner and no update bot is configured
+        run: |
+          ci/lint-runners.sh --self-test
+          ci/lint-runners.sh
       - uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
         with:
           version: "1.32.0"
@@ -1221,7 +1225,7 @@ jobs:
 
   # The one check the default-branch ruleset requires. A job skipped by `if:` counts as
   # passed for a required check, so the gated jobs themselves cannot be required: a pull
-  # request the gate refuses (a fork, Dependabot, any non-owner) would look green. This job
+  # request the gate refuses (a fork or any non-owner) would look green. This job
   # always runs and fails unless the gate admitted the event and every merge-blocking job
   # succeeded, so such a pull request stays unmergeable until an owner runs CI on it.
   required:
