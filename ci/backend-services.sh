@@ -3,7 +3,7 @@
 # streams). Every container has a unique name and a loopback-only port, keeps its data in tmpfs and
 # is removed by `down`.
 #
-#   eval "$(ci/backend-services.sh up opensearch elasticsearch clickhouse kafka rabbitmq)"
+#   eval "$(ci/backend-services.sh up opensearch elasticsearch clickhouse kafka rabbitmq rustfs minio)"
 #   cargo test -p crawlx-worker --lib delivery::backends
 #   ci/backend-services.sh down
 #
@@ -25,6 +25,12 @@ ELASTICSEARCH_IMAGE="${CRAWLX_ELASTICSEARCH_IMAGE:-docker.elastic.co/elasticsear
 CLICKHOUSE_IMAGE="${CRAWLX_CLICKHOUSE_IMAGE:-docker.io/clickhouse/clickhouse-server:latest}"
 KAFKA_IMAGE="${CRAWLX_KAFKA_IMAGE:-docker.io/apache/kafka:latest}"
 RABBITMQ_IMAGE="${CRAWLX_RABBITMQ_IMAGE:-docker.io/library/rabbitmq:4-management}"
+# Self-hosted S3 servers. Upstream MinIO images are no longer published, so the MinIO-compatible
+# build is the legacy repackaged image; RustFS is pinned by digest.
+RUSTFS_IMAGE="${CRAWLX_RUSTFS_IMAGE:-docker.io/rustfs/rustfs@sha256:b81d16a90ee25bd9511280127ca1471788c6e874cf0f0da759645f46b2dc1d74}"
+MINIO_IMAGE="${CRAWLX_MINIO_IMAGE:-docker.io/bitnamilegacy/minio:latest}"
+S3_USER=crawlx
+S3_PASSWORD=crawlx-secret
 
 log() { echo "backend-services: $*" >&2; }
 
@@ -103,8 +109,20 @@ up() {
         echo "export CRAWLX_TEST_AMQP_PASSWORD=crawlx-test-only"
         echo "export CRAWLX_TEST_AMQP_MANAGEMENT=http://127.0.0.1:$management"
         ;;
+      rustfs)
+        start rustfs -p "127.0.0.1:$port:9000" --tmpfs /data:rw,size=1g,mode=1777 \
+          -e RUSTFS_ACCESS_KEY="$S3_USER" -e RUSTFS_SECRET_KEY="$S3_PASSWORD" "$RUSTFS_IMAGE"
+        wait_http "http://127.0.0.1:$port/health" 60
+        echo "export CRAWLX_TEST_RUSTFS_ENDPOINT=http://127.0.0.1:$port"
+        ;;
+      minio)
+        start minio -p "127.0.0.1:$port:9000" --tmpfs /bitnami/minio/data:rw,size=1g,mode=1777 \
+          -e MINIO_ROOT_USER="$S3_USER" -e MINIO_ROOT_PASSWORD="$S3_PASSWORD" "$MINIO_IMAGE"
+        wait_http "http://127.0.0.1:$port/minio/health/ready" 60
+        echo "export CRAWLX_TEST_MINIO_ENDPOINT=http://127.0.0.1:$port"
+        ;;
       *)
-        log "unknown service $service (opensearch, elasticsearch, clickhouse, kafka, rabbitmq)"
+        log "unknown service $service (opensearch, elasticsearch, clickhouse, kafka, rabbitmq, rustfs, minio)"
         return 2
         ;;
     esac

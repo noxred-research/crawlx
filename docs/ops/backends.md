@@ -14,7 +14,7 @@ cannot honor is refused when it is loaded.
 | Family | Engines | What CrawlX stores there | Namespace | Setting |
 |---|---|---|---|---|
 | Relational (system of record) | SQLite, PostgreSQL, MariaDB | runs, frontier, pages, journal, datasets, audit chain, catalogs | PostgreSQL schema; MariaDB database; SQLite file | `database.url_file`, `database.schema` ([storage backends](storage-backends.md)) |
-| Object store | S3 API: profile `standard` (the original S3 service), `edge` (an edge object store with an S3 API), `self-hosted` (MinIO and similar), `compatible` (any other S3 API) | artifacts, archives, exports, audit objects | bucket plus key prefix | `CRAWLX_S3_*` ([object storage](object-storage.md)), `CRAWLX_S3_PREFIX` |
+| Object store | S3 API: profile `standard` (the original S3 service), `edge` (an edge object store with an S3 API), `self-hosted` (RustFS and MinIO, both verified; similar servers), `compatible` (any other S3 API) | artifacts, archives, exports, audit objects | bucket plus key prefix | `CRAWLX_S3_*` ([object storage](object-storage.md)), `CRAWLX_S3_PREFIX` |
 | Cache and coordination | Valkey, Redis | secret registry (volatile run secrets), zero-data-retention delivery buffer | key prefix, database index in the URL | `CRAWLX_SECRET_REDIS_URL`, `CRAWLX_ZDR_REDIS_URL`, `CRAWLX_REDIS_KEY_PREFIX` |
 | Search | OpenSearch, Elasticsearch | one document per delivered feed batch (search projections of crawled content) | index prefix | delivery registry kinds `opensearch`, `elasticsearch` |
 | Analytics | ClickHouse | one row per delivered feed batch (the serialized feed content) | database | delivery registry kind `clickhouse` |
@@ -127,10 +127,18 @@ instance and assert they do not see each other. The search, ClickHouse, Kafka an
 run against real services in throwaway containers:
 
 ```sh
-eval "$(ci/backend-services.sh up opensearch elasticsearch clickhouse kafka rabbitmq)"
+eval "$(ci/backend-services.sh up opensearch elasticsearch clickhouse kafka rabbitmq rustfs minio)"
 cargo test -p crawlx-worker --lib delivery::backends
+CRAWLX_TEST_S3_ENDPOINT="$CRAWLX_TEST_RUSTFS_ENDPOINT" cargo test -p crawlx-storage --test s3
+CRAWLX_TEST_S3_ENDPOINT="$CRAWLX_TEST_MINIO_ENDPOINT" cargo test -p crawlx-storage --test s3
 ci/backend-services.sh down
 ```
+
+The object-store contract (path-style addressing, put, get, ranged read, list pagination, delete,
+presigned reads, and prefix isolation between two deployments in one bucket) runs against the
+`self-hosted` profile on **RustFS** (image pinned by digest in `ci/backend-services.sh`) and on a
+**MinIO**-compatible server (the upstream MinIO images are no longer published, so the legacy
+repackaged image is used).
 
 `ci/backend-services.sh` starts each service with a unique container name, a loopback-only port
 and its data in tmpfs, and removes it on `down`. Without the `CRAWLX_TEST_*` variables the service

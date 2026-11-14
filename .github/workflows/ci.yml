@@ -383,7 +383,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Start the search, analytics and broker containers
         run: |
-          ci/backend-services.sh up opensearch elasticsearch clickhouse kafka rabbitmq > "$RUNNER_TEMP/backend.env"
+          ci/backend-services.sh up opensearch elasticsearch clickhouse kafka rabbitmq rustfs minio > "$RUNNER_TEMP/backend.env"
           sed 's/^export //' "$RUNNER_TEMP/backend.env" >> "$GITHUB_ENV"
       - name: Destination tests (search, ClickHouse, Kafka, RabbitMQ)
         run: cargo test -p crawlx-worker --lib delivery::backends
@@ -392,6 +392,10 @@ jobs:
           cargo test -p crawlx-storage --test pg_schemas
           cargo test -p crawlx-storage --test zdr_process -- redis_key_prefixes
           cargo test -p crawlx-storage --test s3 -- prefix
+      - name: Self-hosted object store contract (RustFS and MinIO-compatible)
+        run: |
+          CRAWLX_TEST_S3_ENDPOINT="$CRAWLX_TEST_RUSTFS_ENDPOINT" cargo test -p crawlx-storage --test s3 service_endpoint_backend_contract
+          CRAWLX_TEST_S3_ENDPOINT="$CRAWLX_TEST_MINIO_ENDPOINT" cargo test -p crawlx-storage --test s3 service_endpoint_backend_contract
       - name: Remove the containers
         if: always()
         run: |

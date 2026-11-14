@@ -35,7 +35,7 @@ Configure the same profile, endpoint and bucket when reading or cleaning those o
 
 | | `standard` | `compatible` | `edge` | `self-hosted` |
 |---|---|---|---|---|
-| Service | The original hosted service | Any other S3-compatible service | Edge-hosted service with an account-scoped endpoint | Server you run yourself |
+| Service | The original hosted service | Any other S3-compatible service | Edge-hosted service with an account-scoped endpoint | Server you run yourself; verified against RustFS and MinIO |
 | `CRAWLX_S3_ENDPOINT` | Optional (regional endpoint when unset) | **Required** | **Required**, https | **Required** |
 | Default region | `us-east-1` | `us-east-1` | `auto` | `us-east-1` |
 | Default addressing | Virtual-hosted (`bucket.host/key`) | Path-style (`host/bucket/key`) | Path-style | Path-style |
