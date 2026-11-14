@@ -423,9 +423,9 @@ Build explicit ONNX-capable binaries/images; the feature stays off by default:
 cargo build --locked --release -p crawlx-cli --bin crawlx --features onnx
 export CRAWLX_REGISTRY=registry.example.com/crawlx   # your own registry; no images are published
 docker build -f docker/Dockerfile.api --build-arg CRAWLX_CARGO_FEATURES=onnx \
-  -t "$CRAWLX_REGISTRY/crawlx-api:v0.1.0-onnx" .
+  -t "$CRAWLX_REGISTRY/crawlx-api:v0.2.0-onnx" .
 docker build -f docker/Dockerfile.worker --build-arg CRAWLX_CARGO_FEATURES=onnx \
-  -t "$CRAWLX_REGISTRY/crawlx-worker:v0.1.0-onnx-chromium155.0.8059.84" .
+  -t "$CRAWLX_REGISTRY/crawlx-worker:v0.2.0-onnx-chromium155.0.8059.84" .
 ```
 
 Use approved, immutable copies of the six resources named and SHA-256-pinned by
@@ -473,7 +473,7 @@ selected. Existing directories are required; missing paths are never created:
 ```sh
 export CRAWLX_ARTICLE_LANGUAGE_BUNDLE=/secure/approved/lid176-onnx-v1
 export CRAWLX_ONNX_RUNTIME_DIR=/secure/approved/onnxruntime
-export CRAWLX_TAG=v0.1.0-onnx
+export CRAWLX_TAG=v0.2.0-onnx
 docker compose -f docker/docker-compose.yml -f docker/compose.article-language.yml build
 docker compose -f docker/docker-compose.yml -f docker/compose.article-language.yml config --quiet
 docker compose -f docker/docker-compose.yml -f docker/compose.article-language.yml \
@@ -497,7 +497,7 @@ pods, including separate nodes where applicable. Set:
 
 ```sh
 helm template crawlx deploy/helm/crawlx --namespace crawlx \
-  --set image.tag=v0.1.0-onnx \
+  --set image.tag=v0.2.0-onnx \
   --set capabilities.articleLanguage.existingClaim=crawlx-article-language-v1 \
   --set capabilities.articleLanguage.runtimeLibrary=/opt/crawlx/article-language/runtime/libonnxruntime.so
 ```

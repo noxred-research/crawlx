@@ -33,7 +33,7 @@ services:
   db-init:
     # The `dbdata` volume is root-owned when new, and the images ship different uids: give the
     # directory to uid 10001, which `api` and `worker` run as (the same step as `artifacts-init`).
-    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-worker:${CRAWLX_TAG:-v0.1.0}-chromium${CRAWLX_CHROMIUM_VERSION:-155.0.8059.84}
+    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-worker:${CRAWLX_TAG:-v0.2.0}-chromium${CRAWLX_CHROMIUM_VERSION:-155.0.8059.84}
     build:
       context: ..
       dockerfile: docker/Dockerfile.worker

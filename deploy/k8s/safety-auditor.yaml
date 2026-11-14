@@ -28,7 +28,7 @@ spec:
             seccompProfile: { type: RuntimeDefault }
           containers:
             - name: safety-audit
-              image: ghcr.io/noxred-research/crawlx-api:v0.1.0
+              image: ghcr.io/noxred-research/crawlx-api:v0.2.0
               imagePullPolicy: IfNotPresent
               args: ["admin", "safety-audit", "--json"]
               env:

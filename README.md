@@ -9,9 +9,9 @@
 
 Map the real attack surface of modern web applications, on systems you own or are explicitly authorized to test.
 
-[![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](LICENSE) [![CI](https://github.com/noxred-research/crawlx/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/noxred-research/crawlx/actions/workflows/ci.yml) [![Version 0.1.0](https://img.shields.io/badge/version-0.1.0-informational)](CHANGELOG.md) [![Rust 1.97.1](https://img.shields.io/badge/rust-1.97.1-orange?logo=rust)](rust-toolchain.toml) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md) [![Security policy](https://img.shields.io/badge/security-policy-informational?logo=github)](SECURITY.md)
+[![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](LICENSE) [![CI](https://github.com/noxred-research/crawlx/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/noxred-research/crawlx/actions/workflows/ci.yml) [![Version 0.2.0](https://img.shields.io/badge/version-0.2.0-informational)](CHANGELOG.md) [![Rust 1.97.1](https://img.shields.io/badge/rust-1.97.1-orange?logo=rust)](rust-toolchain.toml) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md) [![Security policy](https://img.shields.io/badge/security-policy-informational?logo=github)](SECURITY.md)
 
-[Why CrawlX](#why-crawlx) · [Features](#features) · [Install](#install) · [Quick start](#quick-start) · [Output](#output) · [How it works](#how-it-works) · [CLI](#command-line-overview) · [Responsible use](#responsible-use) · [Security](#security) · [Docs](docs/README.md)
+[Why CrawlX](#why-crawlx) · [Features](#features) · [Install](#install) · [Quick start](#quick-start) · [Output](#output) · [How it works](#how-it-works) · [CLI](#command-line-overview) · [Integrations](#integrations) · [Responsible use](#responsible-use) · [Security](#security) · [Docs](#documentation)
 
 </div>
 
@@ -78,11 +78,11 @@ Details: [safety model](docs/design/safety-model.md) · [SECURITY.md](SECURITY.m
 
 <a id="release-status"></a>
 
-> **Status:** pre-1.0 (0.1.0). Production qualification is in progress. Do not deploy this checkout as a
+> **Status:** pre-1.0 (0.2.0). Production qualification is in progress. Do not deploy this checkout as a
 > public service or use it for sensitive authenticated sessions. The first distribution is this
-> repository and tagged source releases; no binaries, images or crates.io packages are published.
-> Release-specific limitations are listed in the [changelog](CHANGELOG.md), and open work in the
-> [roadmap](docs/roadmap.md).
+> repository and tagged source releases; no binaries, images or crates.io packages are published. The
+> release-gate checklist has not been measured for 0.2.0. Release-specific limitations are listed in the
+> [changelog](CHANGELOG.md), and open work in the [roadmap](docs/roadmap.md).
 
 ## Features
 
@@ -90,14 +90,15 @@ Details: [safety model](docs/design/safety-model.md) · [SECURITY.md](SECURITY.m
 |---|---|
 | 🎯 **Attack-surface discovery** | Chromium over CDP and accessibility-tree discovery of single-page and script-heavy apps; durable element identity, reversible state clustering and a learned enablement graph show what each action reveals; sitemaps, feeds and known files; URL canonicalization and shape filters keep large sites tractable |
 | 🔎 **Form and endpoint discovery** | Form and input extraction (`--form-extraction`), XHR extraction, JavaScript endpoint mining (regex and AST), technology detection, page-type classification, custom field rules, seeded and reproducible form input |
-| 🧠 **AI/LLM-native** | A constrained LLM planner, a typed-decision service and an ONNX ranker, LLM-assisted form values, LLM-ready Markdown and chunks, an MCP server; models advise and never authorize ([details](#aillm-native-with-a-leash)) |
+| 🧠 **AI/LLM-native** | A constrained LLM planner, a typed-decision service and an ONNX ranker, LLM-assisted form values, natural-language crawl specifications, a plan-first research agent, evidence-backed extraction, surface triage and grounded summaries behind one model-egress policy, LLM-ready Markdown and chunks, and an MCP server with a capability-scoped native surface and an audit log; models advise and never authorize ([details](#aillm-native-with-a-leash)) |
 | 🔑 **Secret detection** | Nine secret kinds found in fetched content (cloud, source-host, chat and payment tokens, JWTs, private keys, generic keys), reported as kind, location and a keyed hash, never the value |
 | 🛡️ **Guardrails** | `read_only` default profile, an independent hard safety kernel, authorization records, robots and scope enforcement, a deny-first SSRF policy, per-origin politeness, an independent safety auditor |
 | 🧾 **Audit and replay** | Intent journal with `unknown`-outcome reconciliation, a recorded safety verdict per action, fenced leases, checkpoints, seed-derived decisions and recorded-path replay |
 | 🔒 **Handling sensitive findings** | Zero-data-retention mode, secret redaction in logs and exports, encrypted artifact custody, tenant row-level security |
 | 📦 **Output** | JSONL, `metadata.json`, `links.json`, `report.json`, Markdown pages, templates, wordlists, bounded WARC/WACZ archives, a REST and SSE API |
 | 🔌 **Interoperability** | A compatibility API (`/compat`) and a short-flag CLI dialect so existing tooling can plug in, plus a chat-completions compatible provider interface |
-| 🚢 **Operations** | PostgreSQL and S3-compatible storage, Docker Compose, Helm chart, Prometheus metrics, OTLP, alert rules, [runbooks](docs/ops/runbooks.md) |
+| 🗄️ **Backends** | PostgreSQL, MariaDB or SQLite storage; object-store profiles (standard, compatible, edge, self-hosted); Valkey/Redis; delivery to OpenSearch, Elasticsearch, ClickHouse, Kafka and RabbitMQ; namespacing so several deployments can share one instance ([backends guide](docs/ops/backends.md)) |
+| 🚢 **Operations** | Docker Compose, Helm chart, Prometheus metrics, OTLP, alert rules, [runbooks](docs/ops/runbooks.md); CI runs on self-hosted runners for code owners only |
 
 ### AI/LLM-native, with a leash
 
@@ -109,9 +110,13 @@ kernel decides.**
 | **LLM-guided planning** | A constrained planner DSL: the model returns a bounded plan (at most 20 steps) of candidate indexes and value references, never free-form selectors or URLs; the plan is validated before use | `--planner-endpoint`, `dynamic.llmPlanner` (`off`, `stalled_only`, `enabled`) |
 | **Typed-decision service and ONNX ranker** | Calibrated, abstaining rankings over a crawler-built shortlist of safe candidate actions; circuit-broken and time-boxed | `--model-endpoint`, `--system1-mode shadow\|advisory` (`advisory` needs a signed gate), `onnx` cargo feature |
 | **LLM-assisted form values** | A chat-completions compatible model proposes values for fields the form filler cannot classify; call-capped (default 100) and recordable for offline replay | `--ai-url`, `--ai-model`, `--ai-record`, `--ai-replay` |
+| **Model-egress policy** | One governor for every model call: external processing is off until an operator enables it, providers are approved per purpose, secrets are projected out of prompts and replies, calls and tokens are budgeted, and the audit row holds digests only | `[intel.policy]` in `crawlx.toml`, `GET /v1/capabilities/ai` |
+| **Natural-language crawl specifications** | A request in plain words is compiled to a native configuration by a deterministic, narrowing-only compiler; an operator approves the diff before a single-use token creates the run | `POST /v1/crawl-specs/validate`, `/compile`, `/approve`, `/create` |
+| **Plan-first research agent** | A plan is validated deterministically, approved by an operator and executed confined to its tools and URLs; deviations are recorded | `POST /v1/agent-plans`, `/execute` |
+| **Evidence-backed extraction, triage and summaries** | Schema extraction with exact byte-span evidence, passive endpoint and vulnerability-surface triage, and run and findings summaries that cite evidence; only an operator review confirms a finding | `POST /v1/crawls/{id}/extractions`, `/triage`, `/summaries` |
 | **Extract, agent and search endpoints** | The compatibility API serves `/extract`, `/agent` and `/search` over a chat-completions compatible provider you configure (and a metasearch JSON API for search) | `CRAWLX_LLM_BASE_URL`, `CRAWLX_LLM_MODEL`, `CRAWLX_SEARCH_ENDPOINT` |
 | **LLM-ready output** | Clean Markdown, structured metadata and optional word-window chunks of extracted text | `extract.content.chunks` |
-| **MCP server** | Exposes crawl, scrape, map, search and extract tools to agent tooling over stdio | `crawlx mcp` |
+| **MCP server** | Exposes crawl, scrape, map, search and extract tools to agent tooling over stdio; the native surface is read-only by default, adds control, create, export, interact, erase and operator capabilities one by one, labels untrusted content and keeps a hash-chained audit log | `crawlx mcp`, `--surface native`, `--audit-log PATH`; scoped keys with `crawlx serve --api-key TENANT=KEY:agent` |
 | **Understanding web apps** | The accessibility tree gives roles, names and states, so elements keep a stable identity across re-renders and layout changes | built in (`--mode dynamic`) |
 
 The guardrails around models are structural. The model crate does not depend on the safety kernel and cannot
@@ -145,7 +150,9 @@ cargo build --release -p crawlx-cli          # binary: target/release/crawlx
 ```
 
 The pinned Rust toolchain (1.97.1, see [`rust-toolchain.toml`](rust-toolchain.toml)) installs through
-`rustup`. Dynamic and hybrid crawls also need the pinned Chromium, below.
+`rustup`. Dynamic and hybrid crawls also need the pinned Chromium, below. To build a release, clone it with
+`git clone --branch v0.2.0 https://github.com/noxred-research/crawlx.git`, and check the archive against
+`SHA256SUMS` as described in [SECURITY.md](SECURITY.md#verifying-a-release).
 
 </details>
 
@@ -241,8 +248,12 @@ The OpenAPI document is served at `/v1/openapi.json`. Without Compose, run `craw
 [walkthrough](docs/walkthrough.md) and [operations](docs/ops/README.md).
 
 PostgreSQL, MariaDB and SQLite are supported persistent engines for `serve`, `worker` and the operator
-commands; see [storage backends](docs/ops/storage-backends.md), and the [backends guide](docs/ops/backends.md) for object store, Valkey/Redis, search, ClickHouse, Kafka and RabbitMQ and for sharing instances. Foreground CLI crawls can also use
-in-memory local mode, and `crawlx serve` without a database only queues runs in its own process.
+commands; see [storage backends](docs/ops/storage-backends.md). The [backends guide](docs/ops/backends.md)
+covers the object store, Valkey/Redis, search, ClickHouse, Kafka and RabbitMQ destinations and how to share
+one instance between deployments: `database.schema` (PostgreSQL schema), `CRAWLX_S3_PREFIX` and
+`CRAWLX_REDIS_KEY_PREFIX` namespace each deployment, and a prefix claim stops two deployments from deleting
+each other's artifacts. `crawlx config check` validates them. Foreground CLI crawls can also use in-memory
+local mode, and `crawlx serve` without a database only queues runs in its own process.
 
 ### Tooling interoperability: compatibility API
 
@@ -264,8 +275,10 @@ integration calls and what is not served: [docs/integrations.md](docs/integratio
 
 `crawlx mcp` exposes MCP tools over stdio as a thin client of a CrawlX API. The compatibility surface is
 configured in the [reference](docs/reference.md#mcp-server); `--surface native` serves a capability-scoped
-inspection and control catalog ([MCP server](docs/mcp.md)). Model-assisted specifications, plans,
-evidence extraction, surface triage and summaries are described in [AI-native features](docs/ai.md).
+inspection and control catalog ([MCP server](docs/mcp.md)). Give an agent a least-privilege key
+(`crawlx serve --api-key TENANT=KEY:agent`) and record every call with `crawlx mcp --audit-log PATH`;
+`crawlx mcp audit-verify PATH` checks the chain. Model-assisted specifications, plans, evidence extraction,
+surface triage and summaries are described in [AI-native features](docs/ai.md).
 
 ## Output
 
@@ -376,7 +389,7 @@ flowchart LR
 ```
 
 `crawlx crawl` runs the whole pipeline in-process. `crawlx serve` and `crawlx worker` split it: the API
-validates and persists a run, and workers lease it from PostgreSQL. Strategies and models only *propose*
+validates and persists a run, and workers lease it from the database. Strategies and models only *propose*
 actions; the safety kernel alone decides which are admitted, and the Session Actor re-confirms each one
 against the live page before performing it.
 
@@ -469,6 +482,23 @@ when unset. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 </details>
 
+## Integrations
+
+CrawlX is one of three NoxRed projects that are built to work together and run fine alone:
+
+- **[BrowserX](https://github.com/noxred-research/browserx)** ([browserx.dev](https://browserx.dev)) pools
+  and supervises Chromium sessions. A crawl can attach to a BrowserX session instead of launching its own
+  browser: pass the session's DevTools WebSocket URL with `--cdp-ws-url-file` (or `CRAWLX_CDP_WS_URL_FILE`;
+  the URL is a bearer token, so keep it in a `0600` file). BrowserX sessions can egress through ProxyX with a
+  sticky username built from a `{session}` template.
+- **[ProxyX](https://github.com/noxred-research/proxyx)** ([proxyx.dev](https://proxyx.dev)) is a proxy
+  gateway, session proxy and pool manager. CrawlX can use its pool gateway as the upstream of the `basic` and
+  `enhanced` proxy tiers (`[fetch.proxyx]`, `--fetch-proxyx-*`). ProxyX's session proxy accepts
+  `<uuid>-sid-<key>` sticky keys, which lets captured traffic be correlated with a run.
+- All three expose an [MCP](https://modelcontextprotocol.io) server (`crawlx mcp`, `browserx mcp`,
+  `proxyx mcp`), so one agent can drive the browser pool, the proxy layer and the crawler under each
+  project's own capability limits.
+
 ## Security
 
 Report vulnerabilities in CrawlX privately through GitHub private vulnerability reporting, never in a public
@@ -479,6 +509,27 @@ Releases are built from a tag by a gated workflow that publishes a source archiv
 `SHA256SUMS` as a draft for a maintainer to publish; verification steps are in
 [SECURITY.md](SECURITY.md#verifying-a-release). Workflows run only for code owners, every action is pinned
 to a commit, and dependency, secret and static-analysis scans run in CI.
+
+CI policy: every job runs on self-hosted runners and only for code owners; a lint (`ci/lint-runners.sh`)
+fails the build if a job could fall back to a hosted runner or an update-bot configuration appears.
+Dependency and base-image updates are made by maintainers by hand, advisories for locked Rust dependencies
+are checked by `cargo deny`, and pull requests get a dependency review.
+
+## Documentation
+
+The [documentation index](docs/README.md) lists everything; the main entry points:
+
+| Topic | Page |
+|---|---|
+| End-to-end local run | [Walkthrough](docs/walkthrough.md) |
+| Design: architecture, crawl model, safety, data and secrets | [Architecture](docs/design/architecture.md) · [Crawl model](docs/design/crawl-model.md) · [Safety model](docs/design/safety-model.md) · [Data and secrets](docs/design/data-and-secrets.md) |
+| AI-native features and the model-egress policy | [AI-native features](docs/ai.md) |
+| MCP surfaces, scoping and audit log | [MCP server](docs/mcp.md) |
+| Flags, source discovery, replay, compatibility flags | [Reference](docs/reference.md) |
+| Compatibility API and client integrations | [Integrations](docs/integrations.md) |
+| Storage engines, object store, shared instances, destinations | [Storage backends](docs/ops/storage-backends.md) · [Object storage](docs/ops/object-storage.md) · [Backends](docs/ops/backends.md) |
+| Deploying and operating | [Operations](docs/ops/README.md) · [Runbooks](docs/ops/runbooks.md) · [Release gates](docs/ops/release-gates.md) |
+| What is open | [Roadmap](docs/roadmap.md) · [Changelog](CHANGELOG.md) |
 
 ## Getting help
 

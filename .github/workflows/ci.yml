@@ -935,8 +935,10 @@ jobs:
   rust-latest:
     # Toolchain canary: clippy and the unit suite on the latest stable, ignoring
     # rust-toolchain.toml. Never blocking; a failure is the early warning for the next pin bump.
+    # Same budget as `unit`: it builds the whole workspace twice (clippy, tests) with a cold cache
+    # on a fresh job filesystem, which took longer than 90 minutes on the shared runners.
     runs-on: [self-hosted, noxred]
-    timeout-minutes: 90
+    timeout-minutes: 180
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true'
     permissions:

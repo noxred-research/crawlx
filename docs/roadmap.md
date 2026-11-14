@@ -1,6 +1,6 @@
 # Roadmap
 
-What is open in CrawlX 0.1.0. This list is intent, not a commitment or a schedule; items move when
+What is open in CrawlX 0.2.0. This list is intent, not a commitment or a schedule; items move when
 someone picks them up. The [changelog](../CHANGELOG.md) records what has shipped, and
 [CONTRIBUTING.md](../CONTRIBUTING.md) explains how to propose a change. Open an issue before starting
 anything large.

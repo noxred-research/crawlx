@@ -21,7 +21,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: migrate
-          image: ghcr.io/noxred-research/crawlx-api:v0.1.0
+          image: ghcr.io/noxred-research/crawlx-api:v0.2.0
           args: ["migrate"]
           env:
             # the DDL role (crawlx_migrate), not the app role
@@ -89,7 +89,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: api
-          image: ghcr.io/noxred-research/crawlx-api:v0.1.0
+          image: ghcr.io/noxred-research/crawlx-api:v0.2.0
           args:
             - serve
             - --bind=0.0.0.0:8080
