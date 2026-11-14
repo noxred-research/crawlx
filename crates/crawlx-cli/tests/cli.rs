@@ -483,7 +483,7 @@ async fn export_stores_only_selected_fields_in_an_independent_directory() {
         words.to_str().unwrap(),
     ])
     .await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert_eq!(stdout, "https://example.test:8443/a/b.php?x=1&y=2\n");
     assert_eq!(
         std::fs::read_to_string(words.join("https_example.test_8443_qurl.txt")).unwrap(),
@@ -505,7 +505,7 @@ async fn export_stores_only_selected_fields_in_an_independent_directory() {
         words.to_str().unwrap(),
     ])
     .await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert_eq!(stdout, "a@example.test /a/b.php\n");
     assert_eq!(std::fs::read_dir(&words).unwrap().count(), 2);
     assert_eq!(std::fs::read_to_string(key_file).unwrap(), "existing\nx\ny\n");
@@ -525,7 +525,7 @@ async fn export_stored_custom_fields_default_beside_report_or_output_file() {
         "email,missing_custom",
     ])
     .await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert_eq!(stdout, "https://example.test:8443/a/b.php?x=1&y=2 /a/b.php\n");
     let words = dir.path().join("field_wordlists");
     assert_eq!(
@@ -547,7 +547,7 @@ async fn export_stored_custom_fields_default_beside_report_or_output_file() {
         "key",
     ])
     .await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert_eq!(
         std::fs::read_to_string(output_dir.join("field_wordlists/https_example.test_8443_key.txt")).unwrap(),
         "x\ny\n"
@@ -614,7 +614,7 @@ async fn crawl_explicit_wordlists_survive_missing_template_values_with_or_withou
             args.push("--jsonl");
         }
         let (stdout, code) = crawl(&args).await;
-        code.unwrap();
+        let _exit = code.unwrap();
         assert_eq!(stdout, "", "missing template field must not invent display text");
         let url = url::Url::parse(&site.base).unwrap();
         let stem = format!("http_{}_{}", url.host_str().unwrap(), url.port().unwrap());
@@ -661,14 +661,14 @@ async fn export_reads_a_local_report_in_every_format() {
         out_dir.to_str().unwrap(),
     ])
     .await;
-    code.unwrap();
+    let _exit = code.unwrap();
     let report = out_dir.join("report.json");
     let report = report.to_str().unwrap();
     let host = site.base.trim_start_matches("http://");
 
     // text, default field `url`, to stdout, sorted by URL
     let (stdout, code) = export(&[report, "--format", "text"]).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     let urls: Vec<&str> = stdout.lines().collect();
     assert_eq!(
         urls,
@@ -678,12 +678,12 @@ async fn export_reads_a_local_report_in_every_format() {
 
     // --field: path, fqdn, qurl (no page has a query), the directory form accepts a run dir
     let (stdout, code) = export(&[out_dir.to_str().unwrap(), "--format", "text", "--field", "path"]).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert_eq!(stdout, "/\n/a\n/b\n/c\n");
     let (stdout, _) = export(&[report, "--format", "text", "--field", "fqdn"]).await;
     assert_eq!(stdout.lines().collect::<Vec<_>>(), ["127.0.0.1"; 4]);
     let (stdout, code) = export(&[report, "--format", "text", "--field", "qurl"]).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert_eq!(stdout, "");
     let (_, code) = export(&[report, "--format", "text", "--field", "no such"]).await;
     assert!(code.is_err());
@@ -703,7 +703,7 @@ async fn export_reads_a_local_report_in_every_format() {
         "/c$",
     ])
     .await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert_eq!(
         stdout,
         format!("http://{host} /a\nhttp://{host} /b\n"),
@@ -725,7 +725,7 @@ async fn export_reads_a_local_report_in_every_format() {
         out_file.to_str().unwrap(),
     ])
     .await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert_eq!(stdout, format!("exported 4 lines to {}\n", out_file.display()));
     assert_eq!(std::fs::read_to_string(&out_file).unwrap(), "/\n/a\n/b\n/c\n");
     let wl_file = wl.join(format!("http_{}_path.txt", host.replace(':', "_")));
@@ -738,7 +738,7 @@ async fn export_reads_a_local_report_in_every_format() {
 
     // jsonl: one record per page, no body unless asked, --exclude-fields drops names
     let (stdout, code) = export(&[report, "--exclude-fields", "timestamp,headers"]).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     let records: Vec<serde_json::Value> = stdout.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
     assert_eq!(records.len(), 4, "{stdout}");
     assert_eq!(records[0]["request"]["method"], "GET");
@@ -748,10 +748,10 @@ async fn export_reads_a_local_report_in_every_format() {
     assert!(records[0]["response"].get("headers").is_none());
     assert!(records[0]["response"].get("body").is_none());
     let (stdout, code) = export(&[report, "--format", "jsonl", "--extension-filter", "none"]).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     assert_eq!(stdout, "", "every fixture URL has no extension");
     let (stdout, code) = export(&[report, "--format", "jsonl", "--include-body"]).await;
-    code.unwrap();
+    let _exit = code.unwrap();
     let first: serde_json::Value = serde_json::from_str(stdout.lines().next().unwrap()).unwrap();
     assert!(first.get("timestamp").is_some());
     assert!(first["response"]["headers"].is_object());
@@ -789,7 +789,7 @@ async fn static_crawl_smoke_writes_files_and_prints_the_counter_block() {
         out_dir.to_str().unwrap(),
     ])
     .await;
-    code.unwrap();
+    let _exit = code.unwrap();
 
     // the summary block
     let mut lines = stdout.lines();
@@ -907,7 +907,7 @@ async fn static_crawl_with_jsonl_field_and_store_fields() {
         words.to_str().unwrap(),
     ])
     .await;
-    code.unwrap();
+    let _exit = code.unwrap();
 
     // one line per page path, URL order, before the counter block
     let paths: Vec<&str> = stdout.lines().take_while(|l| !l.starts_with("crawl ")).collect();

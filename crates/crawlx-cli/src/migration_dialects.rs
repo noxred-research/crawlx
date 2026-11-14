@@ -2031,7 +2031,7 @@ mod tests {
 
         value["seeds"].as_array_mut().unwrap().truncate(200);
         let mut output = Vec::new();
-        run_manifest(&serde_json::to_vec(&value).unwrap(), true, &mut output)
+        let _exit = run_manifest(&serde_json::to_vec(&value).unwrap(), true, &mut output)
             .await
             .unwrap();
         assert!(output.len() <= MAX_OUTPUT_BYTES);

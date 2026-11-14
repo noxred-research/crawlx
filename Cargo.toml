@@ -49,7 +49,6 @@ http-body-util = "0.1"
 http-body = "1"
 axum = { version = "0.8", features = ["json", "macros", "ws", "multipart"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["trace", "cors"] }
 hmac = "0.13"
 sha2 = "0.11"
 sha1 = "0.11"
@@ -114,7 +113,6 @@ chromiumoxide = { version = "0.8", default-features = false, features = ["tokio-
 # misc
 clap = { version = "4", features = ["derive", "env"] }
 anyhow = "1"
-once_cell = "1"
 # Runtime pressure tracing observed THP promotion adding 6648KiB RSS while
 # allocator used-block accounting fell 84384 bytes. Avoid MADV_HUGEPAGE advice
 # in production and in runtime-pressure proofs alike.
@@ -130,13 +128,11 @@ rskafka = { version = "0.6", default-features = false, features = ["transport-tl
 lapin = { version = "4", default-features = false, features = ["tokio", "rustls--ring", "rustls-webpki-roots-certs"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "1"
-indexmap = { version = "2", features = ["serde"] }
 ipnet = { version = "2", features = ["serde"] }
 # public suffix list for `scope.hostScope: rdn`; bundled list, no network
 publicsuffix = "2.3"
 hickory-resolver = "0.26.1"
 zeroize = { version = "1", features = ["derive"] }
-secrecy = "0.10"
 strsim = "0.11"
 unicode-normalization = "0.1"
 # telemetry export (crawlx-telemetry `otlp` feature only)
@@ -155,7 +151,6 @@ tokenizers = { version = "0.23", default-features = false, features = ["fancy-re
 proptest = "1"
 wiremock = "0.6"
 tempfile = "3"
-tokio-test = "0.4"
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 loom = "0.7"
 # peak-heap counting allocator for the parser memory ceiling test (crawlx-extract `tests/parse_memory_ceiling.rs`, MIT)

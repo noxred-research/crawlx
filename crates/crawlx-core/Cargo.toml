@@ -13,7 +13,6 @@ async-trait.workspace = true
 blake3.workspace = true
 chrono.workspace = true
 ciborium.workspace = true
-indexmap.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true

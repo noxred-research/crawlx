@@ -27,6 +27,12 @@
 //! `Runtime.enable` for every target, which the `Stealth` profile must never do,
 //! and the browser must lead its own process group.
 
+// The CDP protocol revision of `chromium-pin.toml` is the one the pinned `chromiumoxide` release
+// was generated from, and `ci/lint-chromiumoxide.sh` checks that this crate depends on exactly
+// that release. The code speaks the protocol through its own typed messages, so the dependency
+// is an anchor for the pin, not a call target.
+use chromiumoxide as _;
+
 pub mod backend;
 pub mod captcha;
 pub mod cdp;

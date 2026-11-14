@@ -130,7 +130,8 @@ impl Site {
 }
 async fn run(args: ScrapeArgs) -> anyhow::Result<String> {
     let mut out = Vec::new();
-    crawlx_cli::scrape::run_with_cancel(args, &mut out, &|_| None, CancellationToken::new()).await?;
+    let _exit =
+        crawlx_cli::scrape::run_with_cancel(args, &mut out, &|_| None, CancellationToken::new()).await?;
     Ok(String::from_utf8(out).unwrap())
 }
 
@@ -202,7 +203,7 @@ async fn shell_fetches_once_then_css_xpath_regex_and_item_use_stored_page() {
     let recipe = json!({"version":1,"fields":[{"name":"price","selectors":[{"kind":"css","expression":"p.price"}],"extraction":{"kind":"text"},"cardinality":"one"}]});
     let input = format!("css h1::text\nxpath string(//p)\nregex [0-9]+\nitem {recipe}\nquit\n");
     let mut out = Vec::new();
-    crawlx_cli::scrape::shell_with_input(
+    let _exit = crawlx_cli::scrape::shell_with_input(
         site.shell(&[]),
         input.as_bytes(),
         &mut out,
@@ -264,7 +265,7 @@ async fn regex_builtin_names_work_from_flag_extraction_file_and_shell() {
     .unwrap();
     assert_eq!(from_file, expected);
     let mut out = Vec::new();
-    crawlx_cli::scrape::shell_with_input(
+    let _exit = crawlx_cli::scrape::shell_with_input(
         site.shell(&[]),
         b"builtin number\nquit\n".as_slice(),
         &mut out,

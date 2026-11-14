@@ -474,7 +474,7 @@ mod tests {
         };
         assert!(!format!("{args:?}").contains("secret"));
         let mut out = Vec::new();
-        run(args, &mut out).unwrap();
+        let _exit = run(args, &mut out).unwrap();
         let text = String::from_utf8(out).unwrap();
         for secret in [
             "query-secret",

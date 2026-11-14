@@ -489,8 +489,8 @@ impl<'a> SelectorDocument<'a> {
         let end = entry.end;
         self.charge(end.saturating_sub(node))?;
         let mut out = Vec::new();
-        for i in node + 1..end {
-            if matches!(self.entries[i].kind, Kind::Element(_)) {
+        for (i, entry) in self.entries.iter().enumerate().take(end).skip(node + 1) {
+            if matches!(entry.kind, Kind::Element(_)) {
                 if out.len() >= MAX_SELECTED {
                     return Err(SelectorError::Budget("selected nodes"));
                 }
@@ -775,8 +775,8 @@ impl<'a> SelectorDocument<'a> {
                     out.push(node);
                 }
                 if matches!(e.kind, Kind::Root | Kind::Element(_)) {
-                    for i in node + 1..e.end {
-                        if self.entries[i].native.is_some() {
+                    for (i, entry) in self.entries.iter().enumerate().take(e.end).skip(node + 1) {
+                        if entry.native.is_some() {
                             out.push(i);
                         }
                     }
@@ -799,8 +799,8 @@ impl<'a> SelectorDocument<'a> {
                 }
             }
             Axis::Following => {
-                for i in e.end..self.entries.len() {
-                    if self.entries[i].native.is_some() {
+                for (i, entry) in self.entries.iter().enumerate().skip(e.end) {
+                    if entry.native.is_some() {
                         out.push(i);
                     }
                 }
