@@ -821,6 +821,44 @@
       "js_globals": ["turnstile"],
       "implies": ["Cloudflare"]
     },
+    "Cloudflare Bot Management": {
+      "category": "security",
+      "website": "https://www.cloudflare.com/application-services/products/bot-management/",
+      "cookies": { "__cf_bm": "" },
+      "implies": ["Cloudflare"]
+    },
+    "DataDome": {
+      "category": "security",
+      "website": "https://datadome.co",
+      "cookies": { "datadome": "" },
+      "script_src": ["^(?:https:)?//js\\.datadome\\.co/(?:v(\\d+(?:\\.\\d+)*)/)?tags\\.js(?:[?#]|$)"],
+      "js_globals": ["ddjskey", "ddoptions"]
+    },
+    "HUMAN Security": {
+      "category": "security",
+      "website": "https://www.humansecurity.com",
+      "cookies": { "_px": "", "_px2": "", "_px3": "", "_pxhd": "", "_pxvid": "", "pxcts": "" },
+      "script_src": ["^(?:https?:)?//(?:client\\.perimeterx\\.net|[a-z0-9-]+\\.px-(?:cloud|cdn)\\.net)/"],
+      "js_globals": ["_pxAppId"]
+    },
+    "Akamai Bot Manager": {
+      "category": "security",
+      "website": "https://www.akamai.com",
+      "cookies": { "bm_sv": "" },
+      "implies": ["Akamai"]
+    },
+    "Fingerprint": {
+      "category": "security",
+      "website": "https://fingerprint.com",
+      "script_src": ["^(?:https:)?//fpjscdn\\.net/v(\\d+)/"],
+      "html": ["https://fpjscdn\\.net/v(\\d+)/"]
+    },
+    "Noxtica": {
+      "category": "security",
+      "website": "https://noxtica.com",
+      "script_src": ["^(?:https:)?//collect\\.noxtica\\.com/collector/noxtica(?:-collector(?:-core|-extensions)?)?(?:\\.[0-9a-f]{8,})?\\.js(?:[?#]|$)"],
+      "js_globals": ["noxticaClient"]
+    },
     "Content Security Policy": {
       "category": "security",
       "website": "https://www.w3.org/TR/CSP/",

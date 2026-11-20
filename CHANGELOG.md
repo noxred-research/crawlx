@@ -8,6 +8,17 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- Technology catalog: six `security` entries for bot-defence and device-intelligence products, written from
+  each vendor's own public documentation (script host, cookie name or global; the source URL of every entry
+  is in the `crates/crawlx-extract/src/technologies.rs` module docs): DataDome, HUMAN Security, Akamai Bot
+  Manager (cookie `bm_sv`), Cloudflare Bot Management (cookie `__cf_bm`), Fingerprint (agent CDN
+  `fpjscdn.net`) and Noxtica (collector host `collect.noxtica.com`; the project's owners disclose their
+  relation to Noxtica in the README). Script patterns are anchored to the documented host, and the
+  `data-site-key` attribute is not used because other widgets share it. A detection shows that the response
+  carried the marker, not that the product ran or is effective.
+
 ## [0.2.0] - 2026-11-14
 
 Second source release. Distribution is unchanged: the GitHub repository and the tagged source
