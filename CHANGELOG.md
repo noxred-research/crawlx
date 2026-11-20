@@ -8,6 +8,13 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Changed
+
+- `deny.toml` records a reviewed exception for RUSTSEC-2026-0543 (`chrono`) and RUSTSEC-2026-0555
+  (`chrono-tz`), published after 0.2.0: both only mark the crates unmaintained, report no vulnerability and
+  have no upgrade, so `cargo deny check advisories` failed on every build. The exception comment names the
+  condition for removing it.
+
 ## [0.2.0] - 2026-11-14
 
 Second source release. Distribution is unchanged: the GitHub repository and the tagged source
