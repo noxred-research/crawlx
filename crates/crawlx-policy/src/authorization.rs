@@ -139,7 +139,8 @@ pub enum OwnershipProof {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AuthorizationRecord {
-    /// Stable id shared by all versions of the record.
+    /// Identifies this one immutable record. An amendment is a new record with a new id; the id never
+    /// names several versions and the API rejects a changed body under an existing id.
     pub id: AuthorizationRecordId,
     /// Tenant that owns the record.
     pub tenant: TenantId,

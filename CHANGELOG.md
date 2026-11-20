@@ -8,6 +8,14 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Documentation accuracy: the compatibility endpoint table no longer lists the health probes under the
+  `/compat` prefix (`GET /v0/health/readiness` and `/v0/health/liveness` are served at the API root, without
+  a key); the `AuthorizationRecord.id` documentation says an id names one immutable record and an amendment
+  needs a new id; the walkthrough generates the authorization window from the current UTC date instead of
+  fixed dates that expire.
+
 ## [0.2.0] - 2026-11-14
 
 Second source release. Distribution is unchanged: the GitHub repository and the tagged source
