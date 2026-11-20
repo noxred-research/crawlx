@@ -8,6 +8,13 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Documentation: catalog `js_globals` patterns are matcher-only. The extractor passes no `window` property
+  names and the browser plane does not report any, so these patterns never match in a crawl (every entry
+  that lists one also has a pattern of another kind). `docs/reference.md` and the `technologies` module docs
+  say so, and a test pins it. No behaviour change.
+
 ## [0.2.0] - 2026-11-14
 
 Second source release. Distribution is unchanged: the GitHub repository and the tagged source
