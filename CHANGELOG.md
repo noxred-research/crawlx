@@ -45,6 +45,23 @@ project is pre-1.0; minor versions may contain breaking changes.
   (`chrono-tz`), published after 0.2.0: both only mark the crates unmaintained, report no vulnerability and
   have no upgrade, so `cargo deny check advisories` failed on every build. The exception comment names the
   condition for removing it.
+- Politeness: back-off after `429`/`503` no longer turns one throttling answer into minutes of slow
+  crawling (#76). With the new default profile, `politeness.backoffProfile = "balanced"`, the first
+  throttling answer after a success sets the origin's spacing to `max(Retry-After, 2 × floor)` (floor =
+  `max(delayMs, Crawl-delay)`); the spacing doubles, with the existing ±20 % seeded jitter, only on
+  *consecutive* throttling answers; and it halves after every 3 consecutive `200` answers instead of 10
+  (`politeness.decayAfter`). The spacing never drops below the floor and a `Retry-After` is never
+  shortened. A single `Retry-After: 2` on the default 250 ms floor now costs about 17 s over the next 30
+  requests instead of about 36 s. To get the
+  previous curve, set `politeness.backoffProfile` to `"conservative"` (or pass `--backoff-profile
+  conservative`): every throttling answer doubles the spacing and 10 successes halve it. The change
+  affects only pacing after throttling answers; base spacing, in-flight caps, rate buckets and
+  `Crawl-delay` are untouched.
+- `politeness.maxDelayMs` (default 60 000, clamped to 50..=3 600 000) is now configurable and exposed as
+  `crawlx crawl --max-delay-ms`; it was a fixed 60 s. `politeness.decayAfter` (at least 1; default 3 for
+  `balanced`, 10 for `conservative`) sets the success streak that halves the spacing. All three fields stay
+  off the serialized request while they hold their defaults, so configuration digests of existing requests
+  do not change.
 
 ### Security
 
