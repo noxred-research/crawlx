@@ -4895,15 +4895,27 @@ impl UrlPlaneRunner {
                     tracing::warn!(url = %entry.url, error = %e, "extraction failed");
                     self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())
                         .await?;
-                    return self
-                        .fail(
-                            entry,
+                    // A page the isolated parser helper could not take within its limits fails with
+                    // its own stable code and the input size, not the generic `extract_failed`.
+                    let (code, payload) = if matches!(
+                        &e,
+                        crawlx_extract::ExtractError::ParseMemory(refused) if refused.is_helper_limit()
+                    ) {
+                        (
+                            "parser_limit_exceeded",
+                            serde_json::json!({
+                                "url": entry.url.url.as_str(),
+                                "reason": "parser_limit_exceeded",
+                                "inputBytes": resp.body.len(),
+                            }),
+                        )
+                    } else {
+                        (
                             "extract_failed",
-                            "extract_failed",
-                            Attempt::Failed,
                             serde_json::json!({ "url": entry.url.url.as_str(), "reason": "extract_failed" }),
                         )
-                        .await;
+                    };
+                    return self.fail(entry, code, code, Attempt::Failed, payload).await;
                 }
             }
         } else {

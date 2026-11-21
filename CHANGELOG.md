@@ -33,6 +33,18 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ### Fixed
 
+- Isolated parser helper: pages between 1 MiB and the 8 MiB response cap no longer fail with a varying
+  `extract_failed` (issue #71). Root cause: the helper is the `crawlx` executable, whose allocator reserves
+  1 GiB of address space (`MAP_NORESERVE`, almost none of it touched; a helper parsing 8 MiB peaks near
+  190 MiB resident) and `RLIMIT_AS` counts the reservation, so the 512 MiB default left no room for any
+  page: it was not CPU, wall time or the page's content. The default
+  `CRAWLX_PARSER_HELPER_ADDRESS_SPACE_BYTES` is now
+  2 GiB (at most two concurrent helpers on the default 4 GiB parse budget) and every helper run adds
+  64 bytes of address space per input byte and one CPU second and one wall-clock second per MiB of input.
+  The `rlimit` isolation is unchanged. A page that still exceeds a helper limit fails as
+  `parser_limit_exceeded` with `inputBytes` in the failure event, the same way every time. There is no
+  metadata-only link fallback: the extractor builds its tree with `scraper` and has no streaming link
+  tokenizer to run in the parent safely.
 - Browser plane (`dynamic` and `hybrid`): one failed page no longer ends the run with `fatal_error`
   (issue #70). An egress denial on a navigation or redirect target, a network error page
   (`chrome-error://`), a navigation timeout and an extraction failure of a page's output now fail only that

@@ -758,7 +758,9 @@ impl IsolatedParser {
         reason: IsolationReason,
         cancel: &CancellationToken,
     ) -> Result<ParsedPage, IsolatedError> {
-        let deadline = tokio::time::Instant::now() + self.config.timeout;
+        let deadline = tokio::time::Instant::now()
+            + self.config.timeout
+            + HelperLimits::extra_time_for_input(bytes.len());
         let request: SharedRequest = Arc::new(request);
         let mut stage = LanguageStage::first_pass(&request.options);
         let mut passes = 0_u8;
@@ -839,7 +841,9 @@ impl IsolatedParser {
         reason: IsolationReason,
         cancel: &CancellationToken,
     ) -> Result<ParsedUpload, IsolatedError> {
-        let deadline = tokio::time::Instant::now() + self.config.timeout;
+        let deadline = tokio::time::Instant::now()
+            + self.config.timeout
+            + HelperLimits::extra_time_for_input(bytes.len());
         let header = encode_upload_request_header(
             bytes.len(),
             request.filename.as_deref(),
@@ -868,7 +872,8 @@ impl IsolatedParser {
         deadline: tokio::time::Instant,
         cancel: &CancellationToken,
     ) -> Result<Budgeted<Result<Reply, IsolatedError>>, IsolatedError> {
-        let limits = self.config.limits;
+        // the helper's budget grows with the page, so what a page needs never depends on luck
+        let limits = self.config.limits.scaled_for_input(body.len());
         if widen(header.len()).saturating_add(widen(body.len())) > limits.max_request_bytes {
             return Err(IsolatedError::LimitExceeded {
                 what: "request bytes",
@@ -882,7 +887,7 @@ impl IsolatedParser {
             slot = Arc::clone(&self.slots).acquire_owned() => slot.map_err(|error| IsolatedError::Task(Box::new(error)))?,
         };
         let stdout = self
-            .run_helper(&header, body, &mut scratch, deadline, cancel)
+            .run_helper(&header, body, &mut scratch, &limits, deadline, cancel)
             .await?;
         drop(slot);
         drop(header);
@@ -936,13 +941,14 @@ impl IsolatedParser {
         header: &[u8],
         body: &Bytes,
         scratch: &mut BytePermit,
+        limits: &HelperLimits,
         deadline: tokio::time::Instant,
         cancel: &CancellationToken,
     ) -> Result<Vec<u8>, IsolatedError> {
         let mut command = tokio::process::Command::new(self.launcher.program());
         command
             .args(&self.launcher.leading_args)
-            .args(self.config.limits.helper_args())
+            .args(limits.helper_args())
             .env_clear()
             .envs(self.launcher.env.iter().map(|(key, value)| (key, value)))
             .current_dir("/")
@@ -956,7 +962,7 @@ impl IsolatedParser {
             () = cancel.cancelled() => Err(IsolatedError::Cancelled),
             timed = tokio::time::timeout_at(
                 deadline,
-                exchange(&mut child, header, body, &self.config.limits, scratch),
+                exchange(&mut child, header, body, limits, scratch),
             ) => match timed {
                 Ok(result) => result,
                 Err(_) => Err(IsolatedError::Timeout { timeout: self.config.timeout }),
