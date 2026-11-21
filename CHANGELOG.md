@@ -8,12 +8,35 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- Technology catalog: six `security` entries for bot-defence and device-intelligence products, written from
+  each vendor's own public documentation (script host, cookie name or global; the source URL of every entry
+  is in the `crates/crawlx-extract/src/technologies.rs` module docs): DataDome, HUMAN Security, Akamai Bot
+  Manager (cookie `bm_sv`), Cloudflare Bot Management (cookie `__cf_bm`), Fingerprint (agent CDN
+  `fpjscdn.net`) and Noxtica (collector host `collect.noxtica.com`; the project's owners disclose their
+  relation to Noxtica in the README). Script patterns are anchored to the documented host, and the
+  `data-site-key` attribute is not used because other widgets share it. A detection shows that the response
+  carried the marker, not that the product ran or is effective.
+
 ### Fixed
 
+- Documentation accuracy: the compatibility endpoint table no longer lists the health probes under the
+  `/compat` prefix (`GET /v0/health/readiness` and `/v0/health/liveness` are served at the API root, without
+  a key); the `AuthorizationRecord.id` documentation says an id names one immutable record and an amendment
+  needs a new id; the walkthrough generates the authorization window from the current UTC date instead of
+  fixed dates that expire.
 - Documentation: catalog `js_globals` patterns are matcher-only. The extractor passes no `window` property
   names and the browser plane does not report any, so these patterns never match in a crawl (every entry
   that lists one also has a pattern of another kind). `docs/reference.md` and the `technologies` module docs
   say so, and a test pins it. No behaviour change.
+
+### Changed
+
+- `deny.toml` records a reviewed exception for RUSTSEC-2026-0543 (`chrono`) and RUSTSEC-2026-0555
+  (`chrono-tz`), published after 0.2.0: both only mark the crates unmaintained, report no vulnerability and
+  have no upgrade, so `cargo deny check advisories` failed on every build. The exception comment names the
+  condition for removing it.
 
 ## [0.2.0] - 2026-11-14
 

@@ -30,6 +30,30 @@
 //! by name, with the first evidence in kind order (headers, cookies, meta,
 //! script_src, js_globals, html, url, implied) and the first version seen:
 //! the same input always yields the same output.
+//!
+//! The patterns of one entry are alternatives: one match is enough, and they
+//! are never combined, so a pattern that is weak alone (a bare attribute name,
+//! say) does not belong in the catalog. A detection records only that the
+//! response showed a documented script host, cookie name or global. It does not
+//! show that the product ran, enforces anything or is effective.
+//!
+//! # Provenance of the bot-defence and device-intelligence entries
+//!
+//! The `security` entries for the vendors below were written from each vendor's
+//! own public documentation (the script host, cookie name or global it
+//! publishes), not from any other detection catalog. Script patterns are
+//! anchored to the documented host. Where a vendor documents no cookie or host
+//! for a product, none is listed.
+//!
+//! | entry | patterns | source |
+//! |---|---|---|
+//! | `DataDome` | script host `js.datadome.co` (`tags.js`, versioned `vX.Y.Z/tags.js`), cookie `datadome`, globals `ddjskey`, `ddoptions` | <https://docs.datadome.co/docs/javascript-tag>, <https://docs.datadome.co/docs/cookie-session-storage> |
+//! | `HUMAN Security` | script hosts `client.perimeterx.net`, `*.px-cloud.net`, `*.px-cdn.net`; cookies `_px`, `_px2`, `_px3`, `_pxhd`, `_pxvid`, `pxcts`; global `_pxAppId` | <https://docs.humansecurity.com/applications/sensor>, <https://docs.humansecurity.com/applications/use-of-cookies-web-storage>, <https://docs.humansecurity.com/applications/getting-started-with-sightline-cyberfraud-defense> |
+//! | `Akamai Bot Manager` | cookie `bm_sv` (the only bot-manager cookie Akamai's own documentation names) | <https://techdocs.akamai.com/identity-cloud/docs/hosted-login-cookies-and-local-storage-1> |
+//! | `Fingerprint` | agent CDN `fpjscdn.net/v<N>/`, as a script tag or a dynamic import | <https://docs.fingerprint.com/docs/install-the-javascript-agent>, <https://docs.fingerprint.com/docs/js-agent-csp> |
+//! | `Noxtica` | collector host `collect.noxtica.com`, scripts `noxtica-collector-core.js`, `noxtica-collector-extensions.js` and the legacy `noxtica-collector.js` and `noxtica.js` (each also with a hashed `.<hex>` twin), global `noxticaClient` | <https://noxtica.com/docs/browser-runtime/>, <https://noxtica.com/docs/sdk/client-api/>, <https://noxtica.com/docs/sdk/script-attributes/> |
+//! | `Cloudflare Bot Management` | cookie `__cf_bm`, set for Bot Management and for Bot Fight Mode | <https://developers.cloudflare.com/fundamentals/reference/policies-compliances/cloudflare-cookies/> |
+//! <!-- detection-data: the vendor name in the row above is catalog data -->
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;

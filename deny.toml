@@ -25,6 +25,13 @@ ignore = [
   # attacker-written file pair the advisory needs is outside its threat model. Remove this
   # entry as soon as sqlx accepts `libsqlite3-sys >= 0.39`.
   { id = "RUSTSEC-2026-0459", reason = "sqlx 0.9 pins libsqlite3-sys < 0.38; only operator-owned local database files are opened" },
+  # RUSTSEC-2026-0543 (chrono) and RUSTSEC-2026-0555 (chrono-tz) say the crates are unmaintained.
+  # No vulnerability is reported, "all versions are affected" and no upgrade exists, so the gate
+  # cannot be satisfied by a version bump. CrawlX uses chrono for timestamps and date parsing and
+  # chrono-tz only to resolve IANA zone names for schedules and article dates. Replace both
+  # (the advisory suggests jiff or time), and remove these entries, when a successor is chosen.
+  { id = "RUSTSEC-2026-0543", reason = "chrono is flagged unmaintained, no vulnerability; no upgrade exists" },
+  { id = "RUSTSEC-2026-0555", reason = "chrono-tz is flagged unmaintained, no vulnerability; no upgrade exists" },
 ]
 
 [bans]

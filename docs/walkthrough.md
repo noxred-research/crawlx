@@ -8,10 +8,15 @@ Chromium.
 ## The authorization record
 
 The gym listens on loopback, so the run needs an [authorization record](design/safety-model.md#authorization-records).
-For a local run you are the authorizer and no ownership proof is needed. Save this as `authz.local.json`
-(replace the UUIDs and keep the window under 90 days):
+For a local run you are the authorizer and no ownership proof is needed. Run this to write
+`authz.local.json` (replace the UUIDs). The window starts now and ends 30 days later; a record's window
+may be at most 90 days, so `validTo` must not be more than 90 days after `validFrom`. The dates are
+generated in UTC when you run it (GNU `date`, falling back to BSD `date`):
 
-```json
+```sh
+VALID_FROM=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+VALID_TO=$(date -u -d '+30 days' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v+30d +%Y-%m-%dT%H:%M:%SZ)
+cat > authz.local.json <<EOF
 {
   "id": "00000000-0000-4000-8000-000000000001",
   "tenant": "00000000-0000-4000-8000-000000000002",
@@ -26,8 +31,8 @@ For a local run you are the authorizer and no ownership proof is needed. Save th
   },
   "origins": ["http://127.0.0.1:34635"],
   "authorizedNetworks": ["127.0.0.0/8"],
-  "validFrom": "2026-11-01T00:00:00Z",
-  "validTo": "2026-12-01T00:00:00Z",
+  "validFrom": "$VALID_FROM",
+  "validTo": "$VALID_TO",
   "profileCap": "read_only",
   "permittedRiskClasses": [],
   "approvalRequired": [],
@@ -35,6 +40,7 @@ For a local run you are the authorizer and no ownership proof is needed. Save th
   "emergencyContact": "you@example.org",
   "evidence": { "kind": "local_fixture", "digest": "0000000000000000000000000000000000000000000000000000000000000000" }
 }
+EOF
 ```
 
 ## Run

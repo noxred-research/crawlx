@@ -119,10 +119,14 @@ Mounted by `crates/crawlx-api/src/routes/mod.rs` behind the key check, all under
 | parse | `POST /v2/parse`, `GET /v2/parse/formats` |
 | monitor | `POST`/`GET /v2/monitor`, `GET`/`PATCH`/`DELETE /v2/monitor/{monitorId}`, `POST /v2/monitor/{monitorId}/run`, `GET /v2/monitor/{monitorId}/checks[/{checkId}]` |
 | team | `GET /v2/team/credit-usage[/historical]`, `/token-usage[/historical]`, `/queue-status`, `/activity`; `POST /v2/feedback`, `/v2/support/ask`, `/v2/support/docs-search` |
-| probes (no key) | `GET /v0/health/readiness`, `/v0/health/liveness` |
 
 Not served, by design or because they are hosted-only:
 every `/v1/...` route, `/v2/scrape/{jobId}/interact`, `/v2/browser...` and `/v2/team/threat-protection`.
+
+The unauthenticated health probes are not part of the `/compat` family. They are served at the
+root of the API, without a key: `GET /v0/health/readiness` and `GET /v0/health/liveness`
+(`health_routes` in `crates/crawlx-api/src/routes/compat_team.rs`). A reverse proxy that forwards only
+`/compat/` must also forward `/v0/health/` if it should expose them.
 
 ## 5. Per client
 

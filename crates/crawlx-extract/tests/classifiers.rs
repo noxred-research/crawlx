@@ -688,6 +688,184 @@ fn technologies_js_globals_are_matcher_only() {
     );
 }
 
+/// Detections for a page that loads one `<script src>`.
+fn tech_for_script(src: &str) -> Vec<Technology> {
+    let html = format!(r#"<html><head><script src="{src}"></script></head></html>"#);
+    tech(&[], &html, None, &[])
+}
+
+/// Whether `name` is among the detections.
+fn has_tech(got: &[Technology], name: &str) -> bool {
+    got.iter().any(|t| t.name == name)
+}
+
+/// The `Noxtica` entry matches only the collector scripts its public documentation lists, served
+/// from the collector host; hosts that merely resemble it, other asset names and a bare site-key
+/// attribute do not match.
+#[test]
+fn technologies_noxtica_collector() {
+    for src in [
+        "https://collect.noxtica.com/collector/noxtica-collector-core.js",
+        "https://collect.noxtica.com/collector/noxtica-collector-core.52368c27.js",
+        "https://collect.noxtica.com/collector/noxtica-collector-extensions.js",
+        "https://collect.noxtica.com/collector/noxtica-collector.js",
+        "https://collect.noxtica.com/collector/noxtica.js",
+        "https://collect.noxtica.com/collector/noxtica-collector-core.js?v=1",
+        "//collect.noxtica.com/collector/noxtica-collector-core.js",
+    ] {
+        let got = tech_for_script(src);
+        let t = by_name(&got, "Noxtica");
+        assert_eq!(t.evidence, "script_src", "{src}");
+        assert_eq!(t.category, "security", "{src}");
+    }
+    // the documented tag, with its public site key attribute (a placeholder here)
+    let tag = r#"<script src="https://collect.noxtica.com/collector/noxtica-collector-core.js"
+        data-site-key="pk_prod_your_site_key_here" data-auto-init data-auto-check-once async></script>"#;
+    let got = tech(&[], tag, None, &[]);
+    assert_eq!(
+        got.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+        ["Noxtica"]
+    );
+    // near misses
+    for src in [
+        "https://collect.noxtica.com.example.net/collector/noxtica-collector-core.js",
+        "https://evilcollect.noxtica.com/collector/noxtica-collector-core.js",
+        "https://collect.noxtica.com@example.net/collector/noxtica-collector-core.js",
+        "http://collect.noxtica.com/collector/noxtica-collector-core.js",
+        "https://example.com/collector/noxtica-collector-core.js",
+        "https://collect.noxtica.com/other/noxtica-collector-core.js",
+        "https://collect.noxtica.com/collector/noxtica-collector-core.js.map",
+        "https://collect.noxtica.com/collector/noxtica-collector-core.abc.js",
+        "https://collect.noxtica.com/collector/noxtica-recorder-head.9b0210cd.js",
+    ] {
+        assert!(!has_tech(&tech_for_script(src), "Noxtica"), "{src}");
+    }
+    // a site-key attribute alone proves nothing: other widgets use the same attribute name
+    let other = r#"<script src="https://example.com/widget.js" data-site-key="pk_prod_your_site_key_here"></script>
+        <div data-site-key="pk_prod_your_site_key_here"></div>"#;
+    assert!(!has_tech(&tech(&[], other, None, &[]), "Noxtica"));
+    // the browser plane's window property, when it reports one
+    let got = tech(&[], "", None, &["noxticaClient"]);
+    assert_eq!(by_name(&got, "Noxtica").evidence, "js_global:noxticaClient");
+    assert!(!has_tech(
+        &tech(&[], "", None, &["noxtica", "NoxticaClient"]),
+        "Noxtica"
+    ));
+}
+
+/// Other bot-defence and device-intelligence vendors, each from its own public documentation:
+/// script hosts and cookie names match; look-alike hosts and neighbouring cookie names do not.
+#[test]
+fn technologies_bot_defence_vendors() {
+    // DataDome: tag host (also versioned routes), `datadome` cookie, `ddjskey` global
+    let got = tech_for_script("https://js.datadome.co/tags.js");
+    let dd = by_name(&got, "DataDome");
+    assert_eq!(
+        (dd.evidence.as_str(), dd.category.as_str()),
+        ("script_src", "security")
+    );
+    assert_eq!(dd.version, None);
+    let got = tech_for_script("https://js.datadome.co/v5.1.13/tags.js");
+    assert_eq!(by_name(&got, "DataDome").version.as_deref(), Some("5.1.13"));
+    let got = tech(
+        &[("Set-Cookie", "datadome=abc123; Max-Age=31536000; Path=/; Secure")],
+        "",
+        None,
+        &[],
+    );
+    assert_eq!(by_name(&got, "DataDome").evidence, "cookie:datadome");
+    let got = tech(&[], "", None, &["ddjskey"]);
+    assert_eq!(by_name(&got, "DataDome").evidence, "js_global:ddjskey");
+    for src in [
+        "https://js.datadome.co.example.net/tags.js",
+        "https://js.datadome.co/other.js",
+        "https://cdn.example.com/js.datadome.co/tags.js",
+    ] {
+        assert!(!has_tech(&tech_for_script(src), "DataDome"), "{src}");
+    }
+    assert!(!has_tech(
+        &tech(&[("Set-Cookie", "datadome_extra=1")], "", None, &[]),
+        "DataDome"
+    ));
+
+    // HUMAN Security: documented sensor hosts, `_px*` cookies, `_pxAppId` global
+    for src in [
+        "//client.perimeterx.net/PXexample/main.min.js",
+        "https://client.perimeterx.net/PXexample/main.min.js",
+        "https://sensor.px-cloud.net/PXexample/main.min.js",
+    ] {
+        let got = tech_for_script(src);
+        assert_eq!(by_name(&got, "HUMAN Security").evidence, "script_src", "{src}");
+    }
+    for cookie in [
+        "_px3=abc; Path=/",
+        "_pxvid=abc; Path=/",
+        "pxcts=abc",
+        "_pxhd=abc; Path=/",
+    ] {
+        let got = tech(&[("Set-Cookie", cookie)], "", None, &[]);
+        assert!(has_tech(&got, "HUMAN Security"), "{cookie}");
+    }
+    let got = tech(&[], "", None, &["_pxAppId"]);
+    assert_eq!(by_name(&got, "HUMAN Security").evidence, "js_global:_pxAppId");
+    for src in [
+        "https://client.perimeterx.net.example.net/PXexample/main.min.js",
+        "https://evilpx-cloud.net/PXexample/main.min.js",
+        "https://example.com/px-cloud.net/main.min.js",
+    ] {
+        assert!(!has_tech(&tech_for_script(src), "HUMAN Security"), "{src}");
+    }
+    assert!(!has_tech(
+        &tech(&[("Set-Cookie", "_pxother=1")], "", None, &[]),
+        "HUMAN Security"
+    ));
+
+    // Akamai Bot Manager: the `bm_sv` cookie its documentation attributes to Bot Manager
+    let got = tech(&[("Set-Cookie", "bm_sv=abc; Path=/; Secure")], "", None, &[]);
+    assert_eq!(by_name(&got, "Akamai Bot Manager").evidence, "cookie:bm_sv");
+    assert_eq!(by_name(&got, "Akamai").evidence, "implied:Akamai Bot Manager");
+    // `ak_bmsc` is documented as a performance cookie, so it is not evidence of Bot Manager
+    let got = tech(&[("Set-Cookie", "ak_bmsc=abc; Path=/")], "", None, &[]);
+    assert!(!has_tech(&got, "Akamai Bot Manager"));
+
+    // detection-data: `__cf_bm` is set for the vendor's bot products; its load-balancer cookie is not one
+    let got = tech(
+        &[("Set-Cookie", "__cf_bm=abc; Path=/; Secure; SameSite=None")],
+        "",
+        None,
+        &[],
+    );
+    assert_eq!(
+        // detection-data
+        by_name(&got, "Cloudflare Bot Management").evidence,
+        "cookie:__cf_bm"
+    );
+    assert_eq!(by_name(&got, "Cloudflare").category, "cdn"); // detection-data
+    let got = tech(&[("Set-Cookie", "__cflb=abc; Path=/")], "", None, &[]);
+    assert!(!has_tech(&got, "Cloudflare Bot Management")); // detection-data
+
+    // Fingerprint: the agent CDN, as a script tag or as the documented dynamic import
+    let got = tech_for_script("https://fpjscdn.net/v4/PUBLIC_API_KEY");
+    let fp = by_name(&got, "Fingerprint");
+    assert_eq!(
+        (fp.evidence.as_str(), fp.version.as_deref()),
+        ("script_src", Some("4"))
+    );
+    let import = r#"<script type="module">
+        const Fingerprint = await import('https://fpjscdn.net/v4/PUBLIC_API_KEY')
+        </script>"#;
+    let got = tech(&[], import, None, &[]);
+    let fp = by_name(&got, "Fingerprint");
+    assert_eq!((fp.evidence.as_str(), fp.version.as_deref()), ("html", Some("4")));
+    for src in [
+        "https://fpjscdn.net.example.net/v4/PUBLIC_API_KEY",
+        "https://fpjscdn.net/other/PUBLIC_API_KEY",
+        "https://example.com/fingerprint.js",
+    ] {
+        assert!(!has_tech(&tech_for_script(src), "Fingerprint"), "{src}");
+    }
+}
+
 /// Evidence kinds rank headers > cookies > meta > script_src > js_globals > html > url;
 /// output is sorted by name and identical across runs; the extractor reports the same list.
 #[test]
