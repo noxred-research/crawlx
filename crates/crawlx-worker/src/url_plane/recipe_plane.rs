@@ -88,6 +88,13 @@ impl UrlPlaneRunner {
         })
     }
 
+    /// Whether `metadata` marks a request as a sitemap document of the run's recipe (a root or a
+    /// nested sitemap proposal). Such a request is protocol input, so the extension filter, which
+    /// selects crawl pages, does not apply to it; every other scope rule does.
+    pub(super) fn is_recipe_sitemap_document(&self, metadata: &BTreeMap<String, serde_json::Value>) -> bool {
+        self.recipe_wants_sitemaps() && metadata.contains_key(SITEMAP_DEPTH_KEY)
+    }
+
     /// Admit one recipe page proposal with its exact route (and nested-source metadata) intact.
     ///
     /// # Errors

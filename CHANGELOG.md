@@ -21,6 +21,14 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ### Fixed
 
+- Sitemaps: the file-extension filter (the default deny list and `scope.extensionMatch` / `extensionFilter`)
+  selects crawl pages only. A sitemap document (a child of a sitemap index, a `Sitemap:` URL declared in
+  `robots.txt`, or the default `/sitemap.xml`) is no longer dropped because of its extension, so a
+  `.xml.gz` sitemap is fetched and decoded under the default filter (crawlx#72). Host, path, URL, robots and
+  authorization-record rules still apply to every sitemap document, and the URLs a sitemap lists still meet
+  the extension filter. An explicit seed URL such as `/sitemap.xml.gz` is a crawl page candidate and keeps
+  meeting the filter. Behaviour change: a crawl that set `scope.extensionMatch` to an allow list no longer
+  needs to include `xml` or `gz` for its sitemaps to be read.
 - Documentation accuracy: the compatibility endpoint table no longer lists the health probes under the
   `/compat` prefix (`GET /v0/health/readiness` and `/v0/health/liveness` are served at the API root, without
   a key); the `AuthorizationRecord.id` documentation says an id names one immutable record and an amendment

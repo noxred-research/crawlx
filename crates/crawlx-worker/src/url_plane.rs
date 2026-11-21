@@ -162,7 +162,7 @@ impl<'a> NativeHopAdmission<'a> {
         self.authority().await?;
         let canonical = self
             .runner
-            .admit_native_scope(url, self.entry.depth, allow_leaf)
+            .admit_native_scope(url, self.entry.depth, allow_leaf, false)
             .await?;
         // Never authorize a normalized URL and then send a different query or path.
         if canonical.url != *url {
@@ -1982,7 +1982,13 @@ impl UrlPlaneRunner {
                 None,
                 hop.code(),
             ),
-            None => self.discovery_admission(&url, depth, from, action_bearing).await,
+            None => {
+                let sitemap_document = proposal
+                    .as_ref()
+                    .is_some_and(|proposal| self.is_recipe_sitemap_document(&proposal.metadata));
+                self.discovery_admission(&url, depth, from, action_bearing, sitemap_document)
+                    .await
+            }
         };
         // Robots admission can await a response across the run deadline.
         if self.deps.clock.now() >= self.budget.lock().deadline() {
@@ -2092,6 +2098,7 @@ impl UrlPlaneRunner {
         depth: u16,
         from: Option<i64>,
         action_bearing: bool,
+        sitemap_document: bool,
     ) -> (
         Option<(FrontierStatus, String)>,
         Option<DiscoveryOutcome>,
@@ -2125,6 +2132,8 @@ impl UrlPlaneRunner {
         let discovery_only = self.discovery_only(url, depth, from).is_some();
         let verdict = if discovery_only {
             ScopeVerdict::Admitted { leaf_only: false }
+        } else if sitemap_document {
+            self.scope.decide_sitemap_document(url, depth)
         } else {
             self.scope.decide(url, depth)
         };
@@ -2444,20 +2453,20 @@ impl UrlPlaneRunner {
             let Some((canon, _)) = self.canonicalize(&url) else {
                 continue;
             };
-            if !self.scope.decide(&canon, 0).is_admitted() {
-                continue; // an off-scope sitemap host is not fetched
+            // an off-scope sitemap host is not fetched; the extension filter selects pages only
+            if !self.scope.decide_sitemap_document(&canon, 0).is_admitted() {
+                continue;
             }
             fetched += 1;
             let fetched_response = if let Some(policy) = &self.crawl.scope.discovery {
                 let acquisition = self.crawl.acquisition.clone().unwrap_or_default();
                 let mut budget = crate::acquisition::AcquisitionBudgetV1::new(&acquisition)?;
-                self.fetch_discovery_auxiliary(
+                self.fetch_sitemap_document(
                     &url,
                     0,
                     policy.max_feed_bytes,
                     &mut budget,
                     &CancellationToken::new(),
-                    crawlx_policy::robots::HopKind::Feed,
                 )
                 .await
             } else {
@@ -3228,7 +3237,12 @@ impl UrlPlaneRunner {
                 .discovery_only(&entry.url, entry.depth, entry.discovered_from)
                 .is_none()
         {
-            match self.scope.decide(&entry.url, entry.depth) {
+            let verdict = if self.is_recipe_sitemap_document(&queued.envelope.metadata) {
+                self.scope.decide_sitemap_document(&entry.url, entry.depth)
+            } else {
+                self.scope.decide(&entry.url, entry.depth)
+            };
+            match verdict {
                 ScopeVerdict::Denied(_) => {
                     return self
                         .finish(
