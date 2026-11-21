@@ -2,6 +2,7 @@
 //!
 //! * [`gym`]: the fixture server, ground-truth manifests and the server-side ledger.
 //! * [`urlplane`]: a URL-plane crawl of the static fixture (ablation A0).
+//! * [`robots_edge`]: the RFC 9309 `robots-edge` fixture family and its request-log oracle.
 //! * [`scorecard`]: the scorecard metrics computed from run rows plus the ledger.
 //! * [`policy`], [`driver`]: the layered-queue policy and a self-contained exploration driver.
 //! * [`replay`]: recorded-trace replay through a decision function.
@@ -61,6 +62,7 @@ pub mod policy;
 pub mod query_identity;
 pub mod release_gate;
 pub mod replay;
+pub mod robots_edge;
 pub mod scorecard;
 pub mod soak;
 pub mod stats;

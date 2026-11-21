@@ -452,6 +452,87 @@ pub(crate) async fn record_robots_blocked(
     }
 }
 
+/// Failure code of a browser error that costs one page and not the run, `None` when the error
+/// is not about one page (a crashed browser, a lost login, a protocol or script fault).
+///
+/// Deny-first: an egress denial keeps its own code and is never retried.
+#[must_use]
+pub(crate) fn browser_failure_reason(error: &BrowserError) -> Option<&'static str> {
+    match error {
+        BrowserError::EgressDenied(_) => Some("egress_denied"),
+        BrowserError::Navigation(_) => Some("navigation_failed"),
+        BrowserError::Timeout(_) => Some("navigation_timeout"),
+        _ => None,
+    }
+}
+
+/// [`browser_failure_reason`] of a session command that navigated or observed a page.
+#[must_use]
+pub(crate) fn session_failure_reason(error: &SessionError) -> Option<&'static str> {
+    match error {
+        SessionError::Browser(error) => browser_failure_reason(error),
+        SessionError::Observe(crawlx_observe::ObserveError::Browser(error)) => browser_failure_reason(error),
+        _ => None,
+    }
+}
+
+/// Failure code of a worker error that costs one page and not the run: a navigation or
+/// observation failure ([`session_failure_reason`]) or an extraction failure of the page's
+/// output (`extract_failed`, including the isolated parser helper's limits).
+#[must_use]
+pub(crate) fn page_failure_reason(error: &WorkerError) -> Option<&'static str> {
+    match error {
+        WorkerError::Session(error) => session_failure_reason(error),
+        WorkerError::Browser(error) => browser_failure_reason(error),
+        // a bad selector or content policy is the operator's configuration: every page would fail
+        WorkerError::Extraction(
+            crawlx_extract::ExtractError::InvalidSelector { .. }
+            | crawlx_extract::ExtractError::InvalidContentPolicy(_),
+        ) => None,
+        WorkerError::Extraction(_) => Some("extract_failed"),
+        _ => None,
+    }
+}
+
+/// Count one page the browser plane could not load, observe or publish as a failed state, and
+/// announce it as a `state_failed` event. `url` is the page as requested; the run goes on with
+/// the rest of the frontier.
+pub(crate) async fn record_state_failed(
+    rc: &RunContext,
+    session: crawlx_core::SessionId,
+    url: Option<&str>,
+    reason: &str,
+) {
+    rc.counters
+        .attempt_with_reason(Plane::States, Attempt::Failed, reason);
+    tracing::warn!(url = url.unwrap_or(""), reason, "page failed; the run continues");
+    if let Err(e) = rc
+        .stores
+        .events
+        .append(
+            rc.run,
+            "state_failed",
+            serde_json::json!({
+                "url": url,
+                "reason": reason,
+                "plane": "browser",
+                "sessionId": session.0,
+            }),
+        )
+        .await
+    {
+        tracing::warn!(error = %e, "state_failed event not recorded");
+    }
+}
+
+/// Did the run lose every page it tried? True when browser pages failed (`states.failed`) and
+/// no page or state was ever recorded as a success: such a run must not end as a clean
+/// completion.
+#[must_use]
+pub(crate) fn lost_every_page(counters: &crawlx_core::counters::PlaneCounters) -> bool {
+    counters.states.failed > 0 && counters.states.succeeded == 0 && counters.urls.succeeded == 0
+}
+
 /// Strategy attribution of the tab policy's `SwitchTab`/`CloseTab` actions.
 pub const TAB_POLICY: &str = "tab_policy";
 /// Version of the tab policy, recorded on its actions.
@@ -459,6 +540,9 @@ pub const TAB_POLICY_VERSION: u32 = 2;
 /// Observation rounds a round waits for the decision on an approval it just requested, so an
 /// immediate decision is spent at the epoch it was requested at.
 const APPROVAL_GRACE_ROUNDS: u32 = 3;
+/// Pages in a row that fail to observe before a session stops returning to the page its chain
+/// started from and moves on to the next start page instead.
+const MAX_PAGE_FAILURES_IN_A_ROW: u32 = 3;
 
 /// Synthetic element identity of "the tab showing this URL" for tab-policy keys.
 #[must_use]
@@ -1293,6 +1377,10 @@ impl ExplorationDriver {
     }
 
     /// Reuse the settled observation; never navigate or execute to produce page output.
+    ///
+    /// A page whose output cannot be produced (the isolated parser's limits, an oversized
+    /// document) is a failed state: it is counted and announced, the page keeps no output and
+    /// the session goes on. Only a failure that is not about this page ends the session.
     async fn record_browser_page(
         &mut self,
         bundle: &ObservationBundle,
@@ -1306,12 +1394,22 @@ impl ExplorationDriver {
             return Ok(Vec::new());
         }
         let response = self.handle.document_response(bundle.epoch).await?;
-        let urls =
+        let published =
             Box::pin(plane.record_browser_observation(&self.rc, &self.session, request, bundle, response))
-                .await?;
+                .await;
+        // settled either way: the same epoch is neither published nor counted a second time
         self.browser_observed.insert(key, bundle.epoch);
         self.browser_depths.insert(bundle.url.key, request.depth);
-        Ok(urls)
+        match published {
+            Ok(urls) => Ok(urls),
+            Err(error) => {
+                let Some(reason) = page_failure_reason(&error) else {
+                    return Err(error);
+                };
+                record_state_failed(&self.rc, self.session.id, Some(request.url.url.as_str()), reason).await;
+                Ok(Vec::new())
+            }
+        }
     }
 
     /// Fold the page-hooks discoveries of `bundle` in: each URL is
@@ -1432,12 +1530,24 @@ impl ExplorationDriver {
                     if e.is_target_crash() {
                         self.ensure_session_usable().await?;
                     }
+                    if let Some(reason) = session_failure_reason(&e) {
+                        record_state_failed(&self.rc, self.session.id, Some(url.url.as_str()), reason).await;
+                    }
                     tracing::warn!(url = %url, error = %e, "navigation failed; page skipped");
                     continue;
                 }
             }
             first = false;
-            let bundle = self.observe().await?;
+            let bundle = match self.observe().await {
+                Ok(bundle) => bundle,
+                Err(error) => {
+                    let Some(reason) = page_failure_reason(&error) else {
+                        return Err(error);
+                    };
+                    record_state_failed(&self.rc, self.session.id, Some(url.url.as_str()), reason).await;
+                    continue;
+                }
+            };
             let state = self.persist_observation(&bundle).await?;
             let _ = state;
             self.browser_depths.insert(bundle.url.key, depth);
@@ -1667,6 +1777,8 @@ impl ExplorationDriver {
         let mut halts = 0u32;
         let mut storage_halt = None;
         let mut leave_popup = false;
+        let mut failed_pages_in_a_row = 0u32;
+        let mut last_action: Option<ActionContextId> = None;
         loop {
             if let Some(reason) = self.stop_reason().await? {
                 if reason == TerminalReason::DeadlineReached {
@@ -1681,9 +1793,53 @@ impl ExplorationDriver {
                 return Ok(self.end(TerminalReason::LimitReached));
             }
             let mut current = match after.take() {
-                Some(p) => p,
+                Some(p) => {
+                    failed_pages_in_a_row = 0;
+                    last_action = None;
+                    p
+                }
                 None => {
-                    let b = self.observe().await?;
+                    let b = match self.observe().await {
+                        Ok(b) => {
+                            failed_pages_in_a_row = 0;
+                            last_action = None;
+                            b
+                        }
+                        Err(error) => {
+                            // The page the browser stands on cannot be observed (a network error
+                            // page, a timeout, a refused redirect). That costs this page, not the
+                            // run: count it, never exercise the control that led here again and
+                            // leave for the page the chain started from, or the next start page.
+                            let Some(reason) = page_failure_reason(&error) else {
+                                return Err(error);
+                            };
+                            record_state_failed(
+                                &self.rc,
+                                self.session.id,
+                                Some(current_request.url.url.as_str()),
+                                reason,
+                            )
+                            .await;
+                            if let Some(key) = last_action.take() {
+                                self.suppressed.insert(key, u64::MAX);
+                            }
+                            failed_pages_in_a_row += 1;
+                            chain = 0;
+                            let back = anchor
+                                .take()
+                                .filter(|_| failed_pages_in_a_row < MAX_PAGE_FAILURES_IN_A_ROW);
+                            match self
+                                .leave_failed_page(back, &mut starts, &mut visited_starts)
+                                .await?
+                            {
+                                Some(request) => {
+                                    current_request = request;
+                                    continue;
+                                }
+                                None => return Ok(self.end(TerminalReason::FrontierExhausted)),
+                            }
+                        }
+                    };
                     let st = self.persist_observation(&b).await?;
                     self.browser_depths
                         .entry(b.url.key)
@@ -2199,6 +2355,7 @@ impl ExplorationDriver {
                 .counters
                 .discovery(Plane::Interactions, DiscoveryOutcome::Admitted);
             let key = proposal.key.clone();
+            last_action = Some(key.id());
             self.steps += 1;
             let settle = self.cfg.action_settle();
             let expected = proposal.expected.clone();
@@ -2379,11 +2536,48 @@ impl ExplorationDriver {
                     if e.is_target_crash() {
                         self.ensure_session_usable().await?;
                     }
+                    if let Some(reason) = session_failure_reason(&e) {
+                        record_state_failed(&self.rc, self.session.id, Some(url.url.as_str()), reason).await;
+                    }
                     tracing::warn!(url = %url, error = %e, "start page not reachable");
                 }
             }
         }
         Ok(None)
+    }
+
+    /// The browser stands on a page it could not observe: move it somewhere that can be explored.
+    /// Goes back to `back` (the page the interaction chain started from) when there is one and
+    /// it loads, otherwise on to the next start page; `None` when nothing is left. The caller
+    /// has already suppressed whatever led to the failed page, so a return is not a loop.
+    async fn leave_failed_page(
+        &mut self,
+        back: Option<RequestEnvelopeV1>,
+        starts: &mut VecDeque<RequestEnvelopeV1>,
+        visited: &mut BTreeSet<(Digest, String)>,
+    ) -> Result<Option<RequestEnvelopeV1>, WorkerError> {
+        if let Some(request) = back {
+            match self.handle.navigate(request.clone()).await {
+                Ok(_) => return Ok(Some(request)),
+                Err(
+                    error @ (SessionError::ExecutionDeadlineReached
+                    | SessionError::Binding(_)
+                    | SessionError::Store(_)
+                    | SessionError::HaltedStorage(_)),
+                ) => return Err(error.into()),
+                Err(e) => {
+                    if e.is_target_crash() {
+                        self.ensure_session_usable().await?;
+                    }
+                    tracing::warn!(error = %e, "could not return to the last good page; moving to the next start page");
+                }
+            }
+        }
+        let next = self.next_start(starts, visited).await?;
+        if next.is_some() {
+            self.switching = SwitchingPolicy::new(self.cfg.switching);
+        }
+        Ok(next)
     }
 
     /// Denied proposals are journaled once per key (hold = denied) so the audit trail shows
@@ -2724,6 +2918,15 @@ impl ExplorationDriver {
             self.suppressed.insert(proposal.key.id(), u64::MAX);
             for refused in &outcome.robots_blocked {
                 self.note_robots_blocked(&refused.url, refused.reason).await;
+            }
+            // An egress denial (a redirect or link out of the authorized scope) is a page the run
+            // could not reach: counted as a failed state, never retried, the frontier goes on.
+            if let Some(denied) = outcome
+                .robots_blocked
+                .iter()
+                .find(|b| b.reason == "egress_denied")
+            {
+                record_state_failed(&self.rc, self.session.id, Some(&denied.url), "egress_denied").await;
             }
         }
         let succeeded = outcome.status == ActionStatus::Succeeded;
@@ -3759,5 +3962,88 @@ mod browser_queue_tests {
             }
             assert_eq!(actual, expected, "{strategy:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod page_failure_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use crawlx_extract::ExtractError;
+
+    #[test]
+    fn a_page_level_browser_failure_costs_the_page_not_the_run() {
+        for (error, reason) in [
+            (BrowserError::EgressDenied("x".to_owned()), "egress_denied"),
+            (
+                BrowserError::Navigation("net::ERR_X".to_owned()),
+                "navigation_failed",
+            ),
+            (BrowserError::Timeout(30_000), "navigation_timeout"),
+        ] {
+            assert_eq!(browser_failure_reason(&error), Some(reason), "{error:?}");
+            assert_eq!(
+                page_failure_reason(&WorkerError::Session(SessionError::Browser(error))),
+                Some(reason)
+            );
+        }
+        let observed =
+            crawlx_observe::ObserveError::Browser(BrowserError::Navigation("chrome-error".to_owned()));
+        assert_eq!(
+            session_failure_reason(&SessionError::Observe(observed)),
+            Some("navigation_failed")
+        );
+    }
+
+    #[test]
+    fn a_browser_crash_a_lost_login_and_configuration_errors_stay_fatal() {
+        for error in [
+            BrowserError::TargetCrashed,
+            BrowserError::TargetClosed,
+            BrowserError::SessionExpired,
+            BrowserError::Script("x".to_owned()),
+        ] {
+            assert_eq!(browser_failure_reason(&error), None, "{error:?}");
+        }
+        assert_eq!(page_failure_reason(&WorkerError::Config("bad".to_owned())), None);
+        assert_eq!(
+            page_failure_reason(&WorkerError::Session(SessionError::CrashedDuringAction(
+                ActionId::new()
+            ))),
+            None
+        );
+        let selector = ExtractError::InvalidSelector {
+            selector: "[".to_owned(),
+            reason: "x".to_owned(),
+        };
+        assert_eq!(page_failure_reason(&WorkerError::Extraction(selector)), None);
+    }
+
+    #[test]
+    fn an_extraction_limit_is_a_failed_page() {
+        let too_large = ExtractError::TooLarge {
+            what: "bytes",
+            limit: 1,
+            actual: 2,
+        };
+        assert_eq!(
+            page_failure_reason(&WorkerError::Extraction(too_large)),
+            Some("extract_failed")
+        );
+    }
+
+    #[test]
+    fn only_a_run_without_any_success_has_lost_every_page() {
+        use crawlx_core::counters::PlaneCounters;
+        let mut counters = PlaneCounters::default();
+        assert!(!lost_every_page(&counters), "nothing was tried");
+        counters.states.failed = 2;
+        assert!(lost_every_page(&counters));
+        counters.states.succeeded = 1;
+        assert!(!lost_every_page(&counters), "a page was observed");
+        counters.states.succeeded = 0;
+        counters.urls.succeeded = 1;
+        assert!(!lost_every_page(&counters), "a URL was fetched");
     }
 }

@@ -358,6 +358,11 @@ impl CdpContext {
         bundle.html = html;
         bundle.raw_artifacts = raw_artifacts;
         bundle.discovered_urls = discovered_urls;
+        if !spec.revalidation_only
+            && self.ctl.config.launch_profile != crawlx_core::config::LaunchProfile::Stealth
+        {
+            bundle.js_globals = self.capture_js_globals(&sess).await;
+        }
         bundle.cost = ObservationCost {
             cdp_calls: u32::try_from(self.ctl.client.call_count().saturating_sub(calls_before))
                 .unwrap_or(u32::MAX),
@@ -365,6 +370,35 @@ impl CdpContext {
             wall_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         };
         self.mask_captcha_observation(bundle)
+    }
+
+    /// Names (never values) of the own, non-native `window` properties of the main frame: the
+    /// main world's own property names minus those of a pristine isolated world of the same
+    /// frame (see [`crate::globals`]). A failure yields none: this is evidence, not a step.
+    async fn capture_js_globals(&self, sess: &CdpSession) -> Vec<String> {
+        let main = match sess
+            .send(
+                "Runtime.evaluate",
+                json!({ "expression": crate::globals::NAMES_EXPRESSION, "returnByValue": true, "silent": true }),
+            )
+            .await
+            .and_then(|v| crate::cdp::runtime_result("Runtime.evaluate", &v))
+        {
+            Ok(v) => crate::globals::names_of(&v),
+            Err(e) => {
+                tracing::debug!(error = %e, "window property names unavailable");
+                return Vec::new();
+            }
+        };
+        let Ok((_, isolated, ctx)) = self.world(None).await else {
+            return Vec::new();
+        };
+        let pristine = isolated
+            .evaluate_in(ctx, crate::globals::NAMES_EXPRESSION, false)
+            .await
+            .map(|v| crate::globals::names_of(&v))
+            .unwrap_or_default();
+        crate::globals::page_defined(&main, &pristine)
     }
 
     /// Main-document HTML via `DOM.getOuterHTML`, falling back to the documentElement. The text

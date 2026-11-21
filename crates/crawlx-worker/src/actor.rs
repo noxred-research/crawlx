@@ -2697,9 +2697,13 @@ impl SessionActor {
                 return Err(SessionError::CrashedDuringAction(id));
             }
             Err(e) => {
-                let robots_blocked = match &e {
-                    BrowserError::RobotsBlocked { url, reason } => {
+                let robots_blocked = match (&e, a.browser_action()) {
+                    (BrowserError::RobotsBlocked { url, reason }, _) => {
                         vec![BlockedNavigation::new(url.clone(), reason)]
+                    }
+                    // the browser refused to navigate to the action's own target
+                    (BrowserError::EgressDenied(_), BrowserAction::Navigate { url }) => {
+                        vec![BlockedNavigation::new(url.to_string(), "egress_denied")]
                     }
                     _ => Vec::new(),
                 };
@@ -2712,10 +2716,9 @@ impl SessionActor {
                     robots_blocked,
                 };
                 let outcome = self.finish(a, id, failed, started).await?;
-                return if matches!(
-                    &e,
-                    BrowserError::Captcha(_) | BrowserError::EgressDenied(_) | BrowserError::SessionExpired
-                ) {
+                // A refused navigation (robots.txt, egress policy) or any other failed action is
+                // an outcome; only a captcha failure and an expired login end the session.
+                return if matches!(&e, BrowserError::Captcha(_) | BrowserError::SessionExpired) {
                     Err(SessionError::Browser(e))
                 } else {
                     Ok(outcome)
@@ -2784,14 +2787,9 @@ impl SessionActor {
                 )),
                 robots_blocked: refused,
             };
-            let outcome = self.finish(a, id, blocked, started).await?;
-            return if egress_denied {
-                Err(SessionError::Browser(BrowserError::EgressDenied(
-                    "the egress policy refused the navigation".to_owned(),
-                )))
-            } else {
-                Ok(outcome)
-            };
+            // A denied target costs this action, not the session: the journaled outcome is
+            // `failed` with the refusal recorded, and the driver never retries it.
+            return self.finish(a, id, blocked, started).await;
         }
         let epoch_after = self.ctx.current_epoch();
         if epoch_after.navigation_seq != epoch_before.navigation_seq

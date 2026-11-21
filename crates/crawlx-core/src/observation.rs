@@ -446,6 +446,11 @@ pub struct ObservationCost {
     pub wall_ms: u64,
 }
 
+/// Most `window` property names one observation reports ([`ObservationBundle::js_globals`]).
+pub const MAX_JS_GLOBALS: usize = 512;
+/// Longest `window` property name kept, in bytes; a longer one is dropped, never truncated.
+pub const MAX_JS_GLOBAL_NAME_BYTES: usize = 64;
+
 /// What to capture.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct ObservationSpec {
@@ -532,6 +537,12 @@ pub struct ObservationBundle {
     /// Empty unless `ContextConfig::page_hooks` is on. The URL is as the
     /// page passed it, not canonicalized.
     pub discovered_urls: Vec<(String, String)>,
+    /// Names (never values) of the own, non-native properties of the page's `window`, captured
+    /// after settle: the properties the page's scripts added to a pristine global object.
+    /// Sorted, deduplicated, identifier-shaped and length-capped, at most
+    /// [`MAX_JS_GLOBALS`] of them. Empty when the context did not capture them (under
+    /// `Stealth`, for a revalidation-only observation or when the evaluation failed).
+    pub js_globals: Vec<String>,
 }
 
 impl ObservationBundle {
@@ -564,6 +575,7 @@ impl ObservationBundle {
             title: None,
             raw_artifacts: Vec::new(),
             discovered_urls: Vec::new(),
+            js_globals: Vec::new(),
         }
     }
 
