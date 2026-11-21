@@ -28,7 +28,7 @@
 //! concurrent callers never share a slot and never reorder.
 
 use crate::resolver::CheckedResolution;
-use crawlx_core::config::Politeness;
+use crawlx_core::config::{BackoffProfile, Politeness};
 use crawlx_core::origin::{OriginAdmission, OriginPermit};
 use crawlx_core::runtime_admission::PacingDialectV1;
 use crawlx_core::seed::CrawlSeed;
@@ -98,13 +98,17 @@ impl From<&url::Url> for Origin {
 pub struct GovernorConfig {
     /// `d0`: minimum spacing between request starts to one origin.
     pub base_delay: Duration,
-    /// Cap for the adaptive spacing.
+    /// Cap for the adaptive spacing (`politeness.maxDelayMs`). A `Retry-After` above it, and a
+    /// spacing floor above it, are still honoured.
     pub max_delay: Duration,
     /// Concurrent requests per origin.
     pub max_in_flight_per_origin: usize,
     /// After this many consecutive `2xx` the spacing halves (never below the origin's spacing
-    /// floor, `max(base_delay, Crawl-delay)`).
-    pub decay_after: u32,
+    /// floor, `max(base_delay, Crawl-delay)`). `None` uses the profile's default: 3 for
+    /// [`BackoffProfile::Balanced`], 10 for [`BackoffProfile::Conservative`].
+    pub decay_after: Option<u32>,
+    /// Curve of the adaptive spacing after `429`/`503` answers.
+    pub profile: BackoffProfile,
     /// Source of the ±20% back-off jitter.
     pub seed: CrawlSeed,
     /// Requests per second across every host (`politeness.globalRps`); `None` = unlimited.
@@ -129,7 +133,8 @@ impl Default for GovernorConfig {
             base_delay: Duration::from_millis(250),
             max_delay: Duration::from_secs(60),
             max_in_flight_per_origin: 1,
-            decay_after: 10,
+            decay_after: None,
+            profile: BackoffProfile::default(),
             seed: CrawlSeed(0),
             global_rps: None,
             global_rpm: None,
@@ -147,7 +152,10 @@ impl GovernorConfig {
     pub fn from_politeness(p: &Politeness, seed: CrawlSeed) -> Self {
         Self {
             base_delay: Duration::from_millis(u64::from(p.delay_ms)),
+            max_delay: Duration::from_millis(u64::from(p.max_delay_ms)),
             max_in_flight_per_origin: usize::from(p.max_in_flight_per_origin.max(1)),
+            decay_after: p.decay_after,
+            profile: p.backoff_profile,
             seed,
             global_rps: p.global_rps,
             global_rpm: p.global_rpm,
@@ -156,6 +164,15 @@ impl GovernorConfig {
             max_concurrency: usize::from(p.max_concurrency.max(1)),
             ..Self::default()
         }
+    }
+
+    /// Consecutive `200` answers that halve the adaptive spacing.
+    fn decay_streak(&self) -> u32 {
+        let default = match self.profile {
+            BackoffProfile::Balanced => 3,
+            _ => 10,
+        };
+        self.decay_after.unwrap_or(default).max(1)
     }
 }
 
@@ -296,6 +313,8 @@ struct Pacing {
     /// Lower bound of `delay`: `base_delay`, raised by the origin's `robots.txt` `Crawl-delay`.
     floor: Duration,
     ok_streak: u32,
+    /// Consecutive `429`/`503` answers since the last `200`.
+    throttle_streak: u32,
     /// Last HTTP admission or committed browser dispatch; `None` before the first.
     last_start: Option<Instant>,
 }
@@ -806,6 +825,7 @@ impl OriginGovernor {
                 delay: self.cfg.base_delay,
                 floor: self.cfg.base_delay,
                 ok_streak: 0,
+                throttle_streak: 0,
                 last_start: None,
             }),
         });
@@ -963,24 +983,37 @@ impl OriginGovernor {
                     self.origin_cap
                         .note_cooldown(origin, retry_after.unwrap_or_default(), true)
                 } else {
-                    let jitter: f64 = self.rng.lock().random_range(0.8..1.2);
-                    let (current, floor) = {
+                    let (current, floor, streak) = {
                         let p = state.pacing.lock();
-                        (p.delay, p.floor)
+                        (p.delay, p.floor, p.throttle_streak)
                     };
-                    let doubled = current.saturating_mul(2);
-                    let delay = Duration::try_from_secs_f64(doubled.as_secs_f64() * jitter)
-                        .unwrap_or(Duration::MAX)
-                        .min(self.cfg.max_delay)
-                        .max(floor)
-                        .max(current)
-                        .max(retry_after.unwrap_or_default());
-                    tracing::debug!(
-                        jitter_factor = jitter,
-                        delay_millis = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
-                        rng_stream = "fetch/governor-jitter",
-                        "seeded origin backoff decision"
-                    );
+                    let retry = retry_after.unwrap_or_default();
+                    let delay = if self.cfg.profile == BackoffProfile::Balanced && streak == 0 {
+                        // One throttling answer after a success (or a fresh origin): twice the
+                        // floor, or the origin's own `Retry-After` when that is longer. Never
+                        // faster than the spacing already in force.
+                        floor
+                            .saturating_mul(2)
+                            .min(self.cfg.max_delay.max(floor))
+                            .max(current)
+                            .max(retry)
+                    } else {
+                        let jitter: f64 = self.rng.lock().random_range(0.8..1.2);
+                        let doubled = current.saturating_mul(2);
+                        let delay = Duration::try_from_secs_f64(doubled.as_secs_f64() * jitter)
+                            .unwrap_or(Duration::MAX)
+                            .min(self.cfg.max_delay)
+                            .max(floor)
+                            .max(current)
+                            .max(retry);
+                        tracing::debug!(
+                            jitter_factor = jitter,
+                            delay_millis = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+                            rng_stream = "fetch/governor-jitter",
+                            "seeded origin backoff decision"
+                        );
+                        delay
+                    };
                     self.origin_cap.note_cooldown(origin, delay, false);
                     delay
                 };
@@ -989,16 +1022,20 @@ impl OriginGovernor {
                     p.delay = delay.max(p.floor);
                 }
                 p.ok_streak = 0;
+                p.throttle_streak = p.throttle_streak.saturating_add(1);
                 if let Some(until) = Instant::now().checked_add(delay) {
                     p.next_allowed = p.next_allowed.max(until);
                 }
             }
-            200 if dialect != PacingDialectV1::LatencyTargetThrottleV1 => {
+            200 => {
                 let mut p = state.pacing.lock();
-                p.ok_streak = p.ok_streak.saturating_add(1);
-                if p.ok_streak >= self.cfg.decay_after {
-                    p.ok_streak = 0;
-                    p.delay = (p.delay / 2).max(p.floor);
+                p.throttle_streak = 0;
+                if dialect != PacingDialectV1::LatencyTargetThrottleV1 {
+                    p.ok_streak = p.ok_streak.saturating_add(1);
+                    if p.ok_streak >= self.cfg.decay_streak() {
+                        p.ok_streak = 0;
+                        p.delay = (p.delay / 2).max(p.floor);
+                    }
                 }
             }
             _ => {}
@@ -1434,7 +1471,7 @@ mod tests {
         let g = OriginGovernor::new(GovernorConfig {
             base_delay: Duration::from_millis(250),
             max_delay: Duration::from_secs(1),
-            decay_after: 2,
+            decay_after: Some(2),
             ..GovernorConfig::default()
         });
         let o = origin("https://a.test");
@@ -1457,6 +1494,179 @@ mod tests {
             g.on_response(&o, 200, None);
         }
         assert_eq!(g.current_delay(&o), Duration::from_millis(250));
+    }
+
+    /// Gaps between consecutive permits to `o`: `n` rounds of acquire, then a `200` answer.
+    async fn gaps_after_a_throttle(g: &OriginGovernor, o: &Origin, n: usize) -> Vec<Duration> {
+        let mut gaps = Vec::with_capacity(n);
+        let mut last = Instant::now();
+        for _ in 0..n {
+            drop(g.acquire(o).await.unwrap());
+            let now = Instant::now();
+            gaps.push(now.duration_since(last));
+            last = now;
+            g.on_response(o, 200, None);
+        }
+        gaps
+    }
+
+    /// The timer wheel rounds a sleep up to the next millisecond.
+    fn assert_gaps(got: &[Duration], want: &[(usize, Duration)]) {
+        let want: Vec<Duration> = want
+            .iter()
+            .flat_map(|&(n, d)| std::iter::repeat_n(d, n))
+            .collect();
+        assert_eq!(got.len(), want.len(), "{got:?}");
+        for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+            assert!(
+                *g >= *w && *g <= *w + Duration::from_millis(2),
+                "gap {i}: {g:?} vs {w:?} in {got:?}"
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn balanced_one_retry_after_two_does_not_turn_into_minutes() {
+        // The shape reported in the issue: one 429 with `Retry-After: 2`, then clean answers.
+        let g = OriginGovernor::new(cfg());
+        let o = origin("https://one-blip.test");
+        drop(g.acquire(&o).await.unwrap());
+        let t0 = Instant::now();
+        g.on_response(&o, 429, Some(Duration::from_secs(2)));
+        assert_eq!(g.current_delay(&o), Duration::from_secs(2));
+        let gaps = gaps_after_a_throttle(&g, &o, 30).await;
+        let quarter = Duration::from_millis(250);
+        assert_gaps(
+            &gaps,
+            &[
+                (4, Duration::from_secs(2)),
+                (3, Duration::from_secs(1)),
+                (3, Duration::from_millis(500)),
+                (20, quarter),
+            ],
+        );
+        // 4 × 2 s + 3 × 1 s + 3 × 0.5 s + 20 × 0.25 s = 17.5 s, never below the floor. The
+        // previous curve needs 36.5 s for the same thirty answers.
+        assert!(gaps.iter().all(|g| *g >= quarter));
+        let total = t0.elapsed();
+        assert!(total <= Duration::from_secs(18), "{total:?}");
+        assert_eq!(g.current_delay(&o), quarter);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn conservative_keeps_the_previous_curve() {
+        let g = OriginGovernor::new(GovernorConfig {
+            profile: BackoffProfile::Conservative,
+            ..cfg()
+        });
+        let o = origin("https://conservative.test");
+        drop(g.acquire(&o).await.unwrap());
+        let t0 = Instant::now();
+        g.on_response(&o, 429, Some(Duration::from_secs(2)));
+        let gaps = gaps_after_a_throttle(&g, &o, 30).await;
+        assert_gaps(
+            &gaps,
+            &[
+                (11, Duration::from_secs(2)),
+                (10, Duration::from_secs(1)),
+                (9, Duration::from_millis(500)),
+            ],
+        );
+        let total = t0.elapsed();
+        assert!(total >= Duration::from_secs(36), "{total:?}");
+        // Every throttling answer doubles, successes in between or not.
+        let g = OriginGovernor::new(GovernorConfig {
+            profile: BackoffProfile::Conservative,
+            ..cfg()
+        });
+        let o = origin("https://conservative-doubles.test");
+        g.on_response(&o, 429, None);
+        let first = g.current_delay(&o);
+        g.on_response(&o, 200, None);
+        g.on_response(&o, 429, None);
+        let second = g.current_delay(&o);
+        assert!(
+            first >= Duration::from_millis(400) && first <= Duration::from_millis(600),
+            "{first:?}"
+        );
+        assert!(second >= first.mul_f64(1.6), "{first:?} then {second:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn balanced_consecutive_throttles_still_back_off() {
+        let g = OriginGovernor::new(cfg());
+        let o = origin("https://consecutive.test");
+        g.on_response(&o, 429, None);
+        let first = g.current_delay(&o);
+        assert_eq!(first, Duration::from_millis(500), "2 × floor, not jittered");
+        g.on_response(&o, 503, None);
+        let second = g.current_delay(&o);
+        assert!(second >= first.mul_f64(1.6), "{first:?} then {second:?}");
+        g.on_response(&o, 429, None);
+        let third = g.current_delay(&o);
+        assert!(third >= second.mul_f64(1.6), "{second:?} then {third:?}");
+        for _ in 0..20 {
+            g.on_response(&o, 429, None);
+        }
+        assert_eq!(
+            g.current_delay(&o),
+            Duration::from_secs(60),
+            "capped by max_delay"
+        );
+        // A success ends the streak: the next throttle does not double again.
+        g.on_response(&o, 200, None);
+        g.on_response(&o, 429, None);
+        assert_eq!(g.current_delay(&o), Duration::from_secs(60));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn balanced_throttle_never_beats_the_floor_and_always_honours_retry_after() {
+        let g = OriginGovernor::new(GovernorConfig {
+            max_delay: Duration::from_secs(1),
+            ..cfg()
+        });
+        // Retry-After above max_delay still wins.
+        let o = origin("https://retry-after.test");
+        g.on_response(&o, 503, Some(Duration::from_secs(5)));
+        assert_eq!(g.current_delay(&o), Duration::from_secs(5));
+        // A Crawl-delay floor above max_delay is the spacing, never less.
+        let slow = origin("https://crawl-delay.test");
+        g.set_crawl_delay(&slow, Duration::from_secs(3));
+        g.on_response(&slow, 429, None);
+        assert_eq!(g.current_delay(&slow), Duration::from_secs(3));
+        for _ in 0..50 {
+            g.on_response(&slow, 200, None);
+        }
+        assert_eq!(g.current_delay(&slow), Duration::from_secs(3));
+        // The next start waits at least the Retry-After.
+        let waited_from = Instant::now();
+        drop(g.acquire(&o).await.unwrap());
+        assert!(
+            waited_from.elapsed() >= Duration::from_secs(5),
+            "{:?}",
+            waited_from.elapsed()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn decay_streak_is_configurable() {
+        let g = OriginGovernor::new(GovernorConfig {
+            decay_after: Some(1),
+            ..cfg()
+        });
+        let o = origin("https://decay-one.test");
+        g.on_response(&o, 429, Some(Duration::from_secs(2)));
+        g.on_response(&o, 200, None);
+        assert_eq!(g.current_delay(&o), Duration::from_secs(1));
+        g.on_response(&o, 200, None);
+        assert_eq!(g.current_delay(&o), Duration::from_millis(500));
+        let g = OriginGovernor::new(GovernorConfig {
+            decay_after: Some(0),
+            ..cfg()
+        });
+        g.on_response(&o, 429, Some(Duration::from_secs(2)));
+        g.on_response(&o, 200, None);
+        assert_eq!(g.current_delay(&o), Duration::from_secs(1), "0 behaves as 1");
     }
 
     #[tokio::test(start_paused = true)]
@@ -1497,7 +1707,7 @@ mod tests {
         let g = OriginGovernor::new(GovernorConfig {
             base_delay: Duration::from_millis(250),
             max_delay: Duration::from_secs(1),
-            decay_after: 2,
+            decay_after: Some(2),
             ..GovernorConfig::default()
         });
         let o = origin("https://floor.test");
@@ -1736,6 +1946,9 @@ mod tests {
             });
             let o = origin("https://a.test");
             g.on_response(&o, 429, None);
+            // the first throttle is exactly twice the floor; only a consecutive one is jittered
+            assert_eq!(g.current_delay(&o), Duration::from_millis(500));
+            g.on_response(&o, 429, None);
             g.current_delay(&o)
         };
         assert_eq!(run(1), run(1));
@@ -1926,6 +2139,9 @@ mod tests {
             per_host_rps: Some(2),
             per_host_rpm: Some(50),
             max_concurrency: 7,
+            max_delay_ms: 5_000,
+            backoff_profile: BackoffProfile::Conservative,
+            decay_after: Some(4),
         };
         let c = GovernorConfig::from_politeness(&p, CrawlSeed(1));
         assert_eq!(c.global_rps, Some(5));
@@ -1934,6 +2150,14 @@ mod tests {
         assert_eq!(c.per_host_rpm, Some(50));
         assert_eq!(c.max_concurrency, 7);
         assert_eq!(c.base_delay, Duration::from_millis(100));
+        assert_eq!(c.max_delay, Duration::from_secs(5));
+        assert_eq!(
+            (c.profile, c.decay_after),
+            (BackoffProfile::Conservative, Some(4))
+        );
+        let d = GovernorConfig::from_politeness(&Politeness::default(), CrawlSeed(1));
+        assert_eq!(d.max_delay, Duration::from_secs(60));
+        assert_eq!((d.profile, d.decay_after), (BackoffProfile::Balanced, None));
     }
 
     struct FailingAdmission {

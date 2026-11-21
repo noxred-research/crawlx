@@ -239,10 +239,17 @@ share a budget.
   hold back only the start that directly follows a floored start, including one from a run that
   overrides robots, while a worker that has not learned the delay can space its own consecutive
   starts at its own `delayMs`.
-- **Adaptive back-off.** `429` and `503` double the origin's spacing with ±20 % seeded jitter up to
-  60 s (never below the `Crawl-delay` floor); `Retry-After` is a floor and is never shortened; after
-  ten consecutive successes the spacing halves down to the floor. The cool-down is shared across
-  workers.
+- **Adaptive back-off.** `politeness.backoffProfile` picks the curve; both profiles never go below the
+  origin's spacing floor, never shorten a `Retry-After`, and share the cool-down across workers.
+  - `balanced` (default): the first `429` or `503` after a success sets the spacing to
+    `max(Retry-After, 2 × floor)`, with no jitter; the spacing doubles (±20 % seeded jitter) only on
+    *consecutive* throttling answers, up to `politeness.maxDelayMs` (default 60 000 ms; a longer
+    `Retry-After` and a longer floor still win); every `politeness.decayAfter` consecutive `200`
+    answers (default 3) halve it down to the floor. One `Retry-After: 2` on a 250 ms floor costs
+    about 17 s over the next 30 requests, not minutes.
+  - `conservative`: the 0.2.0 curve. Every `429` or `503` doubles the spacing with ±20 % seeded
+    jitter up to `politeness.maxDelayMs`; ten consecutive `200` answers (or `decayAfter`) halve it
+    down to the floor.
 - **Retries.** Three retries on `429` and `503` with exponential back-off from 500 ms (cap 30 s); a
   `Retry-After` longer than 60 s is not waited out.
 - **Ceilings.** Tenant ceilings raise the minimum delay and lower the in-flight limit; an
