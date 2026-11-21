@@ -109,6 +109,14 @@ impl ParseBudgetExhausted {
     pub const fn exceeds_budget(&self) -> bool {
         self.requested > self.limit || self.requested == usize::MAX
     }
+
+    /// The refusal is the sentinel of an isolated parser helper that ran out of address space,
+    /// CPU time or wall-clock time (`requested == usize::MAX`, `limit == 0`), not a number from
+    /// the budget. Callers report it as `parser_limit_exceeded`.
+    #[must_use]
+    pub const fn is_helper_limit(&self) -> bool {
+        self.requested == usize::MAX && self.limit == 0
+    }
 }
 
 /// A nonwaiting byte budget shared by all parses of the process.

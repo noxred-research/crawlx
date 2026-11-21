@@ -401,6 +401,10 @@ pub struct FakePage {
     /// first observation after each load of the page, and only when the context was created
     /// with `ContextConfig::page_hooks`.
     pub discovered_urls: Vec<(String, String)>,
+    /// Own, non-native `window` property names (`["jQuery", "__NEXT_DATA__"]`) reported in
+    /// `ObservationBundle::js_globals` on every observation of the loaded page; none under
+    /// `Stealth`.
+    pub js_globals: Vec<String>,
     /// Nodes that appear lazily, one list per scroll step: the n-th step of a
     /// [`BrowserContext::lazy_scroll`] reveals the n-th list (infinite scroll / sentinel
     /// stand-in). Steps beyond the list reveal nothing and the page counts as at its bottom.
@@ -410,6 +414,8 @@ pub struct FakePage {
     pub xhr: Vec<XhrRecord>,
     /// Subresources and embedded-frame documents the page requests when it loads, as `(url, kind)`.
     pub subresources: Vec<(String, ResourceKind)>,
+    /// When set, `observe` of this page fails with `BrowserError::Navigation(message)`.
+    pub observe_error: Option<String>,
 }
 
 impl FakePage {
@@ -427,9 +433,11 @@ impl FakePage {
             redirect_chain: Vec::new(),
             blocked_by_egress: Vec::new(),
             discovered_urls: Vec::new(),
+            js_globals: Vec::new(),
             lazy_steps: Vec::new(),
             xhr: Vec::new(),
             subresources: Vec::new(),
+            observe_error: None,
         }
     }
 
@@ -509,6 +517,14 @@ impl FakePage {
         self
     }
 
+    /// Set the own, non-native `window` property names the page reports after settle
+    /// (surfaced in `ObservationBundle::js_globals`; none under `Stealth`).
+    #[must_use]
+    pub fn js_globals(mut self, names: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.js_globals = names.into_iter().map(Into::into).collect();
+        self
+    }
+
     /// Reveal `nodes` on the next unused lazy scroll step.
     #[must_use]
     pub fn lazy_step(mut self, nodes: impl IntoIterator<Item = FakeAxSpec>) -> Self {
@@ -540,6 +556,15 @@ impl FakePage {
         self.subresources.push((url.to_owned(), kind));
         self
     }
+
+    /// The page loads but cannot be observed: `observe` fails with
+    /// `BrowserError::Navigation(message)`, like the network error page (`chrome-error://`) a
+    /// failed load leaves in a real browser.
+    #[must_use]
+    pub fn unobservable(mut self, message: impl Into<String>) -> Self {
+        self.observe_error = Some(message.into());
+        self
+    }
 }
 
 /// The whole scripted world shared by a backend's contexts.
@@ -547,6 +572,10 @@ impl FakePage {
 pub struct FakeScript {
     /// Pages by normalized URL.
     pub pages: BTreeMap<String, FakePage>,
+    /// Absolute URLs whose navigation the egress policy refuses (reason `egress_denied`), with
+    /// or without a navigation guard: a link, redirect hop or `Navigate` to one is refused
+    /// before it is sent, like the real browser plane's network guard does.
+    pub egress_denied: BTreeSet<String>,
     /// Node keys whose `revalidate` returns `StaleEpoch`.
     pub stale: BTreeSet<String>,
     /// Node keys reported `Obscured`.
@@ -578,6 +607,14 @@ impl FakeScript {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The egress policy refuses every navigation to `url` (a link, a redirect hop, a
+    /// `Navigate`), reason `egress_denied`: a target outside the authorization record.
+    #[must_use]
+    pub fn deny_egress(mut self, url: &str) -> Self {
+        self.egress_denied.insert(normalize_url(url));
+        self
     }
 
     /// Add `page`, keyed by its URL.
@@ -744,6 +781,8 @@ struct TabState {
     pending: MutationStats,
     /// Page-hooks sink contents not yet reported by an observation.
     hooks_sink: Vec<(String, String)>,
+    /// Own non-native `window` property names of the loaded document.
+    js_globals: Vec<String>,
     /// Lazy scroll steps already performed on the current document.
     scrolled: usize,
 }
@@ -768,6 +807,7 @@ impl TabState {
             epoch: ObservationEpoch::default(),
             pending: MutationStats::default(),
             hooks_sink: Vec::new(),
+            js_globals: Vec::new(),
             scrolled: 0,
         }
     }
@@ -931,6 +971,7 @@ struct PageSnapshot {
     redirect_chain: Vec<String>,
     blocked: Vec<String>,
     discovered: Vec<(String, String)>,
+    js_globals: Vec<String>,
     xhr: Vec<XhrRecord>,
     subresources: Vec<(String, ResourceKind)>,
 }
@@ -1132,6 +1173,7 @@ impl Inner {
             redirect_chain: page.redirect_chain.clone(),
             blocked: page.blocked_by_egress.clone(),
             discovered: page.discovered_urls.clone(),
+            js_globals: page.js_globals.clone(),
             xhr: page.xhr.clone(),
             subresources: page.subresources.clone(),
         })
@@ -1173,6 +1215,7 @@ impl Inner {
         };
         t.pending = MutationStats::default();
         t.hooks_sink.clone_from(&snap.discovered);
+        t.js_globals.clone_from(&snap.js_globals);
         t.scrolled = 0;
         let epoch = t.epoch;
         self.xhr_queue.extend(snap.xhr.iter().cloned().map(|mut x| {
@@ -1261,11 +1304,20 @@ impl Inner {
         let cur = self.current.clone();
         let url_str = {
             let tab = self.tab(&cur)?;
-            if tab.page_key.is_none() {
+            let Some(page_key) = tab.page_key.as_ref() else {
                 return Err(BrowserError::Navigation(format!(
                     "no document loaded in {}",
                     tab.id.0
                 )));
+            };
+            if let Some(message) = self
+                .script
+                .lock()
+                .pages
+                .get(page_key)
+                .and_then(|page| page.observe_error.clone())
+            {
+                return Err(BrowserError::Navigation(message));
             }
             tab.url.clone()
         };
@@ -1402,6 +1454,10 @@ impl Inner {
         bundle.html = Some(charged_text(&tab.html)?);
         bundle.title = tab.title.clone();
         bundle.discovered_urls = discovered_urls;
+        // names only, and never under Stealth (the same rule as the real context)
+        if !spec.revalidation_only && self.config.launch_profile != LaunchProfile::Stealth {
+            bundle.js_globals.clone_from(&tab.js_globals);
+        }
 
         let mut bytes = u64::try_from(tab.html.len()).unwrap_or(0);
         if spec.dom_snapshot {
@@ -2212,13 +2268,23 @@ impl Drop for FakeContext {
 }
 
 impl FakeContext {
-    /// The reason code when the guard refuses `url`; `None` without a guard and for URLs that
-    /// are not `http(s)` (they load no remote document).
+    /// The reason code when the script's egress denials or the guard refuse `url`; `None` for
+    /// URLs that are not `http(s)` (they load no remote document) and without either.
     async fn refusal(&self, url: &Url) -> Option<&'static str> {
-        let guard = self.guard.as_ref()?;
         if !matches!(url.scheme(), "http" | "https") {
             return None;
         }
+        let denied = self
+            .inner
+            .lock()
+            .script
+            .lock()
+            .egress_denied
+            .contains(url.as_str());
+        if denied {
+            return Some("egress_denied");
+        }
+        let guard = self.guard.as_ref()?;
         crate::context::guard::refusal(guard.as_ref(), url).await
     }
 
@@ -2250,9 +2316,6 @@ impl FakeContext {
     /// action touches the page, so a refused navigation is never half applied.
     async fn refusals_for(&self, action: &BrowserAction) -> Refusals {
         let mut refused = Refusals::new();
-        if self.guard.is_none() {
-            return refused;
-        }
         let targets = self.inner.lock().navigation_targets(action);
         for url in targets {
             if let Some(reason) = self.refusal(&url).await {

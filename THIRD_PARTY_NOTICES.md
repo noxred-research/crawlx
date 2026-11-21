@@ -28,6 +28,14 @@ Notes:
 - Local changes to `lopdf` add loader and content budgets. Only the patched crate is
   vendored; its upstream integration tests that need omitted assets are not part of
   the tree.
+- The `lopdf` tree ships no `Cargo.lock`. The upstream package carried one, but cargo
+  never reads the lockfile of a path or `[patch]` dependency, so it pinned nothing the
+  crawlx build uses while OSV scanners reported its stale pins (RUSTSEC-2026-0204,
+  -0173, -0486, -0386 and a yanked `chacha20`) against the repository. The crate builds
+  against the workspace `Cargo.lock`; a standalone build inside the directory resolves
+  fresh and its lockfile is ignored by `.gitignore`. `.cargo-checksum.json` is an
+  upstream packaging file that cargo does not verify for a path dependency (it already
+  differs from the locally modified sources).
 
 Findings: every vendored directory contains the license text(s) named by its
 `Cargo.toml` `license` field. No missing license file was found.

@@ -40,6 +40,7 @@ fuzz/target/
 fuzz/artifacts/
 fuzz/coverage/
 fuzz/Cargo.lock
+vendor/pdf-loader/lopdf-0.46.0/Cargo.lock
 
 # Python harness bytecode
 __pycache__/

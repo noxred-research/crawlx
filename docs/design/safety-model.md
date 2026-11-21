@@ -188,8 +188,16 @@ blocklist.
   resolved inside the proxy, and a WebRTC policy that blocks non-proxied UDP. The proxy resolves,
   checks and pins each target, tunnels `CONNECT` only to checked addresses, and answers denials with
   `403` and an `x-crawlx-egress-denied` header. Launch profiles may not override these flags.
-  Denials are counted by plane and reason. An operator upstream proxy (`http`, `https`, `socks5`,
-  `socks5h`) can be chained; the upstream proxy host is itself egress-checked. A ProxyX pool gateway
+  Denials are counted by plane and reason. A navigation the policy refuses (a link, or a redirect
+  target outside the authorization record) costs that one page and not the run: the action is
+  journaled `failed`, the denial stays counted and is recorded as `policy_blocked`, the page is
+  counted in `states.failed` with the reason `egress_denied`, and the session goes on with the rest
+  of the frontier. A refused navigation is never retried. Network error pages, navigation
+  timeouts and extraction limits are failed states the same way (`navigation_failed`,
+  `navigation_timeout`, `extract_failed`); a crashed browser or a lost authorization still ends the
+  session, and a run in which every page failed ends `fatal_error`.
+  An operator upstream proxy (`http`, `https`, `socks5`, `socks5h`) can be chained; the upstream
+  proxy host is itself egress-checked. A ProxyX pool gateway
   is such an upstream (`CONNECT` only): the gateway host and the control API host of its block
   feedback are checked and pinned like any proxy, the gateway's own destination denylist is a second
   layer rather than a substitute, and the org key travels only in `Proxy-Authorization` and the
@@ -254,10 +262,17 @@ share a budget.
   hold back only the start that directly follows a floored start, including one from a run that
   overrides robots, while a worker that has not learned the delay can space its own consecutive
   starts at its own `delayMs`.
-- **Adaptive back-off.** `429` and `503` double the origin's spacing with ±20 % seeded jitter up to
-  60 s (never below the `Crawl-delay` floor); `Retry-After` is a floor and is never shortened; after
-  ten consecutive successes the spacing halves down to the floor. The cool-down is shared across
-  workers.
+- **Adaptive back-off.** `politeness.backoffProfile` picks the curve; both profiles never go below the
+  origin's spacing floor, never shorten a `Retry-After`, and share the cool-down across workers.
+  - `balanced` (default): the first `429` or `503` after a success sets the spacing to
+    `max(Retry-After, 2 × floor)`, with no jitter; the spacing doubles (±20 % seeded jitter) only on
+    *consecutive* throttling answers, up to `politeness.maxDelayMs` (default 60 000 ms; a longer
+    `Retry-After` and a longer floor still win); every `politeness.decayAfter` consecutive `200`
+    answers (default 3) halve it down to the floor. One `Retry-After: 2` on a 250 ms floor costs
+    about 17 s over the next 30 requests, not minutes.
+  - `conservative`: the 0.2.0 curve. Every `429` or `503` doubles the spacing with ±20 % seeded
+    jitter up to `politeness.maxDelayMs`; ten consecutive `200` answers (or `decayAfter`) halve it
+    down to the floor.
 - **Retries.** Three retries on `429` and `503` with exponential back-off from 500 ms (cap 30 s); a
   `Retry-After` longer than 60 s is not waited out.
 - **Ceilings.** Tenant ceilings raise the minimum delay and lower the in-flight limit; an

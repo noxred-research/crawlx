@@ -420,6 +420,17 @@ fn is_homepage(url: &Url) -> bool {
     matches!(url.path(), "" | "/")
 }
 
+/// Which rule set [`ScopePolicy::decide_with`] applies.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Role {
+    /// A crawl page: every rule.
+    Page,
+    /// The crawl's entry URL: no include filters.
+    Entry,
+    /// A sitemap document: every rule but the extension filter.
+    SitemapDocument,
+}
+
 /// Scope policy for one crawl.
 #[derive(Clone, Debug)]
 pub struct ScopePolicy {
@@ -531,7 +542,7 @@ impl ScopePolicy {
     /// for `excludeHosts` entries that match addresses.
     #[must_use]
     pub fn decide_resolved(&self, url: &Url, depth: u16, resolved: Option<IpAddr>) -> ScopeVerdict {
-        self.decide_with(url, depth, resolved, false)
+        self.decide_with(url, depth, resolved, Role::Page)
     }
 
     /// Decide for the crawl's entry URL (the seed, depth 0): every rule of [`Self::decide`]
@@ -540,7 +551,17 @@ impl ScopePolicy {
     /// like every other URL.
     #[must_use]
     pub fn decide_entry(&self, url: &CanonicalUrl) -> ScopeVerdict {
-        self.decide_with(&url.url, 0, None, true)
+        self.decide_with(&url.url, 0, None, Role::Entry)
+    }
+
+    /// Decide for a sitemap document: an index child, a `Sitemap:` URL declared in `robots.txt` or
+    /// the default `/sitemap.xml`. Every rule of [`Self::decide`] applies except the extension
+    /// filter (`extensionMatch`, `extensionFilter` and the default deny list), which selects crawl
+    /// pages: a `.xml.gz` sitemap is fetched and decoded under the default filter. The URLs a
+    /// document lists are pages and meet the extension filter through [`Self::decide`].
+    #[must_use]
+    pub fn decide_sitemap_document(&self, url: &CanonicalUrl, depth: u16) -> ScopeVerdict {
+        self.decide_with(&url.url, depth, None, Role::SitemapDocument)
     }
 
     /// Admit an origin protocol document without page-only selection rules.
@@ -610,7 +631,7 @@ impl ScopePolicy {
         }
     }
 
-    fn decide_with(&self, url: &Url, depth: u16, resolved: Option<IpAddr>, is_entry: bool) -> ScopeVerdict {
+    fn decide_with(&self, url: &Url, depth: u16, resolved: Option<IpAddr>, role: Role) -> ScopeVerdict {
         if self
             .record_scope
             .as_ref()
@@ -643,7 +664,7 @@ impl ScopePolicy {
                 };
             }
         }
-        let urls = if is_entry {
+        let urls = if role == Role::Entry {
             self.urls.check_exclude(url.as_str())
         } else {
             self.urls.check(url.as_str())
@@ -651,7 +672,7 @@ impl ScopePolicy {
         if let Err(reason) = urls {
             return ScopeVerdict::Denied(reason);
         }
-        let path = if is_entry {
+        let path = if role == Role::Entry {
             self.filter.decide_entry_path(url)
         } else {
             self.filter.decide_path(url)
@@ -665,7 +686,8 @@ impl ScopePolicy {
                 return ScopeVerdict::Denied(DenialReason::HostScope)
             }
         }
-        if !self.extensions.allows(url) {
+        // The extension rules select crawl pages; a sitemap document is protocol input.
+        if role != Role::SitemapDocument && !self.extensions.allows(url) {
             return ScopeVerdict::Denied(DenialReason::ExtensionFiltered);
         }
         if depth > self.max_depth {
@@ -1191,6 +1213,41 @@ mod tests {
         assert_eq!(off.max_pages_per_host(), Some(5));
         assert_eq!(DenialReason::HostPageLimit.as_str(), "host_page_limit");
         assert_eq!(DenialReason::HostScope.as_str(), "host_scope");
+    }
+
+    #[test]
+    fn sitemap_documents_skip_only_the_extension_filter() {
+        let p = ScopePolicy::new(&crawl("https://example.com/", |c| {
+            c.scope.crawl_entire_domain = true;
+            c.scope.exclude_paths = vec!["^/private/".into()];
+        }))
+        .unwrap();
+        let gz = cu("https://example.com/sitemaps/gz.xml.gz");
+        assert_eq!(
+            p.decide(&gz, 1),
+            ScopeVerdict::Denied(DenialReason::ExtensionFiltered)
+        );
+        assert!(p.decide_sitemap_document(&gz, 1).is_admitted());
+        // the other rules still bind a sitemap document
+        assert_eq!(
+            denied(&p.decide_sitemap_document(&cu("https://other.org/sitemap.xml.gz"), 1)),
+            "external"
+        );
+        assert_eq!(
+            denied(&p.decide_sitemap_document(&cu("https://example.com/private/s.xml.gz"), 1)),
+            "excluded_path"
+        );
+        // an allow list selects pages too, and does not select away the sitemap
+        let allow = ScopePolicy::new(&crawl("https://example.com/", |c| {
+            c.scope.crawl_entire_domain = true;
+            c.scope.extension_match = vec!["html".into()];
+        }))
+        .unwrap();
+        assert!(allow.decide_sitemap_document(&gz, 1).is_admitted());
+        assert_eq!(
+            denied(&allow.decide(&cu("https://example.com/sitemap.xml"), 1)),
+            "extension_filtered"
+        );
     }
 
     #[test]

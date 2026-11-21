@@ -162,10 +162,24 @@ pub struct HelperLimits {
     pub max_response_bytes: u64,
 }
 
+/// Default `RLIMIT_AS` of a helper: 2 GiB. The `crawlx` executable's allocator (`mimalloc`) maps
+/// a 1 GiB `MAP_NORESERVE` arena at its first allocation, and the address-space limit counts
+/// that reservation although almost none of it is ever touched (a helper parsing an 8 MiB page
+/// peaks near 190 MiB resident). Any lower limit makes the helper of that executable run out of
+/// address space on every page above the in-process size, whatever the page holds.
+pub const DEFAULT_ADDRESS_SPACE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Address space a helper may use on top of its floor, per input byte: generous against the
+/// measured peak of about 24 resident bytes per input byte.
+pub const ADDRESS_SPACE_BYTES_PER_INPUT_BYTE: u64 = 64;
+
+/// Input bytes per extra CPU second (and per extra wall-clock second) a helper is granted.
+pub const INPUT_BYTES_PER_EXTRA_SECOND: u64 = 1024 * 1024;
+
 impl Default for HelperLimits {
     fn default() -> Self {
         Self {
-            address_space_bytes: 512 * 1024 * 1024,
+            address_space_bytes: DEFAULT_ADDRESS_SPACE_BYTES,
             cpu_seconds: 10,
             max_request_bytes: 32 * 1024 * 1024,
             max_response_bytes: 64 * 1024 * 1024,
@@ -174,6 +188,32 @@ impl Default for HelperLimits {
 }
 
 impl HelperLimits {
+    /// The limits for one helper run over `input_len` bytes: the configured address space and CPU
+    /// seconds plus an allowance that grows with the input, so the outcome for a page depends on
+    /// its size and the configuration and on nothing else. The isolation stays: the helper still
+    /// applies `RLIMIT_AS` and `RLIMIT_CPU` to itself before it reads a byte.
+    #[must_use]
+    pub fn scaled_for_input(&self, input_len: usize) -> Self {
+        let len = widen(input_len);
+        Self {
+            address_space_bytes: self
+                .address_space_bytes
+                .saturating_add(len.saturating_mul(ADDRESS_SPACE_BYTES_PER_INPUT_BYTE)),
+            cpu_seconds: self
+                .cpu_seconds
+                .saturating_add(len / INPUT_BYTES_PER_EXTRA_SECOND)
+                .min(MAX_CPU_SECONDS),
+            ..*self
+        }
+    }
+
+    /// Extra wall-clock time a helper run over `input_len` bytes is granted on top of the
+    /// configured timeout, one second per [`INPUT_BYTES_PER_EXTRA_SECOND`].
+    #[must_use]
+    pub fn extra_time_for_input(input_len: usize) -> Duration {
+        Duration::from_secs(widen(input_len) / INPUT_BYTES_PER_EXTRA_SECOND)
+    }
+
     /// Check that every limit is inside its supported range.
     ///
     /// # Errors
@@ -939,6 +979,7 @@ struct OptionsTransport {
     forms: bool,
     page_type: bool,
     technologies: bool,
+    js_globals: Vec<String>,
     keep_data_images: bool,
     content: Option<ExtractionPolicyV1>,
     acquisition_validation: Option<ValidationTransport>,
@@ -968,6 +1009,7 @@ fn options_to_transport(options: &ExtractOptions) -> Result<OptionsTransport, Is
         forms,
         page_type,
         technologies,
+        js_globals,
         keep_data_images,
         content,
         acquisition_validation,
@@ -1012,6 +1054,7 @@ fn options_to_transport(options: &ExtractOptions) -> Result<OptionsTransport, Is
         forms: *forms,
         page_type: *page_type,
         technologies: *technologies,
+        js_globals: js_globals.clone(),
         keep_data_images: *keep_data_images,
         content: content.clone(),
         acquisition_validation: acquisition_validation.as_ref().map(ValidationTransport::from),
@@ -1048,6 +1091,7 @@ fn options_from_transport(transport: OptionsTransport) -> Result<ExtractOptions,
         forms: transport.forms,
         page_type: transport.page_type,
         technologies: transport.technologies,
+        js_globals: transport.js_globals,
         keep_data_images: transport.keep_data_images,
         content: transport.content,
         acquisition_validation: transport.acquisition_validation.map(ValidationContextV1::from),

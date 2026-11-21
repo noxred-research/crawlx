@@ -219,11 +219,15 @@ when a pattern captures one. The matcher reads response headers, `Set-Cookie` co
 URLs, the first MiB of the markup and the page URL. A detection records only that a documented script host, cookie
 name or marker was present; it does not show that the product ran, enforces anything or is effective.
 
-Catalog `js_globals` patterns (names of `window` properties) are matcher-only for now. No production code path reports
-window property names: the extractor passes none, and the browser plane does not enumerate them. Such a pattern never
-produces evidence in a crawl, and every entry that lists one also has a pattern of another kind, so detection depends
-on those. The patterns stay so that they match once the browser plane supplies the names
-(`crates/crawlx-extract/src/technologies.rs`, tested by `technologies_js_globals_are_matcher_only`).
+Catalog `js_globals` patterns (names of `window` properties) match in dynamic and hybrid runs. After the page settles,
+the browser context lists the own properties the page's scripts added to `window` (the names of the page's main world
+minus those of a pristine isolated world of the same frame; names only, never values, identifier-shaped, at most 64
+bytes each and 512 per page) and the worker passes them to the technology matcher. The page record states the source
+(`browser.jsGlobals`: `source: "browser_plane"`, `count`). Nothing is listed under the `stealth` launch profile or when
+the evaluation fails, and a page fetched over HTTP supplies none, so there such a pattern never produces evidence; every
+entry that lists one also has a pattern of another kind
+(`crates/crawlx-extract/src/technologies.rs`, `crates/crawlx-browser/src/globals.rs`, tested by
+`technologies_js_globals_come_only_from_the_names_a_browser_plane_passes`).
 
 ## JavaScript endpoint mining
 
@@ -1340,11 +1344,18 @@ requires GET. A redirect must remain inside the admitted scope, even for HEAD.
 
 HTML above 1 MiB normally uses a resource-limited parser helper. A helper failure
 is separate from the fetch byte cap and from the shared parser admission budget.
-Operators can set `CRAWLX_PARSER_HELPER_ADDRESS_SPACE_BYTES` (default 512 MiB),
-`CRAWLX_PARSER_HELPER_CPU_SECONDS` (10) and `CRAWLX_PARSER_HELPER_TIMEOUT_MS`
-(15000). Debug executables can need more address space than release executables.
+Operators can set `CRAWLX_PARSER_HELPER_ADDRESS_SPACE_BYTES` (default 2 GiB; the
+`crawlx` allocator reserves 1 GiB of address space at start, so a lower value
+leaves a helper no room for any page), `CRAWLX_PARSER_HELPER_CPU_SECONDS` (10)
+and `CRAWLX_PARSER_HELPER_TIMEOUT_MS` (15000). Each helper run adds to those
+limits in proportion to its input: 64 bytes of address space per input byte and
+one CPU second and one wall-clock second per MiB, so a page the fetcher admits
+(up to the 8 MiB default response cap) has the same room on every attempt. A page
+that still exceeds a limit fails as `parser_limit_exceeded` with its
+`inputBytes` in the run event, every time, never as a varying `extract_failed`.
 Increase only the required limit within the container's total memory budget;
-concurrent helpers add their address-space ceilings to parent memory.
+concurrent helpers add their address-space ceilings to parent memory (the
+default limits at most two helpers on the default 4 GiB parse budget).
 
 ## Reproducing the crawl maze
 

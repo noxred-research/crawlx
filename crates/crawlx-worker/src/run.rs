@@ -641,6 +641,29 @@ pub fn merge_reasons(reasons: &[TerminalReason]) -> TerminalReason {
         .unwrap_or(TerminalReason::FrontierExhausted)
 }
 
+/// [`merge_reasons`], except that a run which ended as a normal completion but lost every page
+/// it tried to load (`states.failed > 0`, nothing ever succeeded) is a failure: a run must not
+/// exit cleanly when a refused seed, an error page or an extraction limit consumed all of it.
+#[must_use]
+pub(crate) fn merge_reasons_for_pages(
+    reasons: &[TerminalReason],
+    counters: &crawlx_core::counters::PlaneCounters,
+) -> TerminalReason {
+    let reason = merge_reasons(reasons);
+    if matches!(
+        reason,
+        TerminalReason::FrontierExhausted | TerminalReason::LimitReached
+    ) && crate::driver::lost_every_page(counters)
+    {
+        tracing::error!(
+            failed = counters.states.failed,
+            "every page the browser plane tried failed; the run ends as a failure"
+        );
+        return TerminalReason::FatalError;
+    }
+    reason
+}
+
 /// Safety kernel for `crawl`, narrowed by the run's authorization `record` when it has one
 /// (`permittedRiskClasses`, `approvalRequired`: [`crate::authorization::narrowing_of`]).
 /// Sink endpoints come only from the selected, stored authorization record; its
@@ -2305,7 +2328,7 @@ async fn session_generation_body(
     let seed = rc.seed_url()?;
     let seed_is_http = crate::protocol::select_route(&rc.protocol_routes, &seed.url)
         .is_some_and(|route| route.backend == crawlx_core::protocol::ProtocolBackendV1::Http);
-    let seed_request = if seed_is_http {
+    let mut seed_request = if seed_is_http {
         if start_requests.is_empty() {
             return Ok(SessionEnd {
                 terminal: TerminalReason::FrontierExhausted,
@@ -2405,23 +2428,48 @@ async fn session_generation_body(
                 states: 0,
             });
         }
-        match handle.navigate(seed_request.clone()).await {
-            Ok(_) => {
-                // Restored web storage is only observable once the origin has a document.
-                crate::profile_custody_runtime::confirm_seed(&rc.profile_sessions, session.id, &handle)
-                    .await?;
-            }
-            // robots.txt disallows the seed itself: nothing was loaded and nothing is left to explore
-            Err(SessionError::Browser(BrowserError::RobotsBlocked { reason, .. })) => {
-                crate::driver::record_robots_blocked(rc, Some(session.id), &seed_request.url, 0, reason)
+        loop {
+            match handle.navigate(seed_request.clone()).await {
+                Ok(_) => {
+                    // Restored web storage is only observable once the origin has a document.
+                    crate::profile_custody_runtime::confirm_seed(&rc.profile_sessions, session.id, &handle)
+                        .await?;
+                    break;
+                }
+                // robots.txt disallows the seed itself: nothing was loaded and nothing is left to explore
+                Err(SessionError::Browser(BrowserError::RobotsBlocked { reason, .. })) => {
+                    crate::driver::record_robots_blocked(rc, Some(session.id), &seed_request.url, 0, reason)
+                        .await;
+                    return Ok(DriverEnd {
+                        terminal: TerminalReason::FrontierExhausted,
+                        actions: 0,
+                        states: 0,
+                    });
+                }
+                // A seed the browser cannot load (an egress denial on a redirect, a network error
+                // page, a timeout) costs that page, not the session: the next start page takes
+                // its place, and a run that loses every page ends as a failure.
+                Err(e) => {
+                    let Some(reason) = crate::driver::session_failure_reason(&e) else {
+                        return Err(e.into());
+                    };
+                    crate::driver::record_state_failed(
+                        rc,
+                        session.id,
+                        Some(seed_request.url.url.as_str()),
+                        reason,
+                    )
                     .await;
-                return Ok(DriverEnd {
-                    terminal: TerminalReason::FrontierExhausted,
-                    actions: 0,
-                    states: 0,
-                });
+                    if start_requests.is_empty() {
+                        return Ok(DriverEnd {
+                            terminal: TerminalReason::FrontierExhausted,
+                            actions: 0,
+                            states: 0,
+                        });
+                    }
+                    seed_request = start_requests.remove(0);
+                }
             }
-            Err(e) => return Err(e.into()),
         }
         // `crawl_sessions` has no cheap flag for it: the hooks setting is in the audit stream
         let _ = rc
@@ -3044,7 +3092,7 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
             }
         }
     }
-    let mut reason = merge_reasons(&reasons);
+    let mut reason = merge_reasons_for_pages(&reasons, &rc.counters.snapshot());
     rc.counters.persist(stores.runs.as_ref(), run.id).await?;
     if rc.crawl.extract.xhr {
         rc.xhr.apply(stores.pages.as_ref(), run.id).await?;
