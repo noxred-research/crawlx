@@ -21,6 +21,10 @@ const fn is_false(v: &bool) -> bool {
     !*v
 }
 #[allow(clippy::trivially_copy_pass_by_ref, reason = "serde passes `&T`")]
+const fn is_true(v: &bool) -> bool {
+    *v
+}
+#[allow(clippy::trivially_copy_pass_by_ref, reason = "serde passes `&T`")]
 const fn is_zero_u8(v: &u8) -> bool {
     *v == 0
 }
@@ -791,6 +795,11 @@ pub struct Scope {
     /// (compatibility flag `-jc`; default true). `Structural` endpoints are always admitted.
     #[serde(default = "t")]
     pub js_endpoints: bool,
+    /// Admit the same-origin URLs named by the string values of a JSON (`application/json`) response
+    /// the crawl fetched, as `json_endpoint` links under the usual scope, robots and egress gates
+    /// (default true). Bounded by count, depth and bytes; see `crawlx_extract::json_links`.
+    #[serde(default = "t", skip_serializing_if = "is_true")]
+    pub json_endpoints: bool,
     /// Compatibility flag `-path-climb`: every discovered URL also enqueues its parent directory paths
     /// (`/a/b/c.html` adds `/a/b/` and `/a/`), subject to the same scope rules (default false).
     #[serde(default, skip_serializing_if = "is_false")]
@@ -876,6 +885,7 @@ impl Default for Scope {
             content_similarity: ContentSimilarity::default(),
             filter_page_types: Vec::new(),
             js_endpoints: true,
+            json_endpoints: true,
             path_climb: false,
             disable_unique_filter: false,
             host_scope_pattern: None,

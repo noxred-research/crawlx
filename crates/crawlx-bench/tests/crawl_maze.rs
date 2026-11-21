@@ -590,6 +590,70 @@ async fn static_plane_reaches_the_crawl_maze_floor() {
     gym.shutdown().await;
 }
 
+/// The request set of one static maze run, `scope.jsonEndpoints` as given.
+async fn static_maze_ops(json_endpoints: bool) -> BTreeSet<(String, String)> {
+    let gym = gym().await;
+    gym.claim_origin("g32");
+    let manifest = FixtureManifest::embedded("g32").unwrap();
+    let mut req = maze_request(&manifest, &gym.base_url);
+    req.scope.json_endpoints = json_endpoints;
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = worker_config(&manifest, dir.path()).unwrap();
+    cfg.gates = crawlx_worker::Gates::from_status(crawlx_core::gates::GateStatus::ALL);
+    let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
+        .await
+        .unwrap();
+    let report = run_local_with(authorize_fixture(LocalRun::new(req, cfg).with_stores(stores)))
+        .await
+        .unwrap();
+    assert!(report.status.is_terminal(), "{:?}", report.status);
+    let ops = gym
+        .ledger()
+        .entries()
+        .iter()
+        .filter_map(|e| match &e.event {
+            crawlx_bench::gym::LedgerEvent::Op { method, path, .. } => Some((method.clone(), path.clone())),
+            _ => None,
+        })
+        .collect();
+    gym.shutdown().await;
+    ops
+}
+
+/// False-positive check behind the `scope.jsonEndpoints` default (on): no JSON document the
+/// CrawlerGym embeds names a same-origin path, and the static maze run with the option on
+/// requests no URL that the run with it off does not.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn json_endpoints_add_no_request_on_the_gym() {
+    use crawlx_bench::gym::fixtures::GENERATED;
+    use crawlx_extract::json_links::{is_json_media_type, same_origin_links, JsonLinkLimits};
+    let mut scanned = 0;
+    for fixture in GENERATED {
+        for file in fixture
+            .files
+            .iter()
+            .filter(|f| is_json_media_type(Some(f.content_type)))
+        {
+            let base =
+                url::Url::parse(&format!("http://127.0.0.1:41233/{}/{}", fixture.id, file.name)).unwrap();
+            let links = same_origin_links(file.body.as_bytes(), &base, &JsonLinkLimits::default());
+            assert!(
+                links.urls.is_empty(),
+                "{}/{}: {:?}",
+                fixture.id,
+                file.name,
+                links.urls
+            );
+            scanned += 1;
+        }
+    }
+    assert!(scanned > 0, "the gym embeds JSON documents");
+    let on = static_maze_ops(true).await;
+    let off = static_maze_ops(false).await;
+    let added: Vec<_> = on.difference(&off).collect();
+    assert!(added.is_empty(), "jsonEndpoints requested more: {added:?}");
+}
+
 /// Hybrid run with Chromium over the `javascript` category (every browser-plane target plus
 /// the two script-mined ones) and its `.found` endpoints: every JS page is rendered and
 /// explored (`dynamic.alwaysBrowserPaths`), page hooks feed `fetch`/`pushState` URLs back.

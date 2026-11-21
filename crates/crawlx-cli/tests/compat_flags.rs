@@ -1512,6 +1512,11 @@ fn compat_defaults_set_the_preset_values_and_explicit_flags_override_them() {
     assert_eq!(k.scope.max_discovery_depth, 3);
     assert_eq!(k.scope.strategy, CrawlStrategy::DepthFirst);
     assert!(!k.scope.js_endpoints);
+    assert!(plain.scope.json_endpoints, "crawlx's own default");
+    assert!(
+        !k.scope.json_endpoints,
+        "the reference reads no JSON response for links"
+    );
     assert!(k.scope.known_files.is_empty());
     assert!(!k.extract.forms);
     assert_eq!(k.politeness.global_rps, Some(150));

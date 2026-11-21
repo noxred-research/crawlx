@@ -243,6 +243,23 @@ feature returns an explicit unavailable error, never a silent regex fallback.
 The standalone extractor's unspecified default follows its compiled miners
 (both with `js-ast`, regex without it).
 
+### JSON endpoint links
+
+A static crawl that fetches an `application/json` response (typically an endpoint the script miner found,
+such as `/api/app-index.json`) reads the document's string values: a root-relative path (`/app/item/01`) or
+an absolute `http(s)` URL on the response's own origin becomes a `Link` candidate whose request source is
+`json_endpoint`. Keys, numbers, scheme-relative (`//host/x`) and relative (`item/01`) strings, other origins
+and strings containing whitespace, markup or template characters are ignored, and so is JSON served under
+another media type (`application/ld+json`, `text/plain`) or with a non-2xx status. Each candidate meets
+scope, robots, the egress policy and the run budgets like any link. Reading is bounded to the first 1 MiB,
+16 levels of nesting and 500 URLs per document; the values themselves are not stored.
+
+`scope.jsonEndpoints` (native request JSON; default `true`) turns it off. `--compat-defaults` sets it to
+`false`, because the compatibility reference reads no JSON response for links. The default was chosen after
+a check on the CrawlerGym: no embedded JSON document names a same-origin path, and the static maze run with
+the option on requests no URL that the run with it off does not
+(`json_endpoints_add_no_request_on_the_gym` in `crates/crawlx-bench/tests/crawl_maze.rs`).
+
 ### Structural discovery matrix and unresolved expressions
 
 Header and HTML discovery is pinned by a golden construct matrix

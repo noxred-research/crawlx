@@ -164,6 +164,8 @@ pub const JS_WEBSOCKET: EndpointSource = src("js", "websocket");
 pub const JS_EVENTSOURCE: EndpointSource = src("js", "eventsource");
 /// AST pass: a string, template or concatenation that looks like a URL.
 pub const JS_STRING: EndpointSource = src("js", "string");
+/// A string value of a JSON response naming a same-origin path ([`crate::json_links`]).
+pub const JSON_ENDPOINT: EndpointSource = src("json_endpoint", "value");
 
 /// Deterministic form-fill placeholders (the reference `DefaultFormFillData`
 /// without the random e-mail; `rand_*` fillers are not adopted).
