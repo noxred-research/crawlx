@@ -1,9 +1,12 @@
 {
   "name": "crawlx-sdk-tests",
   "private": true,
-  "description": "Official upstream Node packages driven by test_node.mjs (run by crates/crawlx-cli/tests/sdk_python.rs). The firecrawl-cli package 1.26.24 depends on the `firecrawl` SDK 4.51.0 and ships the binary its agent skills call.",
+  "description": "Official upstream Node packages driven by test_node.mjs (run by crates/crawlx-cli/tests/sdk_python.rs). The firecrawl-cli package 1.26.24 depends on the `firecrawl` SDK 4.51.0 and ships the binary its agent skills call. `overrides.zod` lifts the SDK's `zod` 3.x (every 3.x release is affected by GHSA-mrhx-c7xc-m3w5, fixed in 4.6.6) to a patched 4.x.",
   "type": "module",
   "dependencies": {
     "firecrawl-cli": "1.26.24"
+  },
+  "overrides": {
+    "zod": "4.6.7"
   }
 }
