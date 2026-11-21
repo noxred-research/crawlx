@@ -993,7 +993,7 @@ async fn default_sitemap_discovery_without_policy_decodes_nested_gzip_with_respo
 }
 
 #[tokio::test]
-async fn gzip_sitemap_sources_still_obey_default_extension_denial() {
+async fn gzip_sitemap_index_child_ignores_the_default_extension_filter_but_a_seed_does_not() {
     for direct in [false, true] {
         let site = site(false).await;
         site.state.gzip_sitemap.store(true, Ordering::SeqCst);
@@ -1002,21 +1002,28 @@ async fn gzip_sitemap_sources_still_obey_default_extension_denial() {
         enable_gzip_sitemap(&mut request);
         request.scope.extension_match.clear();
         if direct {
+            // an explicit entry URL is a crawl page candidate: the filter applies to it
             request.seed_url = url::Url::parse(&format!("{}/gzip.xml.gz", site.base)).unwrap();
         }
         let report = common::authorization::run_authorized_local(request, config(dir.path()))
             .await
             .unwrap();
-        assert_eq!(site.count("/gzip.xml.gz"), 0);
-        assert_eq!(site.count("/article"), 0);
-        assert_eq!(site.count("/fr"), 0);
-        if !direct {
+        if direct {
+            assert_eq!(site.count("/gzip.xml.gz"), 0);
+            assert_eq!(site.count("/article"), 0);
+            assert_eq!(site.count("/fr"), 0);
+        } else {
+            // a sitemap index child is a sitemap document: fetched, decoded, its pages followed
+            assert_eq!(site.count("/gzip.xml.gz"), 1);
+            assert_eq!(site.count("/article"), 1);
+            assert_eq!(site.count("/fr"), 1);
             let parent = report
                 .pages
                 .iter()
                 .find(|page| page.url.url.path() == "/")
                 .unwrap();
-            assert_eq!(parent.metadata["sitemap_discovery"]["failedDocuments"], 1);
+            assert_eq!(parent.metadata["sitemap_discovery"]["failedDocuments"], 0);
+            assert_eq!(parent.metadata["sitemap_discovery"]["documentsAttempted"], 2);
         }
     }
 }

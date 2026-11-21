@@ -25,7 +25,11 @@ use std::io::Read;
 mod memo;
 
 /// Live run authority used by budgeted robots acquisition for discovery resources.
-struct DiscoveryHopAdmission<'a>(&'a UrlPlaneRunner);
+struct DiscoveryHopAdmission<'a> {
+    runner: &'a UrlPlaneRunner,
+    /// The resource is a sitemap document: the extension filter does not apply to its hops.
+    sitemap_document: bool,
+}
 
 #[async_trait::async_trait]
 impl crate::acquisition::HopAdmission for DiscoveryHopAdmission<'_> {
@@ -36,7 +40,10 @@ impl crate::acquisition::HopAdmission for DiscoveryHopAdmission<'_> {
         _budget: &mut AcquisitionBudgetV1,
         _cancel: &CancellationToken,
     ) -> Result<(), FetchError> {
-        let canonical = self.0.admit_native_scope(url, 0, false).await?;
+        let canonical = self
+            .runner
+            .admit_native_scope(url, 0, false, self.sitemap_document)
+            .await?;
         if canonical.url != *url {
             return Err(FetchError::AcquisitionUnavailable);
         }
@@ -48,8 +55,8 @@ impl crate::acquisition::HopAdmission for DiscoveryHopAdmission<'_> {
         if !matches!(url.scheme(), "http" | "https")
             || !url.username().is_empty()
             || url.password().is_some()
-            || self.0.prefetch.check(url).is_some()
-            || !self.0.scope.decide_protocol_resource(url).is_admitted()
+            || self.runner.prefetch.check(url).is_some()
+            || !self.runner.scope.decide_protocol_resource(url).is_admitted()
         {
             return Err(FetchError::AcquisitionUnavailable);
         }
@@ -57,12 +64,12 @@ impl crate::acquisition::HopAdmission for DiscoveryHopAdmission<'_> {
     }
 
     async fn check_authority(&self) -> Result<(), FetchError> {
-        if self.0.authorization_lost().await
+        if self.runner.authorization_lost().await
             || self
-                .0
+                .runner
                 .deps
                 .runs
-                .get(self.0.run)
+                .get(self.runner.run)
                 .await
                 .map_err(FetchError::OriginAdmission)?
                 .status
@@ -422,8 +429,12 @@ impl UrlPlaneRunner {
             if self.ledger.lock().carried.contains(canonical.url.as_str()) {
                 continue;
             }
+            let sitemap_document = matches!(
+                &recipe,
+                Some(Proposal::Recipe(candidate)) if candidate.kind == RecipeCandidateKindV1::Sitemap
+            ) && self.recipe_wants_sitemaps();
             let (denial, counted_as, reason) = self
-                .discovery_admission(&canonical, depth, Some(parent.id), bearing)
+                .discovery_admission(&canonical, depth, Some(parent.id), bearing, sitemap_document)
                 .await;
             if let Some((status, _)) = denial {
                 denied.push((
@@ -1401,14 +1412,7 @@ impl UrlPlaneRunner {
                 continue;
             };
             let response = match self
-                .fetch_discovery_auxiliary(
-                    &url,
-                    parent.depth,
-                    policy.max_feed_bytes,
-                    budget,
-                    cancel,
-                    crawlx_policy::robots::HopKind::Feed,
-                )
+                .fetch_sitemap_document(&url, parent.depth, policy.max_feed_bytes, budget, cancel)
                 .await
             {
                 Ok(response) => response,
@@ -1587,13 +1591,12 @@ impl UrlPlaneRunner {
                 continue;
             };
             let response = match self
-                .fetch_discovery_auxiliary(
+                .fetch_sitemap_document(
                     &url,
                     parent.depth,
                     policy.max_feed_bytes.min(recipe.max_input_bytes),
                     budget,
                     cancel,
-                    crawlx_policy::robots::HopKind::Feed,
                 )
                 .await
             {
@@ -1690,6 +1693,7 @@ impl UrlPlaneRunner {
         url: &Url,
         depth: u16,
         allow_leaf: bool,
+        sitemap_document: bool,
     ) -> Result<CanonicalUrl, FetchError> {
         if self.crawl.cache_only() || self.authorization_lost().await {
             return Err(FetchError::AcquisitionUnavailable);
@@ -1699,7 +1703,11 @@ impl UrlPlaneRunner {
         }
         let (canonical, bearing) = self.canonicalize(url).ok_or(FetchError::AcquisitionUnavailable)?;
         if bearing
-            || !match self.scope.decide(&canonical, depth) {
+            || !match if sitemap_document {
+                self.scope.decide_sitemap_document(&canonical, depth)
+            } else {
+                self.scope.decide(&canonical, depth)
+            } {
                 ScopeVerdict::Admitted { leaf_only } => {
                     !leaf_only || (allow_leaf && self.scope.fetch_leaves())
                 }
@@ -1723,7 +1731,9 @@ impl UrlPlaneRunner {
         cancel: &'a CancellationToken,
         kind: crawlx_policy::robots::HopKind,
     ) -> impl Future<Output = Result<FetchResponse, FetchError>> + 'a {
-        Box::pin(self.fetch_discovery_auxiliary_inner(original, depth, cap, budget, cancel, kind, None))
+        Box::pin(
+            self.fetch_discovery_auxiliary_inner(original, depth, cap, budget, cancel, kind, None, false),
+        )
     }
 
     /// Bind parser-produced auxiliary work to the exact live parent URL lease.
@@ -1746,6 +1756,30 @@ impl UrlPlaneRunner {
             cancel,
             kind,
             Some(parent),
+            false,
+        ))
+    }
+
+    /// As [`Self::fetch_discovery_auxiliary`] for a sitemap document (a root, a robots `Sitemap:`
+    /// URL or an index child). Scope still decides every hop; only the extension filter, which
+    /// selects crawl pages, does not apply.
+    pub(super) fn fetch_sitemap_document<'a>(
+        &'a self,
+        original: &'a Url,
+        depth: u16,
+        cap: usize,
+        budget: &'a mut AcquisitionBudgetV1,
+        cancel: &'a CancellationToken,
+    ) -> impl Future<Output = Result<FetchResponse, FetchError>> + 'a {
+        Box::pin(self.fetch_discovery_auxiliary_inner(
+            original,
+            depth,
+            cap,
+            budget,
+            cancel,
+            crawlx_policy::robots::HopKind::Feed,
+            None,
+            true,
         ))
     }
 
@@ -1759,6 +1793,7 @@ impl UrlPlaneRunner {
         cancel: &CancellationToken,
         kind: crawlx_policy::robots::HopKind,
         parent: Option<&FrontierEntry>,
+        sitemap_document: bool,
     ) -> Result<FetchResponse, FetchError> {
         if self.crawl.cache_only() {
             return Err(FetchError::AcquisitionUnavailable);
@@ -1766,7 +1801,10 @@ impl UrlPlaneRunner {
         let parent_authority = parent
             .map(|entry| NativeHopAdmission::new(self, entry))
             .transpose()?;
-        let discovery_authority = DiscoveryHopAdmission(self);
+        let discovery_authority = DiscoveryHopAdmission {
+            runner: self,
+            sitemap_document,
+        };
         let authority: &dyn crate::acquisition::HopAdmission = match &parent_authority {
             Some(parent) => parent,
             None => &discovery_authority,
@@ -1782,7 +1820,9 @@ impl UrlPlaneRunner {
                 return Err(FetchError::AcquisitionAllowance);
             }
             authority.check_authority().await?;
-            let canonical = self.admit_native_scope(&current, depth, false).await?;
+            let canonical = self
+                .admit_native_scope(&current, depth, false, sitemap_document)
+                .await?;
             if canonical.url != current {
                 return Err(FetchError::AcquisitionUnavailable);
             }
@@ -2240,7 +2280,10 @@ impl UrlPlaneRunner {
     /// charged to its own bounded budget, goes through the run's fetcher (egress checks, the
     /// shared origin governor) and follows no redirect: a redirect status is an answer, not a hop.
     async fn live_check_head(&self, url: &Url, cancel: &CancellationToken) -> LiveCheck {
-        let authority = DiscoveryHopAdmission(self);
+        let authority = DiscoveryHopAdmission {
+            runner: self,
+            sitemap_document: false,
+        };
         let Ok(mut budget) =
             AcquisitionBudgetV1::new(&crawlx_core::acquisition::AcquisitionPolicyV1::default())
         else {
@@ -2252,7 +2295,7 @@ impl UrlPlaneRunner {
         {
             return LiveCheck::Refused;
         }
-        match self.admit_native_scope(url, 1, false).await {
+        match self.admit_native_scope(url, 1, false, false).await {
             Ok(canonical) if canonical.url == *url => {}
             _ => return LiveCheck::Refused,
         }
