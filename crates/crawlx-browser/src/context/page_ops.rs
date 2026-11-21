@@ -98,11 +98,21 @@ pub(super) async fn apply_overrides(
     }
     if overrides.block_rules.is_some() {
         set_fetch_patterns(sess, ctl, kind, true).await?;
+    } else if kind == SessionKind::Frame && vets_frames(ctl) {
+        set_fetch_patterns(sess, ctl, kind, false).await?;
     }
     if let Some(em) = &overrides.emulation {
         apply_emulation(sess, ctl, kind, em, None, false).await?;
     }
     Ok(())
+}
+
+/// Whether the context's guard wants the paused requests of child-frame sessions too.
+fn vets_frames(ctl: &Ctl) -> bool {
+    ctl.config
+        .navigation_guard
+        .as_ref()
+        .is_some_and(|guard| guard.intercepts_subresources() && guard.vets_frame_sessions())
 }
 
 /// `Network.setBlockedURLs` with `patterns` (empty clears the list).
@@ -113,14 +123,15 @@ async fn set_blocked_urls(sess: &CdpSession, patterns: &[String]) -> Result<(), 
 }
 
 /// Pause the session's requests as far as the guard and the block rules need
-/// (`guard::fetch_patterns`). A child frame pauses only for the rules, never for the guard.
+/// (`guard::fetch_patterns`). A child frame pauses only for the rules, and for a guard that
+/// asks to vet frame sessions ([`vets_frames`]), never for any other guard.
 async fn set_fetch_patterns(
     sess: &CdpSession,
     ctl: &Ctl,
     kind: SessionKind,
     rules: bool,
 ) -> Result<(), BrowserError> {
-    let patterns = if kind == SessionKind::Frame && !rules {
+    let patterns = if kind == SessionKind::Frame && !rules && !vets_frames(ctl) {
         Vec::new()
     } else {
         guard::fetch_patterns(ctl, rules)

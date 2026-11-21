@@ -79,11 +79,75 @@ impl BlockedNavigation {
     }
 }
 
+/// What a paused request that is not a main-frame document loads, as far as a
+/// [`NavigationGuard`] needs to tell: the browser's resource type, with the documents of embedded
+/// frames as [`Self::Frame`]. [`Self::as_str`] is the `resource_type` label of the
+/// `crawlx.robots.blocked` counter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
+pub enum ResourceKind {
+    /// The document of an embedded frame (`<iframe>`, `<frame>`).
+    Frame,
+    /// A script.
+    Script,
+    /// A stylesheet.
+    Stylesheet,
+    /// An `XMLHttpRequest`.
+    Xhr,
+    /// A `fetch()` call.
+    Fetch,
+    /// An image.
+    Image,
+    /// A web font.
+    Font,
+    /// Audio or video.
+    Media,
+    /// Anything else the browser loads (preflights, pings, manifests, event streams, text tracks).
+    Other,
+}
+
+impl ResourceKind {
+    /// The kind of a Chrome DevTools Protocol `Network.ResourceType` (`Document`, `Script`, `XHR`,
+    /// ...). `Document` is the document of a frame: callers pass only requests that are not the
+    /// page's own main-frame navigation.
+    #[must_use]
+    pub fn from_cdp(resource_type: &str) -> Self {
+        match resource_type {
+            "Document" => Self::Frame,
+            "Script" => Self::Script,
+            "Stylesheet" => Self::Stylesheet,
+            "XHR" => Self::Xhr,
+            "Fetch" => Self::Fetch,
+            "Image" => Self::Image,
+            "Font" => Self::Font,
+            "Media" => Self::Media,
+            _ => Self::Other,
+        }
+    }
+
+    /// Stable lowercase name, used as a metric label and in run events.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Frame => "frame",
+            Self::Script => "script",
+            Self::Stylesheet => "stylesheet",
+            Self::Xhr => "xhr",
+            Self::Fetch => "fetch",
+            Self::Image => "image",
+            Self::Font => "font",
+            Self::Media => "media",
+            Self::Other => "other",
+        }
+    }
+}
+
 /// Consulted by a browser context before it loads a document: every top-level navigation it
 /// issues itself (`navigate`, a `Navigate` action), every main-frame document request a page
 /// triggers (link clicks, form submits, script navigations, redirect hops) and every popup.
-/// Subresources (images, scripts, XHR) and the documents of embedded frames are not
-/// consulted. A refused navigation never reaches the network.
+/// Subresources (images, scripts, XHR) and the documents of embedded frames are consulted only
+/// when the guard opts in with [`Self::intercepts_subresources`], through
+/// [`Self::check_subresource`]. A refused request never reaches the network.
 ///
 /// Implementations decide only; they hold no browser state. `async_trait` keeps the trait
 /// object-safe (the documented exception for dyn-compatible traits of this crate).
@@ -98,14 +162,24 @@ pub trait NavigationGuard: Send + Sync + std::fmt::Debug {
     async fn check_request(&self, url: &url::Url) -> NavigationVerdict {
         self.check(url).await
     }
-    /// Whether this guard needs paused subresource requests for shared allowance accounting.
+    /// Whether this guard needs paused subresource requests (and child-frame documents) of the
+    /// page's own frames, for shared allowance accounting or for `robots.txt` coverage
+    /// (`safety.robotsScope`).
     fn intercepts_subresources(&self) -> bool {
         false
     }
 
-    /// Admit a subresource without applying top-level robots/scope rules to it.
-    /// Existing network egress policy still runs independently.
-    async fn check_subresource(&self, _url: &url::Url) -> NavigationVerdict {
+    /// Whether the paused requests of out-of-process child frames, whose sessions the guard does
+    /// not see otherwise, also need a verdict from [`Self::check_subresource`]. Only meaningful
+    /// together with [`Self::intercepts_subresources`].
+    fn vets_frame_sessions(&self) -> bool {
+        false
+    }
+
+    /// Admit a subresource or the document of an embedded frame, `kind` saying which, without
+    /// applying top-level robots/scope rules to it unless the guard opts in. Existing network
+    /// egress policy still runs independently.
+    async fn check_subresource(&self, _url: &url::Url, _kind: ResourceKind) -> NavigationVerdict {
         NavigationVerdict::Allow
     }
 }

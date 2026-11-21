@@ -23,6 +23,8 @@ const MAX_PIXELS: u64 = 16 * 1024 * 1024;
 pub(crate) const EVENT: &str = "browser.evidence";
 /// Run event kind of the resources the block rules blocked (`dynamic.blockRules`).
 pub(crate) const BLOCKED_EVENT: &str = "browser.blocked_resources";
+/// Run event kind that marks the observation partial because `safety.robotsScope` refused requests.
+pub(crate) const PARTIAL_EVENT: &str = "browser.observation_partial";
 
 /// Observation boundary that produced a resource, not an inferred page lifecycle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -394,6 +396,45 @@ pub(crate) async fn record_blocked(handle: &SessionHandle, rc: &RunContext) -> R
     let payload = serde_json::to_value(event)
         .map_err(|_| StoreError::Serialization("blocked resource event encoding failed".into()))?;
     rc.stores.events.append(rc.run, BLOCKED_EVENT, payload).await?;
+    Ok(())
+}
+
+/// What `safety.robotsScope` kept the browser from requesting, as the run event that marks the
+/// run's observation partial: the page was rendered without those resources.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ObservationPartialEvent {
+    pub version: u16,
+    pub reason: String,
+    pub robots_scope: crawlx_core::config::RobotsScope,
+    pub captured_at: crawlx_core::Timestamp,
+    /// Refused requests by resource type.
+    pub blocked: std::collections::BTreeMap<String, u64>,
+}
+
+/// Report the requests the run's robots scope refused since the last report as one
+/// [`PARTIAL_EVENT`]; nothing is written when it refused nothing.
+///
+/// # Errors
+/// Returns event persistence failures.
+pub(crate) async fn record_observation_partial(rc: &RunContext) -> Result<(), WorkerError> {
+    let Some(blocks) = rc.robots.drain_scope_blocks() else {
+        return Ok(());
+    };
+    let event = ObservationPartialEvent {
+        version: 1,
+        reason: "robots_scope".to_owned(),
+        robots_scope: blocks.scope,
+        captured_at: rc.clock.now(),
+        blocked: blocks
+            .blocked
+            .into_iter()
+            .map(|(k, n)| (k.to_owned(), n))
+            .collect(),
+    };
+    let payload = serde_json::to_value(event)
+        .map_err(|_| StoreError::Serialization("partial observation event encoding failed".into()))?;
+    rc.stores.events.append(rc.run, PARTIAL_EVENT, payload).await?;
     Ok(())
 }
 

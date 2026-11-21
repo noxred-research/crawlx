@@ -620,8 +620,9 @@ CDP cannot recover the initial service-worker script request that precedes worke
 attachment. Projections report `unavailableBeforeTargetAttachment`; selecting the proxy
 preserves its wire observation. Worker-origin attribution and stream frames still come
 from native CDP supplements, explicitly labelled separately from proxy observations.
-Browser robots checks cover visited main-frame documents, not embedded frames or
-subresources. Independent checked egress still governs those network requests.
+Browser robots checks cover visited main-frame documents by default; `safety.robotsScope`
+(`document` | `frames` | `all`) opts in to embedded frames and subresources, see the
+[safety model](design/safety-model.md). Independent checked egress governs those requests either way.
 
 
 ## Safe dataset imports and resumable feed sources

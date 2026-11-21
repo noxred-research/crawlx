@@ -879,10 +879,11 @@ impl ExplorationDriver {
         self.collect_xhr().await;
         // blocked requests are provenance of what the archive lacks, kept even when the session failed
         let blocked = crate::browser_evidence::record_blocked(&self.handle, &self.rc).await;
+        let partial = crate::browser_evidence::record_observation_partial(&self.rc).await;
         self.record_diagnostics(started, &result);
-        match (result, blocked) {
-            (Ok(end), Ok(())) => Ok(end),
-            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+        match (result, blocked, partial) {
+            (Ok(end), Ok(()), Ok(())) => Ok(end),
+            (Err(error), _, _) | (Ok(_), Err(error), _) | (Ok(_), Ok(()), Err(error)) => Err(error),
         }
     }
 

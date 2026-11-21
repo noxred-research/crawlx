@@ -37,7 +37,7 @@ use crawlx_core::parser_memory::{self, AdmittedBytes, AdmittedText};
 use crawlx_core::traffic::{TrafficEvent, TrafficOrigin};
 use crawlx_core::{
     BlockedNavigation, BrowserBackend, BrowserContext, BrowserError, CanonicalUrl, Clock, ContextConfig,
-    LaunchProfile, NavigationGuard, ObservationEpoch, OptionKey, Timestamp,
+    LaunchProfile, NavigationGuard, ObservationEpoch, OptionKey, ResourceKind, Timestamp,
 };
 use crawlx_url::{CanonicalizeOptions, Canonicalizer};
 use parking_lot::Mutex;
@@ -408,6 +408,8 @@ pub struct FakePage {
     /// XHR/`fetch()` requests the page issues when it loads; `page_url` is filled with the page's
     /// URL. They come out of [`BrowserContext::drain_xhr`] after each load of the page.
     pub xhr: Vec<XhrRecord>,
+    /// Subresources and embedded-frame documents the page requests when it loads, as `(url, kind)`.
+    pub subresources: Vec<(String, ResourceKind)>,
 }
 
 impl FakePage {
@@ -427,6 +429,7 @@ impl FakePage {
             discovered_urls: Vec::new(),
             lazy_steps: Vec::new(),
             xhr: Vec::new(),
+            subresources: Vec::new(),
         }
     }
 
@@ -525,6 +528,16 @@ impl FakePage {
             resource_type: "xhr".to_owned(),
             content_type: Some("application/json".to_owned()),
         });
+        self
+    }
+
+    /// The page loads a subresource of `kind` from `url` (absolute, or relative to the page)
+    /// when it loads: a script, a stylesheet, an image, an `<iframe>` document
+    /// ([`ResourceKind::Frame`]). A context whose guard intercepts subresources asks it about
+    /// each one; see [`FakeContextHandle::subresource_requests`].
+    #[must_use]
+    pub fn subresource(mut self, kind: ResourceKind, url: &str) -> Self {
+        self.subresources.push((url.to_owned(), kind));
         self
     }
 }
@@ -919,6 +932,7 @@ struct PageSnapshot {
     blocked: Vec<String>,
     discovered: Vec<(String, String)>,
     xhr: Vec<XhrRecord>,
+    subresources: Vec<(String, ResourceKind)>,
 }
 
 enum StateChange {
@@ -938,6 +952,26 @@ pub struct TypedInput {
     pub secret: bool,
     /// The text, only for non-secret input.
     pub text: Option<String>,
+}
+
+/// A subresource or embedded-frame document a scripted page requested and that went out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FakeSubresource {
+    /// Absolute URL requested.
+    pub url: String,
+    /// What the request loads.
+    pub kind: ResourceKind,
+}
+
+/// A subresource or embedded-frame document the guard refused: it was never requested.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FakeBlockedSubresource {
+    /// Absolute URL the page wanted.
+    pub url: String,
+    /// What the request would have loaded.
+    pub kind: ResourceKind,
+    /// Bounded reason code of the refusal, see `NavigationVerdict::refusal`.
+    pub reason: &'static str,
 }
 
 /// URLs (absolute) of the documents an action would load that the guard refused, with the
@@ -968,6 +1002,10 @@ struct Inner {
     closed: bool,
     blocked_urls: Vec<String>,
     xhr_queue: Vec<XhrRecord>,
+    /// Subresources of the pages loaded since the guard was last asked, absolute.
+    subresource_queue: Vec<(String, ResourceKind)>,
+    subresource_requests: Vec<FakeSubresource>,
+    subresources_blocked: Vec<FakeBlockedSubresource>,
     lazy_scrolls: Vec<LazyScrollSpec>,
     settle_policies: Vec<QuiescencePolicy>,
     css_filters: Vec<CssFilter>,
@@ -1011,6 +1049,9 @@ impl Inner {
             closed: false,
             blocked_urls: Vec::new(),
             xhr_queue: Vec::new(),
+            subresource_queue: Vec::new(),
+            subresource_requests: Vec::new(),
+            subresources_blocked: Vec::new(),
             lazy_scrolls: Vec::new(),
             settle_policies: Vec::new(),
             css_filters: Vec::new(),
@@ -1092,6 +1133,7 @@ impl Inner {
             blocked: page.blocked_by_egress.clone(),
             discovered: page.discovered_urls.clone(),
             xhr: page.xhr.clone(),
+            subresources: page.subresources.clone(),
         })
     }
 
@@ -1137,6 +1179,12 @@ impl Inner {
             x.page_url.clone_from(&snap.url);
             x
         }));
+        for (raw, kind) in &snap.subresources {
+            let url = Url::parse(&snap.url)
+                .and_then(|base| base.join(raw))
+                .map_or_else(|_| raw.clone(), String::from);
+            self.subresource_queue.push((url, *kind));
+        }
         self.navigations.push(requested.to_owned());
         Ok(epoch)
     }
@@ -2174,6 +2222,30 @@ impl FakeContext {
         crate::context::guard::refusal(guard.as_ref(), url).await
     }
 
+    /// Ask the guard about every subresource of the pages loaded since the last call, as the
+    /// real browser's paused-request hook does: a guard that does not intercept subresources
+    /// lets all of them through, a refused one is recorded and never requested.
+    async fn vet_subresources(&self) {
+        let pending = std::mem::take(&mut self.inner.lock().subresource_queue);
+        for (url, kind) in pending {
+            let refused = match (self.guard.as_ref(), Url::parse(&url)) {
+                (Some(guard), Ok(parsed))
+                    if guard.intercepts_subresources() && matches!(parsed.scheme(), "http" | "https") =>
+                {
+                    crate::context::guard::subresource_refusal(guard.as_ref(), &parsed, kind).await
+                }
+                _ => None,
+            };
+            let mut inner = self.inner.lock();
+            match refused {
+                Some(reason) => inner
+                    .subresources_blocked
+                    .push(FakeBlockedSubresource { url, kind, reason }),
+                None => inner.subresource_requests.push(FakeSubresource { url, kind }),
+            }
+        }
+    }
+
     /// What the guard refuses among the documents `action` would load. Decided before the
     /// action touches the page, so a refused navigation is never half applied.
     async fn refusals_for(&self, action: &BrowserAction) -> Refusals {
@@ -2284,6 +2356,20 @@ impl FakeContextHandle {
     #[must_use]
     pub fn refused_navigations(&self) -> Vec<BlockedNavigation> {
         self.inner.lock().refused_all.clone()
+    }
+
+    /// Subresources and embedded-frame documents the loaded pages requested and the guard let
+    /// through (or that no guard was asked about), oldest first.
+    #[must_use]
+    pub fn subresource_requests(&self) -> Vec<FakeSubresource> {
+        self.inner.lock().subresource_requests.clone()
+    }
+
+    /// Subresources and embedded-frame documents the guard refused, oldest first. None of them
+    /// is in [`Self::subresource_requests`].
+    #[must_use]
+    pub fn blocked_subresources(&self) -> Vec<FakeBlockedSubresource> {
+        self.inner.lock().subresources_blocked.clone()
     }
 
     /// Epoch of the current tab.
@@ -2403,7 +2489,9 @@ impl BrowserContext for FakeContext {
             self.inner.lock().refused_all.push(blocked.clone());
             return Err(blocked.into_error());
         }
-        self.inner.lock().navigate(url.url.as_str())
+        let result = self.inner.lock().navigate(url.url.as_str());
+        self.vet_subresources().await;
+        result
     }
 
     async fn observe(&mut self, spec: ObservationSpec) -> Result<ObservationBundle, BrowserError> {
@@ -2444,7 +2532,9 @@ impl BrowserContext for FakeContext {
         if let Some(latency) = latency {
             tokio::time::sleep(latency).await;
         }
-        self.inner.lock().perform(action, &refused)
+        let result = self.inner.lock().perform(action, &refused);
+        self.vet_subresources().await;
+        result
     }
 
     async fn settle(&mut self, policy: QuiescencePolicy) -> Result<SettleReport, BrowserError> {

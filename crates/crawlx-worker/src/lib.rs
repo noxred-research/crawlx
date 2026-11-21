@@ -122,7 +122,8 @@ pub use replay::{ReplayMode, ReplayPlan, ReplayReport, ReplayRunner, StepResult,
 pub use robots_gate::RobotsGate;
 pub use routes::{LearnedRoutes, RouteLearner, ROUTE_TEMPLATES_EVENT};
 pub use run::{
-    run_local, run_local_with, CaptureReport, EgressCapture, LocalRun, RunContext, RunReport, UrlFailure,
+    run_local, run_local_with, CaptureReport, EgressCapture, LocalRun, ObservationPartial, RunContext,
+    RunReport, UrlFailure,
 };
 pub use runtime::{build_runtime, CpuPool, RuntimeConfig, RuntimeConfigError, PARSE_MEMORY_ENV};
 pub use scrape::{FailReason, Outcome, PageRenderer, ScrapeEngine, ScrapeFailure, Scraped};

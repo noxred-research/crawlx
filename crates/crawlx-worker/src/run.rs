@@ -110,9 +110,19 @@ impl crawlx_core::browser::NavigationGuard for ProtocolNavigationGuard {
             .is_some_and(|inner| inner.intercepts_subresources())
     }
 
-    async fn check_subresource(&self, url: &url::Url) -> crawlx_core::browser::NavigationVerdict {
+    fn vets_frame_sessions(&self) -> bool {
+        self.inner
+            .as_ref()
+            .is_some_and(|inner| inner.vets_frame_sessions())
+    }
+
+    async fn check_subresource(
+        &self,
+        url: &url::Url,
+        kind: crawlx_core::browser::ResourceKind,
+    ) -> crawlx_core::browser::NavigationVerdict {
         match &self.inner {
-            Some(inner) => inner.check_subresource(url).await,
+            Some(inner) => inner.check_subresource(url, kind).await,
             None => crawlx_core::browser::NavigationVerdict::Allow,
         }
     }
@@ -408,6 +418,22 @@ pub struct RunReport {
     /// One entry per browser-plane session; empty unless `dynamic.enableDiagnostics`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<SessionDiagnostics>,
+    /// Set when the browser plane rendered pages without requests that `safety.robotsScope`
+    /// refused: the observation is partial. Absent when nothing was refused.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observation_partial: Option<ObservationPartial>,
+}
+
+/// Why and by how much a run's browser observation is partial (see [`RunReport::observation_partial`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
+pub struct ObservationPartial {
+    /// Why requests were left out; always `robots_scope`.
+    pub reason: &'static str,
+    /// The run's `safety.robotsScope`.
+    pub robots_scope: crawlx_core::config::RobotsScope,
+    /// Requests left out, by resource type (`frame`, `script`, `xhr`, ...).
+    pub blocked: BTreeMap<String, u64>,
 }
 
 /// Inputs of an in-process run beyond the request.
@@ -3446,6 +3472,8 @@ pub async fn build_report(stores: &Stores, run: CrawlRunId) -> Result<RunReport,
         .partition(|session| session.kind == crawlx_core::repo::SessionKind::HttpCoordinator);
     let mut head_responses = Vec::new();
     let mut after = 0;
+    let mut partial_blocked: BTreeMap<String, u64> = BTreeMap::new();
+    let mut partial_scope = crawlx_core::config::RobotsScope::Document;
     loop {
         let events = stores.events.list_after(run, after, 1000).await?;
         if events.is_empty() {
@@ -3455,6 +3483,15 @@ pub async fn build_report(stores: &Stores, run: CrawlRunId) -> Result<RunReport,
             after = event.seq;
             if event.kind == "head_response" {
                 head_responses.push(event.payload);
+            } else if event.kind == crate::browser_evidence::PARTIAL_EVENT {
+                if let Ok(partial) =
+                    serde_json::from_value::<crate::browser_evidence::ObservationPartialEvent>(event.payload)
+                {
+                    partial_scope = partial.robots_scope;
+                    for (kind, n) in partial.blocked {
+                        *partial_blocked.entry(kind).or_default() += n;
+                    }
+                }
             }
         }
     }
@@ -3478,6 +3515,11 @@ pub async fn build_report(stores: &Stores, run: CrawlRunId) -> Result<RunReport,
         failures,
         resume: None,
         diagnostics: Vec::new(),
+        observation_partial: (!partial_blocked.is_empty()).then_some(ObservationPartial {
+            reason: "robots_scope",
+            robots_scope: partial_scope,
+            blocked: partial_blocked,
+        }),
         egress: EgressCapture::default(),
         capture: CaptureReport::default(),
     })

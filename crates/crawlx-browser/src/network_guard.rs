@@ -7,7 +7,7 @@
 //! subresource checks; wrapping a robots guard does not expand robots coverage.
 
 use async_trait::async_trait;
-use crawlx_core::browser::{NavigationGuard, NavigationVerdict};
+use crawlx_core::browser::{NavigationGuard, NavigationVerdict, ResourceKind};
 use crawlx_policy::egress::EgressPolicy;
 use crawlx_telemetry::metrics::names;
 use crawlx_telemetry::Metrics;
@@ -110,12 +110,18 @@ impl NavigationGuard for ScopedNetworkGuard {
         true
     }
 
-    async fn check_subresource(&self, url: &Url) -> NavigationVerdict {
+    fn vets_frame_sessions(&self) -> bool {
+        self.inner
+            .as_ref()
+            .is_some_and(|inner| inner.intercepts_subresources() && inner.vets_frame_sessions())
+    }
+
+    async fn check_subresource(&self, url: &Url, kind: ResourceKind) -> NavigationVerdict {
         if !self.permits(url) {
             return NavigationVerdict::EgressDenied;
         }
         let verdict = match &self.inner {
-            Some(inner) if inner.intercepts_subresources() => inner.check_subresource(url).await,
+            Some(inner) if inner.intercepts_subresources() => inner.check_subresource(url, kind).await,
             _ => NavigationVerdict::Allow,
         };
         self.finish(url, verdict)
@@ -152,7 +158,7 @@ mod tests {
         let allowed = Url::parse("https://allowed.test/asset.css").unwrap();
         let blocked = Url::parse("https://blocked.test/asset.css").unwrap();
         assert!(matches!(
-            guard.check_subresource(&allowed).await,
+            guard.check_subresource(&allowed, ResourceKind::Stylesheet).await,
             NavigationVerdict::Allow
         ));
         assert_eq!(robots.0.load(Ordering::SeqCst), 0);
@@ -162,7 +168,7 @@ mod tests {
         ));
         assert_eq!(robots.0.load(Ordering::SeqCst), 1);
         assert!(matches!(
-            guard.check_subresource(&blocked).await,
+            guard.check_subresource(&blocked, ResourceKind::Stylesheet).await,
             NavigationVerdict::EgressDenied
         ));
         assert!(matches!(
@@ -183,7 +189,7 @@ mod tests {
         let before = denials.get(&labels);
         let beacon = Url::parse("http://169.254.169.254/latest/icon.png").unwrap();
         assert!(matches!(
-            guard.check_subresource(&beacon).await,
+            guard.check_subresource(&beacon, ResourceKind::Image).await,
             NavigationVerdict::EgressDenied
         ));
         // metrics are process-global and sibling tests deny concurrently: lower bound
@@ -199,7 +205,7 @@ mod tests {
         let guard = ScopedNetworkGuard::new(EgressPolicy::default(), cancel.clone(), None);
         assert!(matches!(
             guard
-                .check_subresource(&Url::parse("file:///tmp/private").unwrap())
+                .check_subresource(&Url::parse("file:///tmp/private").unwrap(), ResourceKind::Image)
                 .await,
             NavigationVerdict::EgressDenied
         ));
@@ -211,7 +217,7 @@ mod tests {
             NavigationVerdict::EgressDenied
         ));
         assert!(matches!(
-            guard.check_subresource(&url).await,
+            guard.check_subresource(&url, ResourceKind::Image).await,
             NavigationVerdict::EgressDenied
         ));
     }
@@ -231,7 +237,7 @@ mod tests {
             true
         }
 
-        async fn check_subresource(&self, url: &Url) -> NavigationVerdict {
+        async fn check_subresource(&self, url: &Url, _kind: ResourceKind) -> NavigationVerdict {
             self.check(url).await
         }
     }
@@ -246,7 +252,7 @@ mod tests {
             let verdict = match operation {
                 0 => guard.check(&url).await,
                 1 => guard.check_request(&url).await,
-                _ => guard.check_subresource(&url).await,
+                _ => guard.check_subresource(&url, ResourceKind::Script).await,
             };
             assert!(matches!(verdict, NavigationVerdict::EgressDenied));
         }

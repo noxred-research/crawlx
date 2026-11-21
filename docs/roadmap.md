@@ -19,8 +19,9 @@ crates.io packages are not part of the initial distribution.
 
 - **Durable approvals.** API reviewer decisions bind the original parked action and current
   session fence; kernel reclassification and live confirmation remain mandatory.
-- **Browser robots boundary.** Robots applies to main-frame document navigations and redirects,
-  not every subresource or embedded frame. Egress authorization and private-address checks
+- **Browser robots boundary.** Robots applies to main-frame document navigations and redirects
+  by default; `safety.robotsScope = frames | all` opts in to embedded frames and subresources.
+  Egress authorization and private-address checks
   apply independently to mediated traffic. CONNECT cannot inspect encrypted URL paths.
 - **Network isolation deployment.** The worker supports verified namespace launch and fails
   closed without its privileged helper. Host namespace/CNI deployment proof remains external.

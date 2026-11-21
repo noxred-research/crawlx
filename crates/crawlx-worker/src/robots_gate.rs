@@ -13,10 +13,13 @@
 
 use crate::error::WorkerError;
 use async_trait::async_trait;
-use crawlx_core::browser::{NavigationGuard, NavigationVerdict};
+use crawlx_core::browser::{NavigationGuard, NavigationVerdict, ResourceKind};
+use crawlx_core::config::RobotsScope;
 use crawlx_core::{Clock, CreateCrawl};
 use crawlx_fetch::{FetchError, FetchOptions, Fetcher};
 use crawlx_policy::robots::{DisallowedBy, FetchStatus, RobotsCache, RobotsConfig, RobotsVerdict};
+use crawlx_telemetry::metrics::names;
+use crawlx_telemetry::Metrics;
 use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -47,6 +50,10 @@ struct Shared {
     fetching: Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// The run honours `robots.txt`.
     obey: bool,
+    /// Which browser requests the gate also vets (`safety.robotsScope`).
+    scope: RobotsScope,
+    /// Requests refused under `scope` and not yet reported, by resource type.
+    scope_blocked: Mutex<BTreeMap<&'static str, u64>>,
 }
 
 /// `robots.txt` evaluation for one run: a cache shared by every plane and the fetcher that
@@ -55,6 +62,15 @@ struct Shared {
 pub struct RobotsGate {
     shared: Arc<Shared>,
     fetcher: Arc<Fetcher>,
+}
+
+/// What `safety.robotsScope` kept the browser from requesting since the last drain.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ScopeBlocks {
+    /// The run's scope.
+    pub scope: RobotsScope,
+    /// Refused requests per resource type.
+    pub blocked: BTreeMap<&'static str, u64>,
 }
 
 impl fmt::Debug for RobotsGate {
@@ -101,6 +117,8 @@ impl RobotsGate {
                 bodies: Mutex::new(BTreeMap::new()),
                 fetching: Mutex::new(BTreeMap::new()),
                 obey: crawl.safety.respect_robots_txt,
+                scope: crawl.safety.robots_scope,
+                scope_blocked: Mutex::new(BTreeMap::new()),
             }),
             fetcher,
         }
@@ -115,6 +133,15 @@ impl RobotsGate {
             shared: Arc::clone(&self.shared),
             fetcher,
         }
+    }
+
+    /// The requests `safety.robotsScope` refused since the last call, `None` when there were none.
+    pub(crate) fn drain_scope_blocks(&self) -> Option<ScopeBlocks> {
+        let blocked = std::mem::take(&mut *self.shared.scope_blocked.lock());
+        (!blocked.is_empty()).then_some(ScopeBlocks {
+            scope: self.shared.scope,
+            blocked,
+        })
     }
 
     /// Whether the run honours `robots.txt`; a gate that does not allows everything.
@@ -462,6 +489,37 @@ impl NavigationGuard for RobotsGate {
             RobotsDecision::Blocked(reason) => NavigationVerdict::RobotsBlocked { reason },
             RobotsDecision::EgressDenied => NavigationVerdict::EgressDenied,
         }
+    }
+
+    fn intercepts_subresources(&self) -> bool {
+        self.shared.obey && self.shared.scope != RobotsScope::Document
+    }
+
+    fn vets_frame_sessions(&self) -> bool {
+        self.intercepts_subresources()
+    }
+
+    /// `safety.robotsScope = frames` refuses the documents of embedded frames `robots.txt`
+    /// disallows; `all` refuses every disallowed subresource too. The verdict is the document
+    /// verdict (same cache, one `robots.txt` fetch per origin); a refusal is counted under
+    /// `crawlx.robots.blocked{resource_type}` and remembered for the run's partial-observation note.
+    async fn check_subresource(&self, url: &Url, kind: ResourceKind) -> NavigationVerdict {
+        let covered = match self.shared.scope {
+            RobotsScope::Frames => kind == ResourceKind::Frame,
+            RobotsScope::Document => false,
+            _ => true,
+        };
+        if !self.shared.obey || !covered {
+            return NavigationVerdict::Allow;
+        }
+        let verdict = self.check(url).await;
+        if matches!(verdict, NavigationVerdict::RobotsBlocked { .. }) {
+            Metrics::global()
+                .counter(names::ROBOTS_BLOCKED)
+                .inc_by(1, &[("resource_type", kind.as_str())]);
+            *self.shared.scope_blocked.lock().entry(kind.as_str()).or_default() += 1;
+        }
+        verdict
     }
 }
 

@@ -442,7 +442,11 @@ impl NavigationGuard for ExactGuard {
     fn intercepts_subresources(&self) -> bool {
         true
     }
-    async fn check_subresource(&self, url: &Url) -> NavigationVerdict {
+    async fn check_subresource(
+        &self,
+        url: &Url,
+        _kind: crawlx_core::browser::ResourceKind,
+    ) -> NavigationVerdict {
         self.check(url).await
     }
 }
