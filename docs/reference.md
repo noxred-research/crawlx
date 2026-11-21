@@ -1339,11 +1339,18 @@ requires GET. A redirect must remain inside the admitted scope, even for HEAD.
 
 HTML above 1 MiB normally uses a resource-limited parser helper. A helper failure
 is separate from the fetch byte cap and from the shared parser admission budget.
-Operators can set `CRAWLX_PARSER_HELPER_ADDRESS_SPACE_BYTES` (default 512 MiB),
-`CRAWLX_PARSER_HELPER_CPU_SECONDS` (10) and `CRAWLX_PARSER_HELPER_TIMEOUT_MS`
-(15000). Debug executables can need more address space than release executables.
+Operators can set `CRAWLX_PARSER_HELPER_ADDRESS_SPACE_BYTES` (default 2 GiB; the
+`crawlx` allocator reserves 1 GiB of address space at start, so a lower value
+leaves a helper no room for any page), `CRAWLX_PARSER_HELPER_CPU_SECONDS` (10)
+and `CRAWLX_PARSER_HELPER_TIMEOUT_MS` (15000). Each helper run adds to those
+limits in proportion to its input: 64 bytes of address space per input byte and
+one CPU second and one wall-clock second per MiB, so a page the fetcher admits
+(up to the 8 MiB default response cap) has the same room on every attempt. A page
+that still exceeds a limit fails as `parser_limit_exceeded` with its
+`inputBytes` in the run event, every time, never as a varying `extract_failed`.
 Increase only the required limit within the container's total memory budget;
-concurrent helpers add their address-space ceilings to parent memory.
+concurrent helpers add their address-space ceilings to parent memory (the
+default limits at most two helpers on the default 4 GiB parse budget).
 
 ## Reproducing the crawl maze
 
