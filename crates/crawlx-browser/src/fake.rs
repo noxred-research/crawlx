@@ -401,6 +401,10 @@ pub struct FakePage {
     /// first observation after each load of the page, and only when the context was created
     /// with `ContextConfig::page_hooks`.
     pub discovered_urls: Vec<(String, String)>,
+    /// Own, non-native `window` property names (`["jQuery", "__NEXT_DATA__"]`) reported in
+    /// `ObservationBundle::js_globals` on every observation of the loaded page; none under
+    /// `Stealth`.
+    pub js_globals: Vec<String>,
     /// Nodes that appear lazily, one list per scroll step: the n-th step of a
     /// [`BrowserContext::lazy_scroll`] reveals the n-th list (infinite scroll / sentinel
     /// stand-in). Steps beyond the list reveal nothing and the page counts as at its bottom.
@@ -425,6 +429,7 @@ impl FakePage {
             redirect_chain: Vec::new(),
             blocked_by_egress: Vec::new(),
             discovered_urls: Vec::new(),
+            js_globals: Vec::new(),
             lazy_steps: Vec::new(),
             xhr: Vec::new(),
         }
@@ -503,6 +508,14 @@ impl FakePage {
     #[must_use]
     pub fn discovered(mut self, url: impl Into<String>, source: impl Into<String>) -> Self {
         self.discovered_urls.push((url.into(), source.into()));
+        self
+    }
+
+    /// Set the own, non-native `window` property names the page reports after settle
+    /// (surfaced in `ObservationBundle::js_globals`; none under `Stealth`).
+    #[must_use]
+    pub fn js_globals(mut self, names: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.js_globals = names.into_iter().map(Into::into).collect();
         self
     }
 
@@ -731,6 +744,8 @@ struct TabState {
     pending: MutationStats,
     /// Page-hooks sink contents not yet reported by an observation.
     hooks_sink: Vec<(String, String)>,
+    /// Own non-native `window` property names of the loaded document.
+    js_globals: Vec<String>,
     /// Lazy scroll steps already performed on the current document.
     scrolled: usize,
 }
@@ -755,6 +770,7 @@ impl TabState {
             epoch: ObservationEpoch::default(),
             pending: MutationStats::default(),
             hooks_sink: Vec::new(),
+            js_globals: Vec::new(),
             scrolled: 0,
         }
     }
@@ -918,6 +934,7 @@ struct PageSnapshot {
     redirect_chain: Vec<String>,
     blocked: Vec<String>,
     discovered: Vec<(String, String)>,
+    js_globals: Vec<String>,
     xhr: Vec<XhrRecord>,
 }
 
@@ -1091,6 +1108,7 @@ impl Inner {
             redirect_chain: page.redirect_chain.clone(),
             blocked: page.blocked_by_egress.clone(),
             discovered: page.discovered_urls.clone(),
+            js_globals: page.js_globals.clone(),
             xhr: page.xhr.clone(),
         })
     }
@@ -1131,6 +1149,7 @@ impl Inner {
         };
         t.pending = MutationStats::default();
         t.hooks_sink.clone_from(&snap.discovered);
+        t.js_globals.clone_from(&snap.js_globals);
         t.scrolled = 0;
         let epoch = t.epoch;
         self.xhr_queue.extend(snap.xhr.iter().cloned().map(|mut x| {
@@ -1354,6 +1373,10 @@ impl Inner {
         bundle.html = Some(charged_text(&tab.html)?);
         bundle.title = tab.title.clone();
         bundle.discovered_urls = discovered_urls;
+        // names only, and never under Stealth (the same rule as the real context)
+        if !spec.revalidation_only && self.config.launch_profile != LaunchProfile::Stealth {
+            bundle.js_globals.clone_from(&tab.js_globals);
+        }
 
         let mut bytes = u64::try_from(tab.html.len()).unwrap_or(0);
         if spec.dom_snapshot {

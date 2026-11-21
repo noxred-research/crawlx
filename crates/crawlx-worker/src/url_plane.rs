@@ -868,6 +868,7 @@ impl UrlPlaneRunner {
         options.status = status.unwrap_or(0);
         options.headers = headers.clone();
         options.content_type = content_type.clone();
+        options.js_globals.clone_from(&bundle.js_globals);
         options
             .language_detector
             .clone_from(&rc.article_language_detector);
@@ -1188,6 +1189,11 @@ impl UrlPlaneRunner {
             });
             // Hook evidence remains provenance, never action authority.
             record.metadata["browser"]["discoveredUrls"] = serde_json::json!(hook_urls);
+            // Names only. They came from the browser plane, never from the HTTP response.
+            record.metadata["browser"]["jsGlobals"] = serde_json::json!({
+                "source": "browser_plane",
+                "count": bundle.js_globals.len(),
+            });
             for link in links.keys() {
                 if !record.links.contains(link) {
                     record.links.push(link.clone());
