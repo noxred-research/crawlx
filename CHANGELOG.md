@@ -18,6 +18,12 @@ project is pre-1.0; minor versions may contain breaking changes.
   relation to Noxtica in the README). Script patterns are anchored to the documented host, and the
   `data-site-key` attribute is not used because other widgets share it. A detection shows that the response
   carried the marker, not that the product ran or is effective.
+- Browser plane: in dynamic and hybrid runs, after the page settles, the context lists the own, non-native
+  properties the page's scripts added to `window` (names only, never values; identifier-shaped, at most 64
+  bytes each and 512 per page; none under the `stealth` profile) and the worker passes them to technology
+  detection as `TechInput::js_globals` (`ExtractOptions::js_globals`), so catalog `js_globals` patterns now
+  match (crawlx#75). The page record states the source: `browser.jsGlobals.source = "browser_plane"`.
+  This replaces the matcher-only note of crawlx#68 in `docs/reference.md` and the `technologies` docs.
 
 ### Fixed
 
@@ -34,10 +40,6 @@ project is pre-1.0; minor versions may contain breaking changes.
   a key); the `AuthorizationRecord.id` documentation says an id names one immutable record and an amendment
   needs a new id; the walkthrough generates the authorization window from the current UTC date instead of
   fixed dates that expire.
-- Documentation: catalog `js_globals` patterns are matcher-only. The extractor passes no `window` property
-  names and the browser plane does not report any, so these patterns never match in a crawl (every entry
-  that lists one also has a pattern of another kind). `docs/reference.md` and the `technologies` module docs
-  say so, and a test pins it. No behaviour change.
 
 ### Changed
 

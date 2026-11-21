@@ -12,17 +12,14 @@
 //! | `meta` | `<meta name=… content=…>`, by lower-case name | `{name: regex}` |
 //! | `script_src` | every `<script src>` URL | `[regex]` |
 //! | `html` | the raw markup (first [`MAX_HTML_SCAN`] bytes) | `[regex]` |
-//! | `js_globals` | `window` property names the caller passes in [`TechInput::js_globals`] (none in production, see below) | `[name]` |
-//! | `url` | the page URL | `[regex]` |
+//! | `js_globals` | `window` property names a browser plane passes in [`TechInput::js_globals`] (none for an HTTP response) | `[name]` |
 //!
-//! `js_globals` is matcher-only for now. The matcher compares the names in
-//! [`TechInput::js_globals`] with each entry's `js_globals`, but no production
-//! caller supplies any: [`Extractor::extract`](crate::Extractor::extract) passes
-//! an empty list, and the browser plane does not report `window` property names
-//! to it. A `js_globals` pattern therefore never produces evidence in a crawl
-//! today, and every entry that lists one also has a pattern of another kind. The
-//! patterns stay in the catalog so they start to match once the browser plane
-//! supplies the names; unit tests inject the names directly.
+//! `js_globals` needs a browser plane. In dynamic and hybrid runs the context lists, after the page
+//! settles, the own properties its scripts added to `window` (names only, never values, identifier-shaped
+//! and length-capped) and the worker passes them as [`TechInput::js_globals`] through
+//! `ExtractOptions::js_globals`; the page's record states the source (`browser.jsGlobals.source` is
+//! `browser_plane`). A page fetched over HTTP supplies none, so its `js_globals` patterns never match
+//! there, and every entry that lists one also has a pattern of another kind.
 //!
 //! Regexes are case-insensitive; capture group 1, when it matches, is the
 //! version. `implies` adds other catalog entries (transitively) with evidence
@@ -361,8 +358,8 @@ pub struct TechInput<'a> {
     pub headers: &'a [(String, String)],
     /// Raw markup (for `html` patterns); `""` when only the parsed document is at hand.
     pub html: &'a str,
-    /// `window` property names. Always empty in production today: the extraction pipeline
-    /// passes none and the browser plane does not report them.
+    /// `window` property names a browser plane observed (names only; see
+    /// `crawlx_browser::globals`). Empty for a response fetched over HTTP.
     pub js_globals: &'a [String],
 }
 
