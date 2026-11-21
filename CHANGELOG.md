@@ -18,6 +18,12 @@ project is pre-1.0; minor versions may contain breaking changes.
   relation to Noxtica in the README). Script patterns are anchored to the documented host, and the
   `data-site-key` attribute is not used because other widgets share it. A detection shows that the response
   carried the marker, not that the product ran or is effective.
+- Tests: an RFC 9309 conformance corpus (#77). `crates/crawlx-policy/tests/robots_rfc9309.rs` is a pure
+  table of parser, matcher and `robots.txt` fetch-outcome vectors (RFC section 2.2 patterns, 2.3.1 fetch
+  results, 2.4 caching, 5.1 sample file). `crawlx-bench` gains a deterministic loopback `robots-edge` fixture
+  family (`crawlx_bench::robots_edge`) whose oracle compares the request log the origin received with the
+  request set the RFC prescribes, not the crawler's counters. The static plane runs in `cargo test`; the
+  browser plane runs the same cases when `CRAWLX_CHROMIUM_PATH` is set. No product behaviour changes.
 - Browser plane: in dynamic and hybrid runs, after the page settles, the context lists the own, non-native
   properties the page's scripts added to `window` (names only, never values; identifier-shaped, at most 64
   bytes each and 512 per page; none under the `stealth` profile) and the worker passes them to technology
