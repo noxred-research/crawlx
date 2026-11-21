@@ -222,6 +222,29 @@ fn configuration_files_cannot_name_executable_imports_or_unknown_keys() {
     assert!(request_error(&["--config", &file]).contains("unknown"));
 }
 
+// --- back-off politeness --------------------------------------------------------------------
+
+#[test]
+fn backoff_flags_set_the_politeness_cap_and_curve_and_default_to_balanced() {
+    use crawlx_core::config::BackoffProfile;
+    let c = request_of(&[]);
+    assert_eq!(c.politeness.max_delay_ms, 60_000);
+    assert_eq!(c.politeness.backoff_profile, BackoffProfile::Balanced);
+    let c = request_of(&["--max-delay-ms", "5000", "--backoff-profile", "conservative"]);
+    assert_eq!(c.politeness.max_delay_ms, 5_000);
+    assert_eq!(c.politeness.backoff_profile, BackoffProfile::Conservative);
+    let dir = tempfile::tempdir().unwrap();
+    let file = write(
+        dir.path(),
+        "g.yaml",
+        "max-delay-ms: 7000\nbackoff-profile: conservative\n",
+    );
+    let c = request_of(&["--config", &file]);
+    assert_eq!(c.politeness.max_delay_ms, 7_000);
+    assert_eq!(c.politeness.backoff_profile, BackoffProfile::Conservative);
+    assert!(parse(&["--backoff-profile", "reckless"]).is_err());
+}
+
 // --- --print-config -------------------------------------------------------------------------
 
 fn print_config(args: &[&str], env: &[(&str, &str)]) -> (Value, String) {
