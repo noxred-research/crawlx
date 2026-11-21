@@ -12,8 +12,17 @@
 //! | `meta` | `<meta name=… content=…>`, by lower-case name | `{name: regex}` |
 //! | `script_src` | every `<script src>` URL | `[regex]` |
 //! | `html` | the raw markup (first [`MAX_HTML_SCAN`] bytes) | `[regex]` |
-//! | `js_globals` | `window` property names reported by the browser plane | `[name]` |
+//! | `js_globals` | `window` property names the caller passes in [`TechInput::js_globals`] (none in production, see below) | `[name]` |
 //! | `url` | the page URL | `[regex]` |
+//!
+//! `js_globals` is matcher-only for now. The matcher compares the names in
+//! [`TechInput::js_globals`] with each entry's `js_globals`, but no production
+//! caller supplies any: [`Extractor::extract`](crate::Extractor::extract) passes
+//! an empty list, and the browser plane does not report `window` property names
+//! to it. A `js_globals` pattern therefore never produces evidence in a crawl
+//! today, and every entry that lists one also has a pattern of another kind. The
+//! patterns stay in the catalog so they start to match once the browser plane
+//! supplies the names; unit tests inject the names directly.
 //!
 //! Regexes are case-insensitive; capture group 1, when it matches, is the
 //! version. `implies` adds other catalog entries (transitively) with evidence
@@ -130,7 +139,7 @@ pub struct Entry {
     /// Regexes over the raw markup.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub html: Vec<String>,
-    /// `window` property names.
+    /// `window` property names; matched only against the names in [`TechInput::js_globals`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub js_globals: Vec<String>,
     /// Regexes over the page URL.
@@ -352,7 +361,8 @@ pub struct TechInput<'a> {
     pub headers: &'a [(String, String)],
     /// Raw markup (for `html` patterns); `""` when only the parsed document is at hand.
     pub html: &'a str,
-    /// `window` property names reported by the browser plane; empty on the static plane.
+    /// `window` property names. Always empty in production today: the extraction pipeline
+    /// passes none and the browser plane does not report them.
     pub js_globals: &'a [String],
 }
 

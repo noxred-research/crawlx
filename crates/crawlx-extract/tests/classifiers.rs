@@ -651,6 +651,43 @@ fn technologies_js_globals_and_url() {
     // detection-data
 }
 
+/// `js_globals` is matcher-only (see the `technologies` module docs): the extraction pipeline
+/// supplies no `window` property names, so a page that defines catalogued globals yields no
+/// `js_global:` evidence, and every entry with `js_globals` also has a pattern of another kind.
+/// If a plane starts supplying the names, this test and the docs change together.
+#[test]
+fn technologies_js_globals_are_matcher_only() {
+    let file: CatalogFile = serde_json::from_str(CATALOG_JSON).unwrap();
+    let mut with_globals = 0;
+    for (name, e) in &file.technologies {
+        if e.js_globals.is_empty() {
+            continue;
+        }
+        with_globals += 1;
+        let others = e.headers.len()
+            + e.cookies.len()
+            + e.meta.len()
+            + e.script_src.len()
+            + e.html.len()
+            + e.url.len();
+        assert!(others > 0, "{name} depends on js_globals alone");
+    }
+    assert!(with_globals > 0);
+    // the matcher still honours names a caller supplies
+    let got = tech(&[], "", None, &["jQuery"]);
+    assert_eq!(by_name(&got, "jQuery").evidence, "js_global:jQuery");
+    // the extraction pipeline supplies none, even when the page defines them
+    let html = "<html><body><script>window.jQuery = {}; window.Shopify = {}; window.__NEXT_DATA__ = {};</script></body></html>";
+    let doc = Extractor::extract(html, &page(), &ExtractOptions::default()).unwrap();
+    assert!(
+        doc.technologies
+            .iter()
+            .all(|t| !t.evidence.starts_with("js_global:")),
+        "{:?}",
+        doc.technologies
+    );
+}
+
 /// Detections for a page that loads one `<script src>`.
 fn tech_for_script(src: &str) -> Vec<Technology> {
     let html = format!(r#"<html><head><script src="{src}"></script></head></html>"#);
