@@ -905,7 +905,7 @@ fn s2_2_1_product_token_extraction() {
         ("crawlx/1.0 (+https://example.test/bot)", "crawlx"),
         ("CrawlX", "crawlx"),
         ("  crawlx/2  ", "crawlx"),
-        ("Mozilla/5.0 (compatible; crawlx)", "mozilla"),
+        ("Mozilla/5.0 (compatible; crawlx)", "mozilla"), // wire-compat: browser-style User-Agent shape
         ("crawlx (+https://example.test)", "crawlx"),
         ("", ""),
     ] {

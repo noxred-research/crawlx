@@ -48,7 +48,6 @@
 //! | `HUMAN Security` | script hosts `client.perimeterx.net`, `*.px-cloud.net`, `*.px-cdn.net`; cookies `_px`, `_px2`, `_px3`, `_pxhd`, `_pxvid`, `pxcts`; global `_pxAppId` | <https://docs.humansecurity.com/applications/sensor>, <https://docs.humansecurity.com/applications/use-of-cookies-web-storage>, <https://docs.humansecurity.com/applications/getting-started-with-sightline-cyberfraud-defense> |
 //! | `Akamai Bot Manager` | cookie `bm_sv` (the only bot-manager cookie Akamai's own documentation names) | <https://techdocs.akamai.com/identity-cloud/docs/hosted-login-cookies-and-local-storage-1> |
 //! | `Fingerprint` | agent CDN `fpjscdn.net/v<N>/`, as a script tag or a dynamic import | <https://docs.fingerprint.com/docs/install-the-javascript-agent>, <https://docs.fingerprint.com/docs/js-agent-csp> |
-//! | `Noxtica` | collector host `collect.noxtica.com`, scripts `noxtica-collector-core.js`, `noxtica-collector-extensions.js` and the legacy `noxtica-collector.js` and `noxtica.js` (each also with a hashed `.<hex>` twin), global `noxticaClient` | <https://noxtica.com/docs/browser-runtime/>, <https://noxtica.com/docs/sdk/client-api/>, <https://noxtica.com/docs/sdk/script-attributes/> |
 //! | `Cloudflare Bot Management` | cookie `__cf_bm`, set for Bot Management and for Bot Fight Mode | <https://developers.cloudflare.com/fundamentals/reference/policies-compliances/cloudflare-cookies/> |
 //! <!-- detection-data: the vendor name in the row above is catalog data -->
 

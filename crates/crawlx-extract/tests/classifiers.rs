@@ -709,60 +709,6 @@ fn has_tech(got: &[Technology], name: &str) -> bool {
     got.iter().any(|t| t.name == name)
 }
 
-/// The `Noxtica` entry matches only the collector scripts its public documentation lists, served
-/// from the collector host; hosts that merely resemble it, other asset names and a bare site-key
-/// attribute do not match.
-#[test]
-fn technologies_noxtica_collector() {
-    for src in [
-        "https://collect.noxtica.com/collector/noxtica-collector-core.js",
-        "https://collect.noxtica.com/collector/noxtica-collector-core.52368c27.js",
-        "https://collect.noxtica.com/collector/noxtica-collector-extensions.js",
-        "https://collect.noxtica.com/collector/noxtica-collector.js",
-        "https://collect.noxtica.com/collector/noxtica.js",
-        "https://collect.noxtica.com/collector/noxtica-collector-core.js?v=1",
-        "//collect.noxtica.com/collector/noxtica-collector-core.js",
-    ] {
-        let got = tech_for_script(src);
-        let t = by_name(&got, "Noxtica");
-        assert_eq!(t.evidence, "script_src", "{src}");
-        assert_eq!(t.category, "security", "{src}");
-    }
-    // the documented tag, with its public site key attribute (a placeholder here)
-    let tag = r#"<script src="https://collect.noxtica.com/collector/noxtica-collector-core.js"
-        data-site-key="pk_prod_your_site_key_here" data-auto-init data-auto-check-once async></script>"#;
-    let got = tech(&[], tag, None, &[]);
-    assert_eq!(
-        got.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
-        ["Noxtica"]
-    );
-    // near misses
-    for src in [
-        "https://collect.noxtica.com.example.net/collector/noxtica-collector-core.js",
-        "https://evilcollect.noxtica.com/collector/noxtica-collector-core.js",
-        "https://collect.noxtica.com@example.net/collector/noxtica-collector-core.js",
-        "http://collect.noxtica.com/collector/noxtica-collector-core.js",
-        "https://example.com/collector/noxtica-collector-core.js",
-        "https://collect.noxtica.com/other/noxtica-collector-core.js",
-        "https://collect.noxtica.com/collector/noxtica-collector-core.js.map",
-        "https://collect.noxtica.com/collector/noxtica-collector-core.abc.js",
-        "https://collect.noxtica.com/collector/noxtica-recorder-head.9b0210cd.js",
-    ] {
-        assert!(!has_tech(&tech_for_script(src), "Noxtica"), "{src}");
-    }
-    // a site-key attribute alone proves nothing: other widgets use the same attribute name
-    let other = r#"<script src="https://example.com/widget.js" data-site-key="pk_prod_your_site_key_here"></script>
-        <div data-site-key="pk_prod_your_site_key_here"></div>"#;
-    assert!(!has_tech(&tech(&[], other, None, &[]), "Noxtica"));
-    // the browser plane's window property, when it reports one
-    let got = tech(&[], "", None, &["noxticaClient"]);
-    assert_eq!(by_name(&got, "Noxtica").evidence, "js_global:noxticaClient");
-    assert!(!has_tech(
-        &tech(&[], "", None, &["noxtica", "NoxticaClient"]),
-        "Noxtica"
-    ));
-}
-
 /// Other bot-defence and device-intelligence vendors, each from its own public documentation:
 /// script hosts and cookie names match; look-alike hosts and neighbouring cookie names do not.
 #[test]

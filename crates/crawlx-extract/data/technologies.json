@@ -853,12 +853,6 @@
       "script_src": ["^(?:https:)?//fpjscdn\\.net/v(\\d+)/"],
       "html": ["https://fpjscdn\\.net/v(\\d+)/"]
     },
-    "Noxtica": {
-      "category": "security",
-      "website": "https://noxtica.com",
-      "script_src": ["^(?:https:)?//collect\\.noxtica\\.com/collector/noxtica(?:-collector(?:-core|-extensions)?)?(?:\\.[0-9a-f]{8,})?\\.js(?:[?#]|$)"],
-      "js_globals": ["noxticaClient"]
-    },
     "Content Security Policy": {
       "category": "security",
       "website": "https://www.w3.org/TR/CSP/",
