@@ -19,9 +19,9 @@ use crate::output_args::OutputArgs;
 use anyhow::{anyhow, bail, Context as _};
 use clap::{Args, ValueEnum};
 use crawlx_core::config::{
-    CrawlMode, CrawlStrategy, CustomField, CustomFieldPart, Extract, Fetch, HostScope, JavascriptMode,
-    KnownFile, LaunchProfile, OutputFormat, PageLoadStrategy, PageType, Politeness, Role, SafetyProfile,
-    Scope, SimilarityMode,
+    BackoffProfile, CrawlMode, CrawlStrategy, CustomField, CustomFieldPart, Extract, Fetch, HostScope,
+    JavascriptMode, KnownFile, LaunchProfile, OutputFormat, PageLoadStrategy, PageType, Politeness, Role,
+    SafetyProfile, Scope, SimilarityMode,
 };
 use crawlx_core::request_controls::FetchCookie;
 use crawlx_core::secret::CredentialRef;
@@ -106,6 +106,26 @@ pub enum TrailingArg {
     #[value(name = "add")]
     /// Add.
     Add,
+}
+
+/// `--backoff-profile`.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum BackoffArg {
+    #[value(name = "balanced")]
+    /// `max(Retry-After, 2 × floor)` after one throttle, doubling only on consecutive throttles.
+    Balanced,
+    #[value(name = "conservative")]
+    /// Double on every throttle, halve after 10 successes (the 0.2.0 curve).
+    Conservative,
+}
+
+impl From<BackoffArg> for BackoffProfile {
+    fn from(a: BackoffArg) -> Self {
+        match a {
+            BackoffArg::Balanced => Self::Balanced,
+            BackoffArg::Conservative => Self::Conservative,
+        }
+    }
 }
 
 /// `--field-scope` (compatibility `-fs`): a pre-defined scope or a host-name regex.
@@ -420,6 +440,14 @@ pub struct CrawlArgs {
     /// Compatibility `-rd`/`-delay`: minimum delay between requests to one origin, in whole seconds.
     #[arg(long = "delay", value_name = "SECONDS", conflicts_with = "delay_ms")]
     pub delay_seconds: Option<u32>,
+    /// Cap, in milliseconds, of the adaptive spacing after `429`/`503` answers (`politeness.maxDelayMs`,
+    /// default 60000, clamped to 50..=3600000). A longer `Retry-After` is still honoured.
+    #[arg(long, value_name = "MS", help_heading = "Rate limits")]
+    pub max_delay_ms: Option<u32>,
+    /// Back-off curve after `429`/`503` answers (`politeness.backoffProfile`): `balanced` (default) or
+    /// `conservative` (the 0.2.0 curve).
+    #[arg(long, value_enum, value_name = "PROFILE", help_heading = "Rate limits")]
+    pub backoff_profile: Option<BackoffArg>,
     /// Longest the crawl runs (`30s`, `5m`, `1h30m`, `2d` or bare seconds; at least 1s, at
     /// most 7d).
     #[arg(long, value_name = "DURATION", value_parser = parse_duration)]
@@ -925,6 +953,8 @@ impl CrawlArgs {
             trailing_slash,
             delay_ms,
             delay_seconds,
+            max_delay_ms,
+            backoff_profile,
             crawl_duration,
             compat_defaults,
             print_config,
@@ -990,6 +1020,8 @@ impl CrawlArgs {
         fill(&mut self.trailing_slash, trailing_slash);
         fill(&mut self.delay_ms, delay_ms);
         fill(&mut self.delay_seconds, delay_seconds);
+        fill(&mut self.max_delay_ms, max_delay_ms);
+        fill(&mut self.backoff_profile, backoff_profile);
         fill(&mut self.crawl_duration, crawl_duration);
         fill(&mut self.compat_defaults, compat_defaults);
         fill(&mut self.print_config, print_config);
@@ -1242,6 +1274,12 @@ fn apply_flags(args: &CrawlArgs, crawl: &mut CreateCrawl) -> anyhow::Result<()> 
     }
     if let Some(secs) = args.delay_seconds {
         crawl.politeness.delay_ms = seconds_to_ms("--delay", secs)?;
+    }
+    if let Some(ms) = args.max_delay_ms {
+        crawl.politeness.max_delay_ms = ms;
+    }
+    if let Some(profile) = args.backoff_profile {
+        crawl.politeness.backoff_profile = profile.into();
     }
     let plan = args
         .headless

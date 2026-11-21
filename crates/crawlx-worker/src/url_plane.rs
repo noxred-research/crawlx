@@ -162,7 +162,7 @@ impl<'a> NativeHopAdmission<'a> {
         self.authority().await?;
         let canonical = self
             .runner
-            .admit_native_scope(url, self.entry.depth, allow_leaf)
+            .admit_native_scope(url, self.entry.depth, allow_leaf, false)
             .await?;
         // Never authorize a normalized URL and then send a different query or path.
         if canonical.url != *url {
@@ -868,6 +868,7 @@ impl UrlPlaneRunner {
         options.status = status.unwrap_or(0);
         options.headers = headers.clone();
         options.content_type = content_type.clone();
+        options.js_globals.clone_from(&bundle.js_globals);
         options
             .language_detector
             .clone_from(&rc.article_language_detector);
@@ -1188,6 +1189,11 @@ impl UrlPlaneRunner {
             });
             // Hook evidence remains provenance, never action authority.
             record.metadata["browser"]["discoveredUrls"] = serde_json::json!(hook_urls);
+            // Names only. They came from the browser plane, never from the HTTP response.
+            record.metadata["browser"]["jsGlobals"] = serde_json::json!({
+                "source": "browser_plane",
+                "count": bundle.js_globals.len(),
+            });
             for link in links.keys() {
                 if !record.links.contains(link) {
                     record.links.push(link.clone());
@@ -1982,7 +1988,13 @@ impl UrlPlaneRunner {
                 None,
                 hop.code(),
             ),
-            None => self.discovery_admission(&url, depth, from, action_bearing).await,
+            None => {
+                let sitemap_document = proposal
+                    .as_ref()
+                    .is_some_and(|proposal| self.is_recipe_sitemap_document(&proposal.metadata));
+                self.discovery_admission(&url, depth, from, action_bearing, sitemap_document)
+                    .await
+            }
         };
         // Robots admission can await a response across the run deadline.
         if self.deps.clock.now() >= self.budget.lock().deadline() {
@@ -2092,6 +2104,7 @@ impl UrlPlaneRunner {
         depth: u16,
         from: Option<i64>,
         action_bearing: bool,
+        sitemap_document: bool,
     ) -> (
         Option<(FrontierStatus, String)>,
         Option<DiscoveryOutcome>,
@@ -2125,6 +2138,8 @@ impl UrlPlaneRunner {
         let discovery_only = self.discovery_only(url, depth, from).is_some();
         let verdict = if discovery_only {
             ScopeVerdict::Admitted { leaf_only: false }
+        } else if sitemap_document {
+            self.scope.decide_sitemap_document(url, depth)
         } else {
             self.scope.decide(url, depth)
         };
@@ -2444,20 +2459,20 @@ impl UrlPlaneRunner {
             let Some((canon, _)) = self.canonicalize(&url) else {
                 continue;
             };
-            if !self.scope.decide(&canon, 0).is_admitted() {
-                continue; // an off-scope sitemap host is not fetched
+            // an off-scope sitemap host is not fetched; the extension filter selects pages only
+            if !self.scope.decide_sitemap_document(&canon, 0).is_admitted() {
+                continue;
             }
             fetched += 1;
             let fetched_response = if let Some(policy) = &self.crawl.scope.discovery {
                 let acquisition = self.crawl.acquisition.clone().unwrap_or_default();
                 let mut budget = crate::acquisition::AcquisitionBudgetV1::new(&acquisition)?;
-                self.fetch_discovery_auxiliary(
+                self.fetch_sitemap_document(
                     &url,
                     0,
                     policy.max_feed_bytes,
                     &mut budget,
                     &CancellationToken::new(),
-                    crawlx_policy::robots::HopKind::Feed,
                 )
                 .await
             } else {
@@ -3228,7 +3243,12 @@ impl UrlPlaneRunner {
                 .discovery_only(&entry.url, entry.depth, entry.discovered_from)
                 .is_none()
         {
-            match self.scope.decide(&entry.url, entry.depth) {
+            let verdict = if self.is_recipe_sitemap_document(&queued.envelope.metadata) {
+                self.scope.decide_sitemap_document(&entry.url, entry.depth)
+            } else {
+                self.scope.decide(&entry.url, entry.depth)
+            };
+            match verdict {
                 ScopeVerdict::Denied(_) => {
                     return self
                         .finish(
@@ -4875,15 +4895,27 @@ impl UrlPlaneRunner {
                     tracing::warn!(url = %entry.url, error = %e, "extraction failed");
                     self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())
                         .await?;
-                    return self
-                        .fail(
-                            entry,
+                    // A page the isolated parser helper could not take within its limits fails with
+                    // its own stable code and the input size, not the generic `extract_failed`.
+                    let (code, payload) = if matches!(
+                        &e,
+                        crawlx_extract::ExtractError::ParseMemory(refused) if refused.is_helper_limit()
+                    ) {
+                        (
+                            "parser_limit_exceeded",
+                            serde_json::json!({
+                                "url": entry.url.url.as_str(),
+                                "reason": "parser_limit_exceeded",
+                                "inputBytes": resp.body.len(),
+                            }),
+                        )
+                    } else {
+                        (
                             "extract_failed",
-                            "extract_failed",
-                            Attempt::Failed,
                             serde_json::json!({ "url": entry.url.url.as_str(), "reason": "extract_failed" }),
                         )
-                        .await;
+                    };
+                    return self.fail(entry, code, code, Attempt::Failed, payload).await;
                 }
             }
         } else {

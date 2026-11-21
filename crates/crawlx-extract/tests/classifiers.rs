@@ -651,12 +651,11 @@ fn technologies_js_globals_and_url() {
     // detection-data
 }
 
-/// `js_globals` is matcher-only (see the `technologies` module docs): the extraction pipeline
-/// supplies no `window` property names, so a page that defines catalogued globals yields no
-/// `js_global:` evidence, and every entry with `js_globals` also has a pattern of another kind.
-/// If a plane starts supplying the names, this test and the docs change together.
+/// `js_globals` names come only from a browser plane (`ExtractOptions::js_globals`): the page's
+/// own script text is never read for them, so an HTTP response yields no `js_global:` evidence,
+/// and every entry with `js_globals` also has a pattern of another kind.
 #[test]
-fn technologies_js_globals_are_matcher_only() {
+fn technologies_js_globals_come_only_from_the_names_a_browser_plane_passes() {
     let file: CatalogFile = serde_json::from_str(CATALOG_JSON).unwrap();
     let mut with_globals = 0;
     for (name, e) in &file.technologies {
@@ -673,10 +672,10 @@ fn technologies_js_globals_are_matcher_only() {
         assert!(others > 0, "{name} depends on js_globals alone");
     }
     assert!(with_globals > 0);
-    // the matcher still honours names a caller supplies
+    // the matcher honours names a caller supplies
     let got = tech(&[], "", None, &["jQuery"]);
     assert_eq!(by_name(&got, "jQuery").evidence, "js_global:jQuery");
-    // the extraction pipeline supplies none, even when the page defines them
+    // an HTTP response passes none, even when the page defines them
     let html = "<html><body><script>window.jQuery = {}; window.Shopify = {}; window.__NEXT_DATA__ = {};</script></body></html>";
     let doc = Extractor::extract(html, &page(), &ExtractOptions::default()).unwrap();
     assert!(
@@ -685,6 +684,17 @@ fn technologies_js_globals_are_matcher_only() {
             .all(|t| !t.evidence.starts_with("js_global:")),
         "{:?}",
         doc.technologies
+    );
+    // names a browser plane observed reach the matcher through the extractor
+    let options = ExtractOptions {
+        js_globals: vec!["jQuery".to_owned(), "__NEXT_DATA__".to_owned()],
+        ..ExtractOptions::default()
+    };
+    let doc = Extractor::extract("<html><body><p>x</p></body></html>", &page(), &options).unwrap();
+    assert_eq!(by_name(&doc.technologies, "jQuery").evidence, "js_global:jQuery");
+    assert_eq!(
+        by_name(&doc.technologies, "Next.js").evidence,
+        "js_global:__NEXT_DATA__"
     );
 }
 

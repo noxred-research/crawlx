@@ -40,6 +40,7 @@ pub mod consent;
 pub mod context;
 pub mod egress;
 pub mod fake;
+pub mod globals;
 pub mod health;
 pub mod hooks;
 pub mod input;

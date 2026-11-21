@@ -727,9 +727,8 @@ impl Extractor {
                     url: Some(page),
                     headers: &opts.headers,
                     html,
-                    // no plane reports `window` property names yet, so `js_globals` patterns
-                    // cannot match here (see the `technologies` module docs)
-                    js_globals: &[],
+                    // names a browser plane observed; empty for an HTTP response
+                    js_globals: &opts.js_globals,
                 },
                 &doc,
             )

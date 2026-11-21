@@ -24,18 +24,58 @@ project is pre-1.0; minor versions may contain breaking changes.
   (crawlx#74). They pass scope, robots, egress and budgets like any link; reading is bounded to 1 MiB,
   16 nesting levels and 500 URLs per document. New key `scope.jsonEndpoints` (default `true`; a check on
   the CrawlerGym found no false positive); `--compat-defaults` sets it to `false`.
+- Tests: an RFC 9309 conformance corpus (#77). `crates/crawlx-policy/tests/robots_rfc9309.rs` is a pure
+  table of parser, matcher and `robots.txt` fetch-outcome vectors (RFC section 2.2 patterns, 2.3.1 fetch
+  results, 2.4 caching, 5.1 sample file). `crawlx-bench` gains a deterministic loopback `robots-edge` fixture
+  family (`crawlx_bench::robots_edge`) whose oracle compares the request log the origin received with the
+  request set the RFC prescribes, not the crawler's counters. The static plane runs in `cargo test`; the
+  browser plane runs the same cases when `CRAWLX_CHROMIUM_PATH` is set. No product behaviour changes.
+- Browser plane: in dynamic and hybrid runs, after the page settles, the context lists the own, non-native
+  properties the page's scripts added to `window` (names only, never values; identifier-shaped, at most 64
+  bytes each and 512 per page; none under the `stealth` profile) and the worker passes them to technology
+  detection as `TechInput::js_globals` (`ExtractOptions::js_globals`), so catalog `js_globals` patterns now
+  match (crawlx#75). The page record states the source: `browser.jsGlobals.source = "browser_plane"`.
+  This replaces the matcher-only note of crawlx#68 in `docs/reference.md` and the `technologies` docs.
 
 ### Fixed
 
+- Isolated parser helper: pages between 1 MiB and the 8 MiB response cap no longer fail with a varying
+  `extract_failed` (issue #71). Root cause: the helper is the `crawlx` executable, whose allocator reserves
+  1 GiB of address space (`MAP_NORESERVE`, almost none of it touched; a helper parsing 8 MiB peaks near
+  190 MiB resident) and `RLIMIT_AS` counts the reservation, so the 512 MiB default left no room for any
+  page: it was not CPU, wall time or the page's content. The default
+  `CRAWLX_PARSER_HELPER_ADDRESS_SPACE_BYTES` is now
+  2 GiB (at most two concurrent helpers on the default 4 GiB parse budget) and every helper run adds
+  64 bytes of address space per input byte and one CPU second and one wall-clock second per MiB of input.
+  The `rlimit` isolation is unchanged. A page that still exceeds a helper limit fails as
+  `parser_limit_exceeded` with `inputBytes` in the failure event, the same way every time. There is no
+  metadata-only link fallback: the extractor builds its tree with `scraper` and has no streaming link
+  tokenizer to run in the parent safely.
+- Browser plane (`dynamic` and `hybrid`): one failed page no longer ends the run with `fatal_error`
+  (issue #70). An egress denial on a navigation or redirect target, a network error page
+  (`chrome-error://`), a navigation timeout and an extraction failure of a page's output now fail only that
+  page: it is counted in `states.failed` (metric `crawlx.urls.failed{plane="states"}` with the reason
+  `egress_denied`, `navigation_failed`, `navigation_timeout` or `extract_failed`), announced as a
+  `state_failed` run event, and the session carries on with the rest of the frontier. A denied action is
+  journaled `failed`, keeps its `policy_blocked` count and is never retried; the control that led to an
+  unobservable page is not exercised again, and the session goes back to the page it came from. A seed that
+  cannot be loaded gives way to the next start page. `fatal_error` stays for a crashed browser, a lost
+  authorization and configuration errors, and a run that loses every page (`states.failed > 0`, no state or
+  URL ever succeeded) still ends `fatal_error`, so `crawlx crawl` exits non-zero. New in the scripted
+  browser (`crawlx-browser::fake`): `FakeScript::deny_egress` and `FakePage::unobservable`.
+- Sitemaps: the file-extension filter (the default deny list and `scope.extensionMatch` / `extensionFilter`)
+  selects crawl pages only. A sitemap document (a child of a sitemap index, a `Sitemap:` URL declared in
+  `robots.txt`, or the default `/sitemap.xml`) is no longer dropped because of its extension, so a
+  `.xml.gz` sitemap is fetched and decoded under the default filter (crawlx#72). Host, path, URL, robots and
+  authorization-record rules still apply to every sitemap document, and the URLs a sitemap lists still meet
+  the extension filter. An explicit seed URL such as `/sitemap.xml.gz` is a crawl page candidate and keeps
+  meeting the filter. Behaviour change: a crawl that set `scope.extensionMatch` to an allow list no longer
+  needs to include `xml` or `gz` for its sitemaps to be read.
 - Documentation accuracy: the compatibility endpoint table no longer lists the health probes under the
   `/compat` prefix (`GET /v0/health/readiness` and `/v0/health/liveness` are served at the API root, without
   a key); the `AuthorizationRecord.id` documentation says an id names one immutable record and an amendment
   needs a new id; the walkthrough generates the authorization window from the current UTC date instead of
   fixed dates that expire.
-- Documentation: catalog `js_globals` patterns are matcher-only. The extractor passes no `window` property
-  names and the browser plane does not report any, so these patterns never match in a crawl (every entry
-  that lists one also has a pattern of another kind). `docs/reference.md` and the `technologies` module docs
-  say so, and a test pins it. No behaviour change.
 
 ### Changed
 
@@ -43,6 +83,33 @@ project is pre-1.0; minor versions may contain breaking changes.
   (`chrono-tz`), published after 0.2.0: both only mark the crates unmaintained, report no vulnerability and
   have no upgrade, so `cargo deny check advisories` failed on every build. The exception comment names the
   condition for removing it.
+- Politeness: back-off after `429`/`503` no longer turns one throttling answer into minutes of slow
+  crawling (#76). With the new default profile, `politeness.backoffProfile = "balanced"`, the first
+  throttling answer after a success sets the origin's spacing to `max(Retry-After, 2 × floor)` (floor =
+  `max(delayMs, Crawl-delay)`); the spacing doubles, with the existing ±20 % seeded jitter, only on
+  *consecutive* throttling answers; and it halves after every 3 consecutive `200` answers instead of 10
+  (`politeness.decayAfter`). The spacing never drops below the floor and a `Retry-After` is never
+  shortened. A single `Retry-After: 2` on the default 250 ms floor now costs about 17 s over the next 30
+  requests instead of about 36 s. To get the
+  previous curve, set `politeness.backoffProfile` to `"conservative"` (or pass `--backoff-profile
+  conservative`): every throttling answer doubles the spacing and 10 successes halve it. The change
+  affects only pacing after throttling answers; base spacing, in-flight caps, rate buckets and
+  `Crawl-delay` are untouched.
+- `politeness.maxDelayMs` (default 60 000, clamped to 50..=3 600 000) is now configurable and exposed as
+  `crawlx crawl --max-delay-ms`; it was a fixed 60 s. `politeness.decayAfter` (at least 1; default 3 for
+  `balanced`, 10 for `conservative`) sets the success streak that halves the spacing. All three fields stay
+  off the serialized request while they hold their defaults, so configuration digests of existing requests
+  do not change.
+
+### Security
+
+- `tests/sdk` pins `zod` 4.6.7 through an npm `overrides` entry. The official Node SDK under test asks
+  for `zod` 3.x, and every 3.x release is affected by GHSA-mrhx-c7xc-m3w5 (memory exhaustion on oversized
+  constrained collections; fixed in 4.6.6). The package is test-only and never ships; `npm audit` is clean.
+- Removed the unused upstream `Cargo.lock` from `vendor/pdf-loader/lopdf-0.46.0`. Cargo ignores the
+  lockfile of a path dependency, so the build never used it, but it reported RUSTSEC-2026-0204, -0173,
+  -0486, -0386 and a yanked `chacha20` against the repository. The vendored crate resolves through the
+  workspace `Cargo.lock`, which `cargo deny` already checks.
 
 ## [0.2.0] - 2026-11-14
 

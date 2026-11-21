@@ -125,6 +125,52 @@ async fn dynamic_emits_settled_dom_pages_and_follows_rendered_and_hook_urls_with
 }
 
 #[tokio::test]
+async fn dynamic_passes_the_browsers_window_property_names_to_technology_detection() {
+    let directory = tempfile::tempdir().unwrap();
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(FakeScript::new().page(
+                FakePage::new("https://example.test/")
+                    .html("<html><head><title>App</title></head><body><main><h1>App</h1><p>Rendered by a framework.</p></main></body></html>")
+                    .js_globals(["jQuery", "__NEXT_DATA__"]),
+            ))
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
+    let stores = Stores::over_memory(Arc::new(MemoryStore::new()), directory.path())
+        .await
+        .unwrap();
+    let report = run_local_with(
+        LocalRun::new(request(), config(directory.path()))
+            .with_backend(backend)
+            .with_stores(stores),
+    )
+    .await
+    .unwrap();
+    let root = report
+        .pages
+        .iter()
+        .find(|page| page.url.url.path() == "/")
+        .unwrap();
+    let evidence = |name: &str| {
+        root.metadata["technologies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == name)
+            .map(|t| t["evidence"].as_str().unwrap().to_owned())
+    };
+    assert_eq!(evidence("jQuery").as_deref(), Some("js_global:jQuery"));
+    assert_eq!(evidence("Next.js").as_deref(), Some("js_global:__NEXT_DATA__"));
+    assert_eq!(root.metadata["browser"]["jsGlobals"]["source"], "browser_plane");
+    assert_eq!(root.metadata["browser"]["jsGlobals"]["count"], 2);
+    // names only: no value of any global is recorded
+    assert!(!serde_json::to_string(&root.metadata["browser"]["jsGlobals"])
+        .unwrap()
+        .contains("jQuery"));
+}
+
+#[tokio::test]
 async fn dynamic_keeps_the_final_action_destination_when_interaction_budget_ends() {
     let directory = tempfile::tempdir().unwrap();
     let stores = Stores::over_memory(Arc::new(MemoryStore::new()), directory.path())

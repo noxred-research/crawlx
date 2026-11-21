@@ -1396,6 +1396,32 @@ impl Default for Retention {
     }
 }
 
+/// `politeness.backoffProfile`: how the per-origin spacing reacts to `429`/`503` answers.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum BackoffProfile {
+    /// After a throttling answer the spacing becomes `max(Retry-After, 2 × floor)`, doubles only
+    /// on consecutive throttling answers, and halves after each streak of
+    /// [`Politeness::decay_after`] successes (default 3). Never faster than the floor, and
+    /// `Retry-After` is always honoured (the default).
+    #[default]
+    Balanced,
+    /// The 0.2.0 curve: every throttling answer doubles the current spacing (±20% jitter, capped
+    /// by `maxDelayMs`) and the spacing halves after each streak of
+    /// [`Politeness::decay_after`] successes (default 10).
+    Conservative,
+}
+
+impl BackoffProfile {
+    /// Whether this is the default profile ([`Self::Balanced`]).
+    #[must_use]
+    #[allow(clippy::trivially_copy_pass_by_ref, reason = "serde passes `&T`")]
+    pub const fn is_default(&self) -> bool {
+        matches!(self, Self::Balanced)
+    }
+}
+
 /// `politeness`: pacing limits against each target origin.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -1421,6 +1447,26 @@ pub struct Politeness {
     /// Maximum concurrent fetches across all hosts; clamped to 1..=256 (default 10).
     #[serde(default = "Politeness::default_max_concurrency")]
     pub max_concurrency: u16,
+    /// Cap, in milliseconds, of the adaptive per-origin spacing after `429`/`503` answers;
+    /// clamped to 50..=3 600 000 (default 60 000). A `Retry-After` longer than the cap and an
+    /// origin's `Crawl-delay` floor above it are still honoured.
+    #[serde(
+        default = "Politeness::default_max_delay",
+        skip_serializing_if = "is_default_max_delay"
+    )]
+    pub max_delay_ms: u32,
+    /// Back-off curve after `429`/`503` answers (default `balanced`; `conservative` is the 0.2.0 curve).
+    #[serde(default, skip_serializing_if = "BackoffProfile::is_default")]
+    pub backoff_profile: BackoffProfile,
+    /// Consecutive `200` answers that halve the adaptive spacing; at least 1. Default 3 for
+    /// `balanced` and 10 for `conservative`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decay_after: Option<u32>,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref, reason = "serde passes `&T`")]
+const fn is_default_max_delay(v: &u32) -> bool {
+    *v == Politeness::default_max_delay()
 }
 
 impl Politeness {
@@ -1432,6 +1478,9 @@ impl Politeness {
     }
     const fn default_max_concurrency() -> u16 {
         10
+    }
+    const fn default_max_delay() -> u32 {
+        60_000
     }
 }
 
@@ -1445,6 +1494,9 @@ impl Default for Politeness {
             per_host_rps: None,
             per_host_rpm: None,
             max_concurrency: Self::default_max_concurrency(),
+            max_delay_ms: Self::default_max_delay(),
+            backoff_profile: BackoffProfile::default(),
+            decay_after: None,
         }
     }
 }
@@ -2541,6 +2593,10 @@ impl CreateCrawl {
             *r = (*r).max(1);
         }
         self.politeness.max_concurrency = self.politeness.max_concurrency.clamp(1, 256);
+        self.politeness.max_delay_ms = self.politeness.max_delay_ms.clamp(50, 3_600_000);
+        if let Some(n) = &mut self.politeness.decay_after {
+            *n = (*n).max(1);
+        }
         self.fetch.max_response_bytes = self.fetch.max_response_bytes.clamp(1024, 64 * 1024 * 1024);
         self.fetch.timeout_ms = self.fetch.timeout_ms.clamp(100, 300_000);
         self.fetch.retries = self.fetch.retries.min(10);
@@ -3554,6 +3610,37 @@ mod tests {
         .is_err());
         assert!(serde_json::from_str::<CreateCrawl>(
             r#"{"seedUrl":"https://a.test/","scope":{"hostScope":"regex"}}"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn backoff_politeness_fields_default_clamp_and_stay_off_the_wire() {
+        let mut r = req(r#"{"seedUrl":"https://a.test/"}"#);
+        assert!(r.normalize().is_ok());
+        assert_eq!(r.politeness.backoff_profile, BackoffProfile::Balanced);
+        assert_eq!(
+            (r.politeness.max_delay_ms, r.politeness.decay_after),
+            (60_000, None)
+        );
+        let wire = serde_json::to_value(&r.politeness).unwrap();
+        for key in ["maxDelayMs", "backoffProfile", "decayAfter"] {
+            assert!(wire.get(key).is_none(), "{key} serialized at its default");
+        }
+        let mut r = req(
+            r#"{"seedUrl":"https://a.test/","politeness":{"maxDelayMs":1,"backoffProfile":"conservative","decayAfter":0}}"#,
+        );
+        assert!(r.normalize().is_ok());
+        assert_eq!(r.politeness.backoff_profile, BackoffProfile::Conservative);
+        assert_eq!(
+            (r.politeness.max_delay_ms, r.politeness.decay_after),
+            (50, Some(1))
+        );
+        let wire = serde_json::to_value(&r.politeness).unwrap();
+        assert_eq!(wire["backoffProfile"], "conservative");
+        assert_eq!(wire["maxDelayMs"], 50);
+        assert!(serde_json::from_str::<CreateCrawl>(
+            r#"{"seedUrl":"https://a.test/","politeness":{"backoffProfile":"reckless"}}"#
         )
         .is_err());
     }
