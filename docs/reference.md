@@ -219,11 +219,15 @@ when a pattern captures one. The matcher reads response headers, `Set-Cookie` co
 URLs, the first MiB of the markup and the page URL. A detection records only that a documented script host, cookie
 name or marker was present; it does not show that the product ran, enforces anything or is effective.
 
-Catalog `js_globals` patterns (names of `window` properties) are matcher-only for now. No production code path reports
-window property names: the extractor passes none, and the browser plane does not enumerate them. Such a pattern never
-produces evidence in a crawl, and every entry that lists one also has a pattern of another kind, so detection depends
-on those. The patterns stay so that they match once the browser plane supplies the names
-(`crates/crawlx-extract/src/technologies.rs`, tested by `technologies_js_globals_are_matcher_only`).
+Catalog `js_globals` patterns (names of `window` properties) match in dynamic and hybrid runs. After the page settles,
+the browser context lists the own properties the page's scripts added to `window` (the names of the page's main world
+minus those of a pristine isolated world of the same frame; names only, never values, identifier-shaped, at most 64
+bytes each and 512 per page) and the worker passes them to the technology matcher. The page record states the source
+(`browser.jsGlobals`: `source: "browser_plane"`, `count`). Nothing is listed under the `stealth` launch profile or when
+the evaluation fails, and a page fetched over HTTP supplies none, so there such a pattern never produces evidence; every
+entry that lists one also has a pattern of another kind
+(`crates/crawlx-extract/src/technologies.rs`, `crates/crawlx-browser/src/globals.rs`, tested by
+`technologies_js_globals_come_only_from_the_names_a_browser_plane_passes`).
 
 ## JavaScript endpoint mining
 

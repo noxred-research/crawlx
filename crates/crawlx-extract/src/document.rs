@@ -57,6 +57,9 @@ pub struct ExtractOptions {
     pub page_type: bool,
     /// Detect technologies from headers and markup (default true).
     pub technologies: bool,
+    /// Own, non-native `window` property names a browser plane observed (names only), matched
+    /// against catalog `js_globals` patterns when `technologies` is on. Empty for an HTTP response.
+    pub js_globals: Vec<String>,
     /// Keep `data:image/...` sources of `<img>` in the cleaned HTML and the Markdown (default
     /// false: such images are dropped). Used when the compatibility API `removeBase64Images` is off; the
     /// URIs stay verbatim and [`crate::base64_images::strip_base64_images`] removes them again.
@@ -105,6 +108,7 @@ impl Default for ExtractOptions {
             forms: true,
             page_type: true,
             technologies: true,
+            js_globals: Vec::new(),
             keep_data_images: false,
             content: None,
             acquisition_validation: None,
