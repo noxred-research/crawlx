@@ -188,8 +188,16 @@ blocklist.
   resolved inside the proxy, and a WebRTC policy that blocks non-proxied UDP. The proxy resolves,
   checks and pins each target, tunnels `CONNECT` only to checked addresses, and answers denials with
   `403` and an `x-crawlx-egress-denied` header. Launch profiles may not override these flags.
-  Denials are counted by plane and reason. An operator upstream proxy (`http`, `https`, `socks5`,
-  `socks5h`) can be chained; the upstream proxy host is itself egress-checked. A ProxyX pool gateway
+  Denials are counted by plane and reason. A navigation the policy refuses (a link, or a redirect
+  target outside the authorization record) costs that one page and not the run: the action is
+  journaled `failed`, the denial stays counted and is recorded as `policy_blocked`, the page is
+  counted in `states.failed` with the reason `egress_denied`, and the session goes on with the rest
+  of the frontier. A refused navigation is never retried. Network error pages, navigation
+  timeouts and extraction limits are failed states the same way (`navigation_failed`,
+  `navigation_timeout`, `extract_failed`); a crashed browser or a lost authorization still ends the
+  session, and a run in which every page failed ends `fatal_error`.
+  An operator upstream proxy (`http`, `https`, `socks5`, `socks5h`) can be chained; the upstream
+  proxy host is itself egress-checked. A ProxyX pool gateway
   is such an upstream (`CONNECT` only): the gateway host and the control API host of its block
   feedback are checked and pinned like any proxy, the gateway's own destination denylist is a second
   layer rather than a substitute, and the org key travels only in `Proxy-Authorization` and the

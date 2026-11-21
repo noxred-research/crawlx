@@ -27,6 +27,18 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ### Fixed
 
+- Browser plane (`dynamic` and `hybrid`): one failed page no longer ends the run with `fatal_error`
+  (issue #70). An egress denial on a navigation or redirect target, a network error page
+  (`chrome-error://`), a navigation timeout and an extraction failure of a page's output now fail only that
+  page: it is counted in `states.failed` (metric `crawlx.urls.failed{plane="states"}` with the reason
+  `egress_denied`, `navigation_failed`, `navigation_timeout` or `extract_failed`), announced as a
+  `state_failed` run event, and the session carries on with the rest of the frontier. A denied action is
+  journaled `failed`, keeps its `policy_blocked` count and is never retried; the control that led to an
+  unobservable page is not exercised again, and the session goes back to the page it came from. A seed that
+  cannot be loaded gives way to the next start page. `fatal_error` stays for a crashed browser, a lost
+  authorization and configuration errors, and a run that loses every page (`states.failed > 0`, no state or
+  URL ever succeeded) still ends `fatal_error`, so `crawlx crawl` exits non-zero. New in the scripted
+  browser (`crawlx-browser::fake`): `FakeScript::deny_egress` and `FakePage::unobservable`.
 - Sitemaps: the file-extension filter (the default deny list and `scope.extensionMatch` / `extensionFilter`)
   selects crawl pages only. A sitemap document (a child of a sitemap index, a `Sitemap:` URL declared in
   `robots.txt`, or the default `/sitemap.xml`) is no longer dropped because of its extension, so a
