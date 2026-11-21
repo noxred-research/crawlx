@@ -25,6 +25,7 @@ pub(crate) const DELAY_MS: u32 = 50;
 /// | `scope.maxDiscoveryDepth` | 3 | `-depth 3` |
 /// | `scope.strategy` | `depth_first` | `-strategy depth-first` |
 /// | `scope.jsEndpoints` | `false` | no `-js-crawl` |
+/// | `scope.jsonEndpoints` | `false` | the reference reads no JSON response for links |
 /// | `scope.knownFiles` | none | no `-known-files` |
 /// | `extract.forms` | `false` | no `-form-extraction` |
 /// | `politeness.globalRps` | 150 | `-rate-limit 150` |
@@ -38,6 +39,7 @@ pub(crate) fn apply(crawl: &mut CreateCrawl) {
     crawl.scope.max_discovery_depth = MAX_DEPTH;
     crawl.scope.strategy = CrawlStrategy::DepthFirst;
     crawl.scope.js_endpoints = false;
+    crawl.scope.json_endpoints = false;
     crawl.scope.known_files.clear();
     crawl.extract.forms = false;
     crawl.politeness.global_rps = Some(RATE_LIMIT);

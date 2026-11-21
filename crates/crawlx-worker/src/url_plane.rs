@@ -4938,15 +4938,16 @@ impl UrlPlaneRunner {
                     &text
                 ));
             }
+            let input = DiscoveryInput {
+                url: &resp.final_url,
+                status: code,
+                headers: &headers,
+                content_type: content_type.as_deref(),
+                body: &resp.body,
+                depth: u32::from(entry.depth),
+            };
             let report = crawlx_extract::endpoints::discover_report(
-                &DiscoveryInput {
-                    url: &resp.final_url,
-                    status: code,
-                    headers: &headers,
-                    content_type: content_type.as_deref(),
-                    body: &resp.body,
-                    depth: u32::from(entry.depth),
-                },
+                &input,
                 &DiscoveryOptions {
                     javascript_mode: self.extract.javascript_mode,
                     ..DiscoveryOptions::default()
@@ -4957,7 +4958,18 @@ impl UrlPlaneRunner {
                 "unresolved": report.unresolved,
                 "unresolvedDropped": report.unresolved_dropped,
             });
-            report.endpoints
+            let mut endpoints = report.endpoints;
+            if self.crawl.scope.json_endpoints {
+                // the values of a JSON document the crawl already fetched: admission (scope,
+                // robots, egress, budgets) still decides every one of them
+                let known: BTreeSet<Url> = endpoints.iter().map(|e| e.url.clone()).collect();
+                endpoints.extend(
+                    crawlx_extract::json_links::discover(&input, &crawlx_extract::json_links::JsonLinkLimits::default())
+                        .into_iter()
+                        .filter(|e| !known.contains(&e.url)),
+                );
+            }
+            endpoints
         };
         if !source_response {
             self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())

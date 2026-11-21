@@ -18,6 +18,12 @@ project is pre-1.0; minor versions may contain breaking changes.
   relation to Noxtica in the README). Script patterns are anchored to the documented host, and the
   `data-site-key` attribute is not used because other widgets share it. A detection shows that the response
   carried the marker, not that the product ran or is effective.
+- Static plane: the same-origin URLs named by the string values of a fetched `application/json` response
+  (root-relative paths and absolute URLs on the response's origin) are admitted as links with request source
+  `json_endpoint`, so a single-page application's route table in a JSON endpoint no longer needs a browser
+  (crawlx#74). They pass scope, robots, egress and budgets like any link; reading is bounded to 1 MiB,
+  16 nesting levels and 500 URLs per document. New key `scope.jsonEndpoints` (default `true`; a check on
+  the CrawlerGym found no false positive); `--compat-defaults` sets it to `false`.
 - Tests: an RFC 9309 conformance corpus (#77). `crates/crawlx-policy/tests/robots_rfc9309.rs` is a pure
   table of parser, matcher and `robots.txt` fetch-outcome vectors (RFC section 2.2 patterns, 2.3.1 fetch
   results, 2.4 caching, 5.1 sample file). `crawlx-bench` gains a deterministic loopback `robots-edge` fixture
