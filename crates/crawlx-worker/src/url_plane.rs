@@ -4897,7 +4897,7 @@ impl UrlPlaneRunner {
                         .await?;
                     // A page the isolated parser helper could not take within its limits fails with
                     // its own stable code and the input size, not the generic `extract_failed`.
-                    let (code, payload) = if matches!(
+                    let (code, mut payload) = if matches!(
                         &e,
                         crawlx_extract::ExtractError::ParseMemory(refused) if refused.is_helper_limit()
                     ) {
@@ -4915,6 +4915,11 @@ impl UrlPlaneRunner {
                             serde_json::json!({ "url": entry.url.url.as_str(), "reason": "extract_failed" }),
                         )
                     };
+                    // A page refused for resources still names links and metadata: recover them
+                    // through the bounded streaming scan, so the crawl keeps walking from it.
+                    if matches!(&e, crawlx_extract::ExtractError::ParseMemory(_)) {
+                        payload["metadataOnly"] = self.recover_refused_page(entry, &resp, expand).await?;
+                    }
                     return self.fail(entry, code, code, Attempt::Failed, payload).await;
                 }
             }
@@ -5236,6 +5241,55 @@ impl UrlPlaneRunner {
     ) -> Result<(), WorkerError> {
         self.follow_page_typed(entry, final_url, links, &PageHops::default(), endpoints)
             .await
+    }
+
+    /// Recover links and metadata of a page the parser refused for resources, without parsing it:
+    /// the bounded streaming scan of [`crawlx_extract::link_scan`] reads the body, and the links
+    /// it finds are discovered exactly like the links of a parsed page (same scope, robots and
+    /// dedupe gates). The page itself stays failed: no content was extracted. Returns the
+    /// `metadataOnly` object of the `page.failed` event.
+    ///
+    /// # Errors
+    /// Returns a lost lease or a store failure from discovery; an unavailable scan is reported in
+    /// the returned object, not as an error.
+    async fn recover_refused_page(
+        &self,
+        entry: &FrontierEntry,
+        resp: &FetchResponse,
+        expand: bool,
+    ) -> Result<serde_json::Value, WorkerError> {
+        let scanned = match memory_plane::scan_links(
+            &self.cpu_pool,
+            memory_plane::owned_bytes(resp),
+            resp.final_url.clone(),
+        )
+        .await
+        {
+            Ok(scanned) => scanned,
+            Err(unavailable) => {
+                tracing::warn!(url = %entry.url, reason = unavailable.as_str(), "metadata-only link scan unavailable");
+                return Ok(serde_json::json!({ "status": "unavailable", "reason": unavailable.as_str() }));
+            }
+        };
+        let urls: Vec<Url> = scanned.links.iter().map(|link| link.url.clone()).collect();
+        let followed = expand
+            && self.crawl.scope.discovery.is_none()
+            && self.source_enabled(crawlx_core::discovery::DiscoverySourceV1::Html);
+        if followed {
+            self.follow_page(entry, &resp.final_url, &urls, Vec::new())
+                .await?;
+        }
+        Ok(serde_json::json!({
+            "status": "recovered",
+            "title": scanned.title,
+            "description": scanned.description,
+            "canonicalUrl": scanned.canonical_url.as_ref().map(Url::as_str),
+            "language": scanned.language,
+            "robots": scanned.robots,
+            "links": urls.len(),
+            "linksFollowed": followed,
+            "linksTruncated": scanned.links_truncated,
+        }))
     }
 
     /// Discover the redirect target of a fetched page (a page of its own), then its links, the

@@ -282,7 +282,11 @@ resolution. Only GET endpoints without a body are fetch candidates: forms with
 another method, `formmethod` buttons and `hx-post`/`hx-put`/`hx-patch` are
 recorded as metadata and never submitted, and `method=dialog` forms produce no
 endpoint. Binary bodies (declared or sniffed) are never mined; their headers
-still are.
+still are. The `<base href>` URL itself is such an endpoint (like every other
+URL-bearing attribute), so a static crawl requests it once, in scope and under
+robots, even though a browser never does: a base that is only a path prefix
+(`<base href="/p/">`) is a request that may answer 404 and then counts as one
+failed URL.
 
 The AST miner never executes script text. When the URL position of a request
 site (`fetch`, `Request`, client methods, `xhr.open`, `location`, `history`,
@@ -1369,6 +1373,14 @@ one CPU second and one wall-clock second per MiB, so a page the fetcher admits
 (up to the 8 MiB default response cap) has the same room on every attempt. A page
 that still exceeds a limit fails as `parser_limit_exceeded` with its
 `inputBytes` in the run event, every time, never as a varying `extract_failed`.
+The static plane does not drop such a page's subtree: a bounded streaming scan
+(HTML tokenizer only, no DOM; at most 100000 links and 16 MiB of link text,
+reserved from the shared byte budget first) recovers its links, title,
+description, canonical URL, language and `robots` meta. The links are admitted
+through the usual scope, robots and dedupe gates, and the `page.failed` event
+carries them as `metadataOnly` (`status` `recovered`, or `unavailable` with a
+`reason` when the budget refuses the scan). The browser plane and the
+acquisition-service path do not run the scan.
 Increase only the required limit within the container's total memory budget;
 concurrent helpers add their address-space ceilings to parent memory (the
 default limits at most two helpers on the default 4 GiB parse budget).

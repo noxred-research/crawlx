@@ -81,6 +81,7 @@ pub mod json_links;
 pub mod kb;
 pub mod link_media;
 pub mod link_options;
+pub mod link_scan;
 pub mod links;
 pub mod map_rank;
 pub mod markdown;
