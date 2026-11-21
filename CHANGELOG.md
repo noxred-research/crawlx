@@ -38,6 +38,16 @@ project is pre-1.0; minor versions may contain breaking changes.
   have no upgrade, so `cargo deny check advisories` failed on every build. The exception comment names the
   condition for removing it.
 
+### Security
+
+- `tests/sdk` pins `zod` 4.6.7 through an npm `overrides` entry. The official Node SDK under test asks
+  for `zod` 3.x, and every 3.x release is affected by GHSA-mrhx-c7xc-m3w5 (memory exhaustion on oversized
+  constrained collections; fixed in 4.6.6). The package is test-only and never ships; `npm audit` is clean.
+- Removed the unused upstream `Cargo.lock` from `vendor/pdf-loader/lopdf-0.46.0`. Cargo ignores the
+  lockfile of a path dependency, so the build never used it, but it reported RUSTSEC-2026-0204, -0173,
+  -0486, -0386 and a yanked `chacha20` against the repository. The vendored crate resolves through the
+  workspace `Cargo.lock`, which `cargo deny` already checks.
+
 ## [0.2.0] - 2026-11-14
 
 Second source release. Distribution is unchanged: the GitHub repository and the tagged source
