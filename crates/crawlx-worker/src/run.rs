@@ -1,7 +1,6 @@
 //! `run_local`: create a run in the store and execute it in-process (what
 //! `crawlx crawl` calls), plus the per-run wiring shared with the lease loop.
 
-use crawlx_core::time::Duration;
 use crate::actor::{SessionConfig, SessionServices};
 use crate::analysis::{RunClusters, StateAnalyzer};
 use crate::authorization::{
@@ -40,6 +39,7 @@ use crawlx_core::repo::{
 use crawlx_core::request_controls::{is_credential_reference, RequestControls};
 use crawlx_core::secret::SecretResolver;
 use crawlx_core::seed::CrawlSeed;
+use crawlx_core::time::Duration;
 use crawlx_core::{
     BrowserBackend, CanonicalUrl, Clock, ContextConfig, CrawlRunId, CreateCrawl, SystemClock, WorkerId,
 };
@@ -3956,32 +3956,17 @@ pub(crate) mod login_lifecycle_tests {
 
     #[tokio::test(start_paused = true)]
     async fn deadline_during_seed_admission_completes_normally_without_dispatch() {
-        execution_deadline_case(
-            Duration::minutes(5),
-            false,
-            TerminalReason::DeadlineReached,
-        )
-        .await;
+        execution_deadline_case(Duration::minutes(5), false, TerminalReason::DeadlineReached).await;
     }
 
     #[tokio::test(start_paused = true)]
     async fn authorization_expiry_coincident_with_execution_deadline_stays_authorization_failure() {
-        execution_deadline_case(
-            Duration::seconds(1),
-            false,
-            TerminalReason::AuthorizationRevoked,
-        )
-        .await;
+        execution_deadline_case(Duration::seconds(1), false, TerminalReason::AuthorizationRevoked).await;
     }
 
     #[tokio::test(start_paused = true)]
     async fn authorization_revocation_coincident_with_execution_deadline_bypasses_cached_authority() {
-        execution_deadline_case(
-            Duration::minutes(5),
-            true,
-            TerminalReason::AuthorizationRevoked,
-        )
-        .await;
+        execution_deadline_case(Duration::minutes(5), true, TerminalReason::AuthorizationRevoked).await;
     }
 
     async fn execution_deadline_case(valid_for: Duration, revoke: bool, expected: TerminalReason) {

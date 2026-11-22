@@ -1128,10 +1128,10 @@ impl Scorecard {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crawlx_core::time::Timestamp;
     use super::*;
     use crate::gym::manifest::FixtureManifest;
     use crawlx_core::hash::Digest;
+    use crawlx_core::time::Timestamp;
 
     /// The identity gauges are process-global; tests that set and read them run one at a time.
     static IDENTITY_GAUGES: std::sync::Mutex<()> = std::sync::Mutex::new(());

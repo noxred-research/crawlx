@@ -13,8 +13,8 @@
 //! as `suites/SUITE.json` and exits with 0 whenever the result was recorded: the verdict is
 //! computed later by `check`.
 
-use crawlx_core::time::{NaiveDate, Timestamp};
 use crawlx_bench::release_gate::{evaluate, parse_waivers, record_suite, GateInputs, SUITE_IDS};
+use crawlx_core::time::{NaiveDate, Timestamp};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 

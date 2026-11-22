@@ -1,12 +1,12 @@
 //! Native declarative feed selection, parameters and bounded terminal fragment aggregation.
 
-use crawlx_core::time::Timestamp;
 use super::*;
 use crawlx_core::dataset::feed_key_component as key_component;
 use crawlx_core::dataset::{
     AcceptedItemV1, DatasetContentV1, DeliveryRangeV1, EmptyFeedPolicyV1, FeedBatchingV1, FeedCompressionV1,
     FeedDeclarationV1, FeedPredicateV1,
 };
+use crawlx_core::time::Timestamp;
 use crawlx_extract::item_export::{write_item_with, ItemExportOptions};
 use crawlx_extract::serialize::ItemFormat;
 use serde::Serialize;

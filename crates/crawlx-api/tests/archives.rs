@@ -3,7 +3,6 @@
 
 mod common;
 
-use crawlx_core::time::Duration;
 use axum::http::{Method, StatusCode};
 use crawlx_api::Scope;
 use crawlx_core::archive::{
@@ -12,6 +11,7 @@ use crawlx_core::archive::{
 use crawlx_core::archive_catalog::{ArchiveExportV1, ArchiveRecordV1, ArchiveRepo};
 use crawlx_core::counters::TerminalReason;
 use crawlx_core::repo::{RunRepo, Sensitivity};
+use crawlx_core::time::Duration;
 use crawlx_core::{ArtifactRef, Clock, SystemClock};
 use crawlx_storage::archive::{cdxj, warc, Limits};
 use crawlx_storage::{testkit, ArtifactIndex};
@@ -41,8 +41,8 @@ async fn archive_routes_enforce_scopes_tenants_publication_and_erasure() {
     let mut run = testkit::crawl_run(e.tenant, crawl);
     run.created_at = now;
     RunRepo::create(e.store.as_ref(), &run, None).await.unwrap();
-    let expires = (run.config.retention.days != 0)
-        .then(|| now + Duration::days(i64::from(run.config.retention.days)));
+    let expires =
+        (run.config.retention.days != 0).then(|| now + Duration::days(i64::from(run.config.retention.days)));
     let pending = ArchiveExportV1::pending(
         e.tenant,
         run.id,

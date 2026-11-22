@@ -12,6 +12,7 @@ use crawlx_api::auth::{generate_key, key_record, tenant_id_for};
 use crawlx_api::{ApiConfig, AppState, Repos, Scope};
 use crawlx_core::counters::RunStatus;
 use crawlx_core::repo::{EventRepo, RunRepo, Sensitivity};
+use crawlx_core::time::ManualClock;
 use crawlx_core::{CrawlRunId, SystemClock};
 use crawlx_storage::{FsArtifactStore, Pg, StoreConfig};
 use serde_json::{json, Value};
@@ -483,7 +484,6 @@ async fn full_lifecycle_over_postgres() {
 #[tokio::test]
 async fn shared_zdr_delivery_expiry_preserves_status_and_numeric_billing_without_runtime_config() {
     use crawlx_core::repo::{ArtifactStore, FrontierRepo, PageRepo};
-    use crawlx_core::time::ManualClock;
     use crawlx_core::{Clock, StoreError, TrustLane};
     use crawlx_storage::{testkit, BufferLimits, DeliveryBuffer};
 

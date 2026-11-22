@@ -1,9 +1,9 @@
 //! Retained approved bodies and renditions preserve captures with bounded local revisit closure.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{Duration, FixedDateTime, Timestamp};
 use super::*;
 use crawlx_core::archive::ArchiveDedupe;
+use crawlx_core::time::{Duration, FixedDateTime, Timestamp};
 
 async fn prepared(
     stores: &Stores,

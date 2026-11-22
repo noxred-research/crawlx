@@ -1,11 +1,11 @@
 //! Dedicated bootstrap ownership against PostgreSQL and optional volatile Redis.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::Timestamp;
 use async_trait::async_trait;
 use crawlx_core::counters::RunStatus;
 use crawlx_core::custody::{CustodyLease, CustodySource, RunSecretAuthority};
 use crawlx_core::repo::RunRepo;
+use crawlx_core::time::Timestamp;
 use crawlx_core::{CrawlRunId, SecretOr, StoreError, TenantId, WorkerId};
 use crawlx_storage::custody::bootstrap::{
     BootstrapAuthorization, BootstrapClaim, BootstrapLease, BootstrapProducerAuthorizer,

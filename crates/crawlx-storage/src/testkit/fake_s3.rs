@@ -10,7 +10,6 @@
 //! [`FakeS3::without_conditional_writes`] was called, which makes it answer `501` instead.
 //! Signatures are not verified.
 
-use crawlx_core::time::{SecondsFormat, Timestamp};
 use crate::s3::{S3Blobs, S3Config, S3ConfigError, Sse};
 use axum::body::Bytes;
 use axum::extract::{Path, Query, Request, State};
@@ -19,6 +18,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, put};
 use axum::Router;
+use crawlx_core::time::{SecondsFormat, Timestamp};
 use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::sync::Arc;

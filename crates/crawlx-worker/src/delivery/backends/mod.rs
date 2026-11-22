@@ -51,12 +51,12 @@ pub(super) use search::{SearchDestination, SearchEngine, DEFAULT_INDEX_PREFIX};
 #[cfg(test)]
 mod scope_tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crawlx_core::time::{Duration, Timestamp};
     use super::scoped_batch_id;
     use crate::delivery::tests::run;
     use crawlx_core::config::RetentionMode;
     use crawlx_core::dataset::{DatasetContentV1, DeliveryBatchV1};
     use crawlx_core::hash::Digest;
+    use crawlx_core::time::{Duration, Timestamp};
     use crawlx_core::{ArtifactId, ArtifactRef};
 
     fn batch(key: &str) -> DeliveryBatchV1 {

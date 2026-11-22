@@ -6,9 +6,9 @@
 //! or screenshot bytes. The driver must revalidate its live lease and authorization
 //! before acknowledging every command and must close the owned actor on cancellation.
 
-use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::secret::CredentialRef;
 use crawlx_core::session_binding::{BindingState, SessionBindingV1};
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{Clock, CrawlRunId, SessionId, TenantId, Timestamp};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};

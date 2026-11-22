@@ -6,7 +6,7 @@
 //! both new engines share one implementation of the same rule. The function is pure: the
 //! caller supplies `now` from the database clock.
 
-use crawlx_core::time::{Timestamp, Duration};
+use crawlx_core::time::{Duration, Timestamp};
 use serde_json::Value;
 use uuid::Uuid;
 

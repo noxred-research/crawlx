@@ -7,7 +7,6 @@
 
 mod common;
 
-use crawlx_core::time::Duration;
 use common::{canonical, rig_with, Rig};
 use crawlx_browser::fake::{FakeAxSpec, FakeEffect, FakePage, FakeScript};
 use crawlx_browser::FakeBackend;
@@ -16,6 +15,7 @@ use crawlx_core::identity::ActionKind;
 use crawlx_core::observation::QuiescencePolicy;
 use crawlx_core::repo::{ActionJournal, ActionRecord, StateRepo};
 use crawlx_core::seed::CrawlSeed;
+use crawlx_core::time::Duration;
 use crawlx_core::{Clock, SafetyProfile, SystemClock};
 use crawlx_scheduler::{Reaper, ReaperConfig};
 use crawlx_storage::MemoryStore;

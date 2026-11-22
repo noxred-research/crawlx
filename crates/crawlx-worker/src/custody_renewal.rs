@@ -6,6 +6,7 @@
 
 use crate::durable::DurableAuthority;
 use crawlx_core::custody::{CustodyLease, CustodyRenewalWindow};
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{StoreError, Timestamp};
 use crawlx_storage::custody::SecretAuthority;
 use crawlx_storage::sql::Sql;
@@ -173,9 +174,9 @@ where
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crawlx_core::time::Duration as SpanDuration;
     use super::*;
     use crawlx_core::custody::SecretEpoch;
+    use crawlx_core::time::Duration as SpanDuration;
     use crawlx_core::{CrawlRunId, TenantId};
 
     #[test]

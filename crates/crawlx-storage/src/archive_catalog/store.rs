@@ -10,7 +10,6 @@
 use super::{
     decode, export_json, history_key, invalid, json, live, publish_bounds, record_bounds, scope, writer,
 };
-use crawlx_core::time::Duration;
 use crate::backend::strategy::Conn;
 use crate::backend::{Dialect, LockMode, RowLock};
 use crate::sql::{in_ids, stmt, Sql, SqlRow, Stmt};
@@ -22,6 +21,7 @@ use crawlx_core::archive_catalog::{
     ArchiveHistoryV1, ArchiveReadV1, ArchiveRecordV1, ArchiveRepo,
 };
 use crawlx_core::repo::Sensitivity;
+use crawlx_core::time::Duration;
 use crawlx_core::{ArtifactRef, CrawlRunId, StoreError, TenantId, Timestamp};
 use std::collections::BTreeSet;
 use uuid::Uuid;

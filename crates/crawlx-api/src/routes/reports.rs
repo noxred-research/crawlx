@@ -9,7 +9,6 @@
 //! `factsAfter`/`factNext` cursor. The two cursor spaces never merge, and a field leaves
 //! `notRecorded` only when a fact returned in that very page proves it.
 
-use crawlx_core::time::{Duration, FixedDateTime};
 use crate::auth::Principal;
 use crate::errors::{ApiResult, Detail, HttpError};
 use crate::resources::metadata_expires_at;
@@ -29,6 +28,7 @@ use crawlx_core::report_history::{
     page_duration_percentile, report_host_key, ReportDataV1, ReportEntryV1, ReportKindV1, ReportQueryV1,
     StageOutcomeV1,
 };
+use crawlx_core::time::{Duration, FixedDateTime};
 use crawlx_core::{CrawlRunId, Timestamp};
 use serde::Serialize;
 use std::collections::BTreeMap;

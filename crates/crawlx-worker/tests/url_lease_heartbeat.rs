@@ -15,9 +15,9 @@
 mod common;
 mod resume_rig;
 
-use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::counters::{RunStatus, TerminalReason};
 use crawlx_core::repo::FrontierStatus;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{Clock, SystemClock};
 use resume_rig::{
     by_state, enqueue, finish, fleet_reaper, frontier, page_paths, terminal, Doomed, Reaped, Rig, Shape,

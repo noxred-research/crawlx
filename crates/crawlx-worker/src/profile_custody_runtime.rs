@@ -13,7 +13,6 @@
 //! No directory, global profile cipher, plaintext key or empty-storage fallback is involved. Any
 //! missing capability fails closed with `profile_unavailable`.
 
-use crawlx_core::time::Duration;
 use crate::actor::SessionHandle;
 use crate::error::WorkerError;
 use crate::run::RunContext;
@@ -23,6 +22,7 @@ use crawlx_core::captcha::CaptchaSecrets;
 use crawlx_core::custody::CustodyLease;
 use crawlx_core::hash::Digest;
 use crawlx_core::session_binding::SessionIdentityV1;
+use crawlx_core::time::Duration;
 use crawlx_core::{BrowserError, SecretOr, SessionId, Timestamp};
 use crawlx_storage::artifact_key_crypto::ArtifactKeys;
 use crawlx_storage::custody::profiles::{CustodyProfileInspection, CustodyProfiles};

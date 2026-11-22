@@ -755,9 +755,7 @@ impl MemoryStore {
                 .map_or(policy.max_elapsed_ms, |job| job.options.timeout_ms),
         );
         let absolute = (now + SpanDuration::milliseconds(i64::from(elapsed)))
-            .min(
-                request_created + SpanDuration::milliseconds(i64::try_from(request_ms).unwrap_or(i64::MAX)),
-            )
+            .min(request_created + SpanDuration::milliseconds(i64::try_from(request_ms).unwrap_or(i64::MAX)))
             .min(
                 record.started_at.unwrap_or(record.created_at)
                     + SpanDuration::seconds(i64::from(record.config.limits.duration_seconds)),
@@ -1156,7 +1154,7 @@ impl RequestCommitRepo for MemoryStore {
         row.e.attempts += 1;
         row.owner = Some(lease.worker);
         row.token = Some(token);
-        row.expires = Some(now + chrono_dur(self.url_ttl));
+        row.expires = Some(now + span_of(self.url_ttl));
         Ok(Some((row.e.clone(), token)))
     }
     async fn commit_observed_fenced(

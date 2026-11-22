@@ -2,7 +2,6 @@
 //! `CRAWLX_TEST_DATABASE_URL`; without that variable every test returns early.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{Duration, NaiveDate, Timestamp};
 use crawlx_core::config::RetentionMode;
 use crawlx_core::counters::{ActionStatus, ReconcileResolution, RunStatus, TerminalReason};
 use crawlx_core::epoch::ObservationEpoch;
@@ -10,6 +9,7 @@ use crawlx_core::hash::Digest;
 use crawlx_core::observation::{ActionReceipt, SettleReport};
 use crawlx_core::repo::*;
 use crawlx_core::safety::SafetyDecision;
+use crawlx_core::time::{Duration, NaiveDate, Timestamp};
 use crawlx_core::traffic::{Fidelity, TrafficEvent, TrafficOrigin, TrustLane, UnattributedReason};
 use crawlx_core::{
     ArtifactId, ArtifactRef, CrawlRunId, NetworkEpochId, PrincipalId, SessionId, StateClusterId, StoreError,
@@ -1172,7 +1172,11 @@ async fn reaper_flow_recover_reconcile_and_retry() {
     env.pg.intend(id, session, epoch(1, 1, 0)).await.unwrap();
 
     // the holder dies: lease expires, reap marks the session recovering (never pending) and the action unknown
-    let report = env.pg.reap(Timestamp::now() + Duration::seconds(300)).await.unwrap();
+    let report = env
+        .pg
+        .reap(Timestamp::now() + Duration::seconds(300))
+        .await
+        .unwrap();
     assert_eq!(report.sessions_recovering, vec![session]);
     assert_eq!(report.actions_unknown, vec![id]);
     assert_eq!(

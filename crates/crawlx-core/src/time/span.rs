@@ -43,49 +43,49 @@ impl Duration {
 
     /// `weeks` weeks. Panics on overflow, like the operators.
     #[must_use]
-    pub fn weeks(weeks: i64) -> Self {
+    pub const fn weeks(weeks: i64) -> Self {
         Self(SignedDuration::weeks(weeks))
     }
 
     /// `days` days.
     #[must_use]
-    pub fn days(days: i64) -> Self {
+    pub const fn days(days: i64) -> Self {
         Self(SignedDuration::days(days))
     }
 
     /// `hours` hours.
     #[must_use]
-    pub fn hours(hours: i64) -> Self {
+    pub const fn hours(hours: i64) -> Self {
         Self(SignedDuration::hours(hours))
     }
 
     /// `minutes` minutes.
     #[must_use]
-    pub fn minutes(minutes: i64) -> Self {
+    pub const fn minutes(minutes: i64) -> Self {
         Self(SignedDuration::minutes(minutes))
     }
 
     /// `seconds` seconds.
     #[must_use]
-    pub fn seconds(seconds: i64) -> Self {
+    pub const fn seconds(seconds: i64) -> Self {
         Self(SignedDuration::seconds(seconds))
     }
 
     /// `milliseconds` milliseconds.
     #[must_use]
-    pub fn milliseconds(milliseconds: i64) -> Self {
+    pub const fn milliseconds(milliseconds: i64) -> Self {
         Self(SignedDuration::milliseconds(milliseconds))
     }
 
     /// `microseconds` microseconds.
     #[must_use]
-    pub fn microseconds(microseconds: i64) -> Self {
+    pub const fn microseconds(microseconds: i64) -> Self {
         Self(SignedDuration::microseconds(microseconds))
     }
 
     /// `nanoseconds` nanoseconds.
     #[must_use]
-    pub fn nanoseconds(nanoseconds: i64) -> Self {
+    pub const fn nanoseconds(nanoseconds: i64) -> Self {
         Self(SignedDuration::nanoseconds(nanoseconds))
     }
 
@@ -153,7 +153,11 @@ impl Duration {
     /// caller produces.
     #[must_use]
     pub fn num_milliseconds(self) -> i64 {
-        i64::try_from(self.0.whole_milliseconds()).unwrap_or(if self.0.is_negative() { i64::MIN } else { i64::MAX })
+        i64::try_from(self.0.whole_milliseconds()).unwrap_or(if self.0.is_negative() {
+            i64::MIN
+        } else {
+            i64::MAX
+        })
     }
 
     /// Whole microseconds, `None` when they do not fit an `i64`.

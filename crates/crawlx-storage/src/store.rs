@@ -5,10 +5,10 @@
 //! other engines open, migrate and expose their concurrency primitives through the same
 //! type.
 
-use crawlx_core::time::Timestamp;
 use crate::backend::postgres::{set_pool_in_use, TenantPool, MIGRATOR};
 use crate::backend::{Backend, PgBackend};
 use crate::error::db;
+use crawlx_core::time::Timestamp;
 use crawlx_core::StoreError;
 use crawlx_telemetry::metrics::names;
 use crawlx_telemetry::Metrics;

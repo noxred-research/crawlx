@@ -348,8 +348,8 @@ impl ReparseServices<'_> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crawlx_core::time::Timestamp;
     use super::*;
+    use crawlx_core::time::Timestamp;
     use crawlx_core::{
         acquisition::BackendCapabilitiesV1, archive_catalog::ArchiveCustodyV1, custody::RunSecretSnapshot,
     };

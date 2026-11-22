@@ -21,7 +21,6 @@
 //! concurrent non-chaos build from silently changing the subprocess behavior.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::Duration as SpanDuration;
 use crawlx_bench::gym::server::{GymHandle, GymServer};
 use crawlx_bench::trail::{verify_trail, TrailStore};
 use crawlx_core::config::StrategyName;

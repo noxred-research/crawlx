@@ -4,12 +4,12 @@
 //! and revalidate its authority before every send. This module grants no lease, performs no
 //! identity rotation, and never falls back from an unavailable name to another session.
 
-use crawlx_core::time::{Duration as SpanDuration, FixedDateTime};
 use crawlx_core::request_controls::{ControlCookie, MAX_VALUE_LEN};
 use crawlx_core::secret::SecretOr;
 use crawlx_core::session_binding::{
     BindingState, RetirementReason, SessionBindingError, SessionBindingV1, SessionLimits,
 };
+use crawlx_core::time::{Duration as SpanDuration, FixedDateTime};
 use crawlx_core::{Clock, CrawlRunId, PrincipalId, TenantId, Timestamp};
 use crawlx_fetch::redirect::{is_redirect, location, strip_credentials};
 use crawlx_fetch::{FetchConfig, FetchError, FetchHop, FetchOptions, FetchResponse, Fetcher};
@@ -281,8 +281,7 @@ impl NamedHttpSessions {
         }
         let expires_at = now
             .checked_add_signed(
-                SpanDuration::from_std(self.limits.max_age)
-                    .map_err(|_| HttpSessionError::Configuration)?,
+                SpanDuration::from_std(self.limits.max_age).map_err(|_| HttpSessionError::Configuration)?,
             )
             .ok_or(HttpSessionError::Configuration)?
             .min(binding.expires_at);

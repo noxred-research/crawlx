@@ -1,9 +1,9 @@
 //! Bounded frontier transactions, producer cursors and revisit scheduling.
 
-use crate::time::Duration;
 use crate::hash::Digest;
 use crate::repo::{FrontierEntry, FrontierStatus};
 use crate::request::{RequestEnvelopeV1, RequestIdentityV1, MAX_REQUEST_BATCH, MAX_REQUEST_BATCH_BYTES};
+use crate::time::Duration;
 use crate::{CrawlRunId, StoreError, TenantId, Timestamp};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

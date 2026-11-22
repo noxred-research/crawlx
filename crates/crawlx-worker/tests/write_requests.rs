@@ -7,7 +7,6 @@
 
 mod common;
 
-use crawlx_core::time::Duration as SpanDuration;
 use axum::body::Body;
 use axum::extract::Request;
 use axum::http::{header, HeaderValue, StatusCode};
@@ -21,6 +20,7 @@ use crawlx_core::repo::{CrawlRun, EventRepo, FrontierStatus, RunEvent, Sensitivi
 use crawlx_core::request::{keyed_body_digest, RequestBodyV1, RequestEnvelopeV1, WriteApprovalV1};
 use crawlx_core::safety::RiskClass;
 use crawlx_core::secret::SecretOr;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{Clock, CrawlRunId, CreateCrawl, SystemClock};
 use crawlx_fetch::StaticResolver;
 use crawlx_policy::AuthorizationRecord;

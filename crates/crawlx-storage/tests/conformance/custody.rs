@@ -6,7 +6,6 @@
 //! not set. Every other case runs on SQLite, and on MariaDB and PostgreSQL when their test
 //! servers are configured.
 
-use crawlx_core::time::{Duration as TimeDelta, NaiveDateTime, Timestamp};
 use crate::rig::Rig;
 use async_trait::async_trait;
 use crawlx_core::acquisition::BackendCapabilitiesV1;
@@ -17,6 +16,7 @@ use crawlx_core::hash::Digest;
 use crawlx_core::observation::BrowserBuildInfo;
 use crawlx_core::origin::OriginAdmission;
 use crawlx_core::repo::{RunRepo, Sensitivity};
+use crawlx_core::time::{Duration as TimeDelta, NaiveDateTime, Timestamp};
 use crawlx_core::{ArtifactId, CrawlRunId, SecretOr, StoreError, SystemClock, TenantId, WorkerId};
 use crawlx_storage::custody::bootstrap::{
     BootstrapAuthority, BootstrapAuthorization, BootstrapClaim, BootstrapProducerAuthorizer,

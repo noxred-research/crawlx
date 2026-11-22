@@ -11,7 +11,6 @@ pub mod tenancy;
 
 pub use rig::{Engine, Rig};
 
-use crawlx_core::time::Timestamp;
 use crawlx_core::action::BrowserAction;
 use crawlx_core::counters::{PlaneCounters, RunStatus};
 use crawlx_core::epoch::ObservationEpoch;
@@ -22,6 +21,7 @@ use crawlx_core::proposal::{ActionProposal, ExpectedEffect};
 use crawlx_core::repo::{CrawlRun, CrawlSession, NewState, SessionStatus};
 use crawlx_core::safety::{RiskClass, SafetyDecision, SafetyVerdict};
 use crawlx_core::state::{MaskSet, StateSignature};
+use crawlx_core::time::Timestamp;
 use crawlx_core::url::{CanonicalUrl, RouteTemplate};
 use crawlx_core::{
     CrawlRunId, CreateCrawl, LaunchProfile, PrincipalId, SafetyDecisionId, SessionId, StateClusterId,
@@ -78,8 +78,7 @@ pub fn crawl_run(tenant: TenantId, cfg: CreateCrawl) -> CrawlRun {
         policy_version: 1,
         counters: PlaneCounters::default(),
         // millisecond precision: what PostgreSQL round-trips
-        created_at: Timestamp::from_timestamp_millis(Timestamp::now().timestamp_millis())
-            .unwrap_or_default(),
+        created_at: Timestamp::from_timestamp_millis(Timestamp::now().timestamp_millis()).unwrap_or_default(),
         started_at: None,
         finished_at: None,
         trace_id: None,

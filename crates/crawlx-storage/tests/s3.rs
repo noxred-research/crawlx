@@ -4,9 +4,9 @@
 //! behavior is in `s3_profiles.rs`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{Duration as SpanDuration, Timestamp};
 use crawlx_core::config::RetentionMode;
 use crawlx_core::repo::{ArtifactStore, RunRepo, Sensitivity};
+use crawlx_core::time::{Duration as SpanDuration, Timestamp};
 use crawlx_core::{Clock, SystemClock, TenantId};
 use crawlx_storage::artifacts::{ArtifactBlobs, ArtifactReaper as _, LiveArtifacts, ObjectArtifactStore};
 use crawlx_storage::s3::{S3Blobs, S3Config, Sse};

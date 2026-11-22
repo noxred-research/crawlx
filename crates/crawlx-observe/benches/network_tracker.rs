@@ -8,8 +8,8 @@
 //! [`EpochTracker`].
 #![allow(missing_docs, clippy::unwrap_used, clippy::expect_used)]
 
-use crawlx_core::time::Timestamp;
 use crawlx_core::epoch::ObservationEpoch;
+use crawlx_core::time::Timestamp;
 use crawlx_core::traffic::TrafficOrigin;
 use crawlx_observe::epoch::{EpochEvent, EpochTracker};
 use crawlx_observe::network::{NetworkEpochTracker, RequestEvent, ResponseEvent};

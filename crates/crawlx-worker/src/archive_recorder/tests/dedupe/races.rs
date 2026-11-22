@@ -1,9 +1,9 @@
 //! Committed edge races and final-package revocation retain physical erasure closure.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{Duration as SpanDuration, FixedDateTime, Timestamp};
 use super::*;
 use crawlx_core::archive_catalog::ArchiveRepo;
+use crawlx_core::time::{Duration as SpanDuration, FixedDateTime, Timestamp};
 use crawlx_storage::testkit::archive_races;
 use crawlx_storage::ArtifactIndex;
 use std::time::Duration;

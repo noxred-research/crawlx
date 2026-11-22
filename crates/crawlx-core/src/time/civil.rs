@@ -96,7 +96,9 @@ impl NaiveDate {
             return None;
         }
         let month = Month::try_from(u8::try_from(month).ok()?).ok()?;
-        Date::from_calendar_date(year, month, u8::try_from(day).ok()?).ok().map(Self)
+        Date::from_calendar_date(year, month, u8::try_from(day).ok()?)
+            .ok()
+            .map(Self)
     }
 
     /// The date of an ISO week: year, week (1 to 53) and weekday.
@@ -105,7 +107,9 @@ impl NaiveDate {
         if !(MIN_YEAR..=MAX_YEAR).contains(&year) {
             return None;
         }
-        Date::from_iso_week_date(year, u8::try_from(week).ok()?, weekday).ok().map(Self)
+        Date::from_iso_week_date(year, u8::try_from(week).ok()?, weekday)
+            .ok()
+            .map(Self)
     }
 
     pub(super) const fn from_date(date: Date) -> Self {
@@ -150,7 +154,10 @@ impl NaiveDate {
     #[must_use]
     pub fn iso_week(self) -> IsoWeek {
         let (year, week, _) = self.0.to_iso_week_date();
-        IsoWeek { year, week: u32::from(week) }
+        IsoWeek {
+            year,
+            week: u32::from(week),
+        }
     }
 
     /// The same year and month at `day`, `None` when the month has no such day.
@@ -211,7 +218,12 @@ impl NaiveDate {
     /// The date at `hour:minute:second`, `None` when the time does not exist.
     #[must_use]
     pub fn and_hms_opt(self, hour: u32, minute: u32, second: u32) -> Option<NaiveDateTime> {
-        let time = Time::from_hms(u8::try_from(hour).ok()?, u8::try_from(minute).ok()?, u8::try_from(second).ok()?).ok()?;
+        let time = Time::from_hms(
+            u8::try_from(hour).ok()?,
+            u8::try_from(minute).ok()?,
+            u8::try_from(second).ok()?,
+        )
+        .ok()?;
         Some(NaiveDateTime(self.0.with_time(time)))
     }
 
@@ -466,7 +478,8 @@ impl Parsed {
                         if !matches!(chars.next(), Some((_, 'z'))) {
                             return Err(INVALID);
                         }
-                        let (rest, offset) = scan::timezone_offset(s.trim_start(), Colon::Loose, false, true)?;
+                        let (rest, offset) =
+                            scan::timezone_offset(s.trim_start(), Colon::Loose, false, true)?;
                         s = rest;
                         parsed.offset = Some(offset);
                     }
@@ -531,7 +544,9 @@ impl Parsed {
         };
         let value = date.with_time(time);
         if leap {
-            value.checked_add(Duration::seconds(1).inner()).ok_or(OUT_OF_RANGE)
+            value
+                .checked_add(Duration::seconds(1).inner())
+                .ok_or(OUT_OF_RANGE)
         } else {
             Ok(value)
         }

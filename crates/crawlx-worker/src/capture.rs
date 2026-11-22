@@ -564,10 +564,10 @@ fn mask_captcha_event(event: &mut TrafficEvent, secrets: &CaptchaSecrets) {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crawlx_core::time::Timestamp;
     use super::*;
     use crawlx_browser::fake::{FakePage, FakeScript};
     use crawlx_browser::FakeBackend;
+    use crawlx_core::time::Timestamp;
     use crawlx_core::traffic::{ProxyFlow, ProxyFlowSource, TrafficOrigin, UnattributedReason};
     use crawlx_core::{BrowserBackend, ContextConfig, SystemClock};
     use crawlx_observe::Redactor;

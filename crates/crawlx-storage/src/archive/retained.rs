@@ -7,7 +7,6 @@ use crate::artifacts::{object_key, ArtifactRow};
 use crate::custody::encrypted_object_key;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::Sensitivity;
-use crawlx_core::time::FixedDateTime;
 use crawlx_core::{ArtifactRef, CrawlRunId, StoreError, TenantId, Timestamp};
 use std::fs::File;
 use std::io::Read;
@@ -247,6 +246,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
+    use crawlx_core::time::FixedDateTime;
     use std::os::unix::fs::symlink;
 
     #[test]

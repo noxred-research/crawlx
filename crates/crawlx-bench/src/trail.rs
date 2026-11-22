@@ -18,7 +18,6 @@
 //! false when any state is unverifiable, including legitimate ZDR unavailability.
 
 use crate::BenchError;
-use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::counters::{ActionStatus, PlaneCounters};
 use crawlx_core::hash::Digest;
@@ -28,6 +27,7 @@ use crawlx_core::repo::{
     NewState, RunRepo, StateRepo,
 };
 use crawlx_core::state::StateSignature;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::traffic::{TrustLane, UnattributedReason};
 use crawlx_core::{
     ActionId, ArtifactRef, CrawlRunId, ModelDecisionId, NetworkEpochId, SafetyDecisionId, SessionId, StateId,
@@ -564,7 +564,7 @@ fn age_secs(now: Timestamp, at: Timestamp) -> i64 {
     (now - at).num_seconds()
 }
 
-fn chrono_dur(d: Duration) -> SpanDuration {
+fn span_of(d: Duration) -> SpanDuration {
     SpanDuration::milliseconds(i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
@@ -639,8 +639,8 @@ pub fn verify_snapshot(s: &TrailSnapshot) -> TrailReport {
         }
     }
 
-    let lease = chrono_dur(s.lease_ttl);
-    let window = lease + chrono_dur(RECONCILE_WINDOW);
+    let lease = span_of(s.lease_ttl);
+    let window = lease + span_of(RECONCILE_WINDOW);
     let mut seqs: BTreeMap<SessionId, Vec<u64>> = BTreeMap::new();
     let mut succeeded = 0_u64;
     let mut unknown_total = 0_u64;
@@ -1294,9 +1294,9 @@ pub async fn verify_trail(run: CrawlRunId, store: TrailStore<'_>) -> Result<Trai
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
-    use crawlx_core::time::Timestamp;
     use crawlx_core::counters::Counters;
     use crawlx_core::epoch::ObservationEpoch;
+    use crawlx_core::time::Timestamp;
     use crawlx_core::traffic::Fidelity;
     use crawlx_core::{ArtifactId, SafetyDecisionId};
     use std::sync::Arc;

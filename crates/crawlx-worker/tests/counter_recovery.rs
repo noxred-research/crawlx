@@ -15,7 +15,6 @@
 //! The PostgreSQL variants skip without `CRAWLX_TEST_DATABASE_URL`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::Duration as SpanDuration;
 use crawlx_browser::fake::{FakeAxSpec, FakeEffect, FakePage, FakeScript};
 use crawlx_browser::FakeBackend;
 use crawlx_core::config::CrawlMode;
@@ -24,6 +23,7 @@ use crawlx_core::custody::CustodyLease;
 use crawlx_core::orchestration::{ObservedAppendV1, ObservedCommitV1, ObservedRequestV1, RequestCommitV1};
 use crawlx_core::repo::{CrawlRun, OutcomeRecord, SessionStatus};
 use crawlx_core::request::RequestEnvelopeV1;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{
     Clock, CrawlRunId, CreateCrawl, ObservationEpoch, SessionId, StateClusterId, SystemClock, TenantId,
     WorkerId,

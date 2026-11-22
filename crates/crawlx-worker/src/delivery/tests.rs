@@ -1,7 +1,7 @@
 //! Real native parsing, retained article feeds and approved local sink regressions.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-use crawlx_core::time::Timestamp;
 use super::*;
+use crawlx_core::time::Timestamp;
 use crawlx_core::{
     config::RetentionMode,
     dataset::{DatasetRepo, DeliveryOutboxRepo},

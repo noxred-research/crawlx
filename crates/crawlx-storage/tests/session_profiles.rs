@@ -1,13 +1,13 @@
 //! Real PostgreSQL session/profile consumer regressions. Skip without CRAWLX_TEST_DATABASE_URL.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::Duration;
 use crawlx_core::counters::{ActionStatus, ReconcileResolution, RunStatus};
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{ActionJournal, EventRepo, Reconciliation, RunRepo, SessionStatus};
 use crawlx_core::session_binding::{
     BindingState, RetirementReason, SessionBindingError, SessionBindingV1, SessionIdentityV1, SessionLimits,
 };
+use crawlx_core::time::Duration;
 use crawlx_core::{TenantId, WorkerId};
 use crawlx_storage::leases::{LeaseRepo, SessionLease};
 use crawlx_storage::profiles::{BrowserProfileRepo, ProfileCipher, ProfileFiles, ProfileScopeV1};
@@ -172,20 +172,14 @@ async fn binding_expiry_uses_only_durable_login_credit_and_a_bounded_reservation
         .bind_session(&lease, identity, raw_deadline + Duration::days(1))
         .await
         .unwrap();
-    assert_eq!(
-        binding.expires_at,
-        raw_deadline + Duration::milliseconds(11_000)
-    );
+    assert_eq!(binding.expires_at, raw_deadline + Duration::milliseconds(11_000));
     // Another slot cannot borrow the first slot's active reservation.
     let identity = SessionIdentityV1::new(tenant, &other.session, digest, digest, digest, digest, None);
     let binding = pg
         .bind_session(&other, identity, raw_deadline + Duration::days(1))
         .await
         .unwrap();
-    assert_eq!(
-        binding.expires_at,
-        raw_deadline + Duration::milliseconds(1_000)
-    );
+    assert_eq!(binding.expires_at, raw_deadline + Duration::milliseconds(1_000));
     EventRepo::append(
         &pg,
         run.id,
@@ -251,11 +245,7 @@ async fn fenced_recovery_can_reserve_relogin_past_the_previous_exploration_deadl
     assert_eq!(replacement.session.id, lease.session.id);
     assert_ne!(replacement.fencing_token, lease.fencing_token);
     let mut renewed = peer
-        .bind_session(
-            &replacement,
-            identity.clone(),
-            raw + Duration::seconds(20),
-        )
+        .bind_session(&replacement, identity.clone(), raw + Duration::seconds(20))
         .await
         .unwrap();
     assert_eq!(renewed.generation, old.generation);
@@ -795,11 +785,7 @@ async fn anonymous_binding_fixture(
     let digest = Digest::of("fixture", b"binding-lifecycle");
     let identity = SessionIdentityV1::new(tenant, &lease.session, digest, digest, digest, digest, None);
     let binding = pg
-        .bind_session(
-            &lease,
-            identity,
-            pg.now().await.unwrap() + Duration::minutes(1),
-        )
+        .bind_session(&lease, identity, pg.now().await.unwrap() + Duration::minutes(1))
         .await
         .unwrap();
     Some((pg, peer, tenant, lease, binding))

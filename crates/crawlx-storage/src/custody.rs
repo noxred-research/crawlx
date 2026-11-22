@@ -42,7 +42,6 @@
 //! already-enqueued commands or COMMIT may execute after cancellation. Errors
 //! never authorize credential delivery; durable pending intents remain barriers.
 
-use crawlx_core::time::Duration as SpanDuration;
 use crate::backend::strategy::Conn;
 use crate::backend::{LockMode, PgBackend};
 use crate::sql::{stmt, Sql, SqlRow, Stmt};
@@ -54,6 +53,7 @@ use crawlx_core::custody::{
     ArtifactReadState, CustodyLease, CustodySource, RunSecretAuthority, RunSecretSnapshot, SecretEpoch,
 };
 use crawlx_core::hash::Digest;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{ArtifactId, CrawlRunId, SecretOr, StoreError, TenantId, Timestamp, WorkerId};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::{Deserialize, Serialize};

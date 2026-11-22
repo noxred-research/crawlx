@@ -1,9 +1,9 @@
 //! Artifact store behavior without a database (runs come from the in-memory store).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{Duration as SpanDuration, ManualClock, Timestamp};
 use crawlx_core::config::RetentionMode;
 use crawlx_core::repo::{ArtifactStore, RunRepo, Sensitivity};
+use crawlx_core::time::{Duration as SpanDuration, ManualClock, Timestamp};
 use crawlx_core::{ArtifactRef, Clock as _, StoreError, TenantId};
 use crawlx_storage::artifacts::{ArtifactReaper as _, FsArtifactStore, MemoryArtifactStore};
 use crawlx_storage::testkit::{crawl_run, create_crawl};

@@ -14,7 +14,6 @@
 //! * The authored A7/A8 efficiency experiment lives in `worker_exec`'s unit tests so only
 //!   that private fixture harness, not the deployment executor, supplies test-only G1 status.
 
-use crawlx_core::time::Duration;
 use super::common::*;
 use crawlx_bench::gym::GymHandle;
 use crawlx_bench::scorecard::{ReplayAttempt, RunRows, Scorecard};
@@ -24,6 +23,7 @@ use crawlx_core::browser::BrowserContext;
 use crawlx_core::config::{CrawlMode, SafetyProfile};
 use crawlx_core::counters::ActionStatus;
 use crawlx_core::identity::{ActionKind, ElementIdentityHash};
+use crawlx_core::time::Duration;
 use crawlx_core::{ActionContextId, StateClusterId, Timestamp, TrustLane};
 use crawlx_elements::{Candidate, IdentityBuilder};
 use crawlx_graph::{

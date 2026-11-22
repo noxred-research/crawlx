@@ -1,8 +1,8 @@
 //! Real PostgreSQL checkpoint encryption cutover; skips without CRAWLX_TEST_DATABASE_URL.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::repo::{ArtifactStore, CheckpointRecord, CheckpointRepo, Sensitivity};
+use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::{CheckpointId, ObservationEpoch, StoreError, TenantId};
 use crawlx_storage::artifacts::{ArtifactReaper, FsArtifactStore, FsBlobs, ObjectArtifactStore};
 use crawlx_storage::checkpoint_crypto::{CheckpointContext, CheckpointKeys, MemoryCheckpointKeys};

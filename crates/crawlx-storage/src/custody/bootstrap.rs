@@ -27,7 +27,6 @@
 //! secret enumeration and live-output ownership boundaries are integrated.
 //! This module provides neither a plaintext fallback nor production closure.
 
-use crawlx_core::time::Duration as SpanDuration;
 use super::{database_now, denied, frag, locally_live, no_exposures, random_uuid, run_lock};
 use crate::backend::strategy::{Conn, FenceSeq};
 use crate::backend::{BackendKind, PgBackend, WriteTx};
@@ -35,6 +34,7 @@ use crate::sql::{stmt, Sql, SqlRow};
 use crate::store::Store;
 use async_trait::async_trait;
 use crawlx_core::custody::{CustodyLease, CustodySource};
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{CrawlRunId, StoreError, TenantId, Timestamp, WorkerId};
 use std::sync::Arc;
 use std::time::Duration;

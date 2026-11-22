@@ -1,11 +1,11 @@
 //! Deterministic local interactive control and cleanup tests.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{Duration, ManualClock};
 use super::*;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{CrawlSession, SessionKind, SessionStatus};
 use crawlx_core::session_binding::SessionIdentityV1;
+use crawlx_core::time::{Duration, ManualClock};
 use crawlx_core::PrincipalId;
 
 fn fixture() -> (

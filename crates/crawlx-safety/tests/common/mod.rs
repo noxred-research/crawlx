@@ -1,7 +1,6 @@
 //! Shared fixtures for the integration tests.
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{ManualClock, Timestamp};
 use crawlx_core::action::{BrowserAction, PointerButton};
 use crawlx_core::config::{DestructiveActions, LaunchProfile, SafetyProfile};
 use crawlx_core::epoch::ObservationEpoch;
@@ -12,6 +11,7 @@ use crawlx_core::observation::{LiveTargetFacts, RuntimeLocator};
 use crawlx_core::proposal::{ActionProposal, ExpectedEffect};
 use crawlx_core::repo::SafetyContext;
 use crawlx_core::safety::RiskClass;
+use crawlx_core::time::{ManualClock, Timestamp};
 use crawlx_core::url::RouteTemplate;
 use crawlx_safety::{KernelConfig, SafetyKernel, SinkSpec, TestSinks};
 use std::sync::Arc;

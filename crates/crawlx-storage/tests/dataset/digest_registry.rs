@@ -1,6 +1,5 @@
 //! Same claim contract for memory and PostgreSQL, including rejected ingestion and rollback.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-use crawlx_core::time::Timestamp;
 use super::*;
 use crawlx_core::digest_registry::{ContentDedupeClaimV1, DigestDispositionV1, DigestRegistryRepo};
 use crawlx_core::extraction::{
@@ -8,6 +7,7 @@ use crawlx_core::extraction::{
     QualityStatusV1,
 };
 use crawlx_core::repo::{PageRecord, PageRepo};
+use crawlx_core::time::Timestamp;
 use crawlx_core::TrustLane;
 
 fn document() -> DocumentEnvelopeV1 {

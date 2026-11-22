@@ -3,7 +3,6 @@
 //! `-1`), `POST /feedback`, `POST /support/ask`, `POST /support/docs-search` over the Markdown
 //! documentation, and the self-host health probes `GET /v0/health/{readiness,liveness}`.
 
-use crawlx_core::time::{Duration as SpanDuration, NaiveDate, Timestamp};
 use crate::auth::Principal;
 use crate::errors::{ApiResult, Detail, HttpError};
 use crate::intel::request::Body;
@@ -18,7 +17,8 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Extension, Router};
-use crawlx_core::{TenantId, Timestamp};
+use crawlx_core::time::{Duration as SpanDuration, NaiveDate, Timestamp};
+use crawlx_core::TenantId;
 use crawlx_model::llm::extractor::fence;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -149,7 +149,7 @@ const HISTORY_MONTHS: u32 = 12;
 
 /// Start of the UTC calendar month containing `t`, and of the next one.
 fn month_bounds(t: Timestamp) -> (Timestamp, Timestamp) {
-    let first = |y: i32, m: u32| Timestamp::from_ymd_hms(y, m, 1, 0, 0, 0).single().unwrap_or(t);
+    let first = |y: i32, m: u32| Timestamp::from_ymd_hms(y, m, 1, 0, 0, 0).unwrap_or(t);
     let start = first(t.year(), t.month());
     let end = if t.month() == 12 {
         first(t.year() + 1, 1)
@@ -161,10 +161,10 @@ fn month_bounds(t: Timestamp) -> (Timestamp, Timestamp) {
 
 /// Start of the month `months` before the month of `t`.
 fn months_back(t: Timestamp, months: u32) -> Timestamp {
-    let total = i64::from(t.year()) * 12 + i64::from(t.month0()) - i64::from(months);
+    let total = i64::from(t.year()) * 12 + i64::from(t.month() - 1) - i64::from(months);
     let y = i32::try_from(total.div_euclid(12)).unwrap_or(t.year());
     let m = u32::try_from(total.rem_euclid(12)).unwrap_or(0) + 1;
-    Timestamp::from_ymd_hms(y, m, 1, 0, 0, 0).single().unwrap_or(t)
+    Timestamp::from_ymd_hms(y, m, 1, 0, 0, 0).unwrap_or(t)
 }
 
 async fn current_totals(

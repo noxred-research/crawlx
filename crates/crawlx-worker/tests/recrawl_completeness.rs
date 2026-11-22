@@ -7,7 +7,6 @@
 
 mod common;
 
-use crawlx_core::time::Duration;
 use common::authorization::run_authorized_local_with;
 use crawlx_core::archive::ArchiveConfigV1;
 use crawlx_core::archive_catalog::{ArchiveExportState, ArchiveReadV1};
@@ -19,6 +18,7 @@ use crawlx_core::orchestration::{
 };
 use crawlx_core::repo::FrontierStatus;
 use crawlx_core::scrape::{FormatSpec, JobKind, ScrapeJob, ScrapeOptions};
+use crawlx_core::time::Duration;
 use crawlx_core::{Clock, CreateCrawl, SystemClock};
 use crawlx_fetch::StaticResolver;
 use crawlx_storage::MemoryStore;

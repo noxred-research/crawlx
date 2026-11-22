@@ -6,7 +6,6 @@
 //!
 //! Binding metadata has no in-memory twin, so these cases run on the database engines.
 
-use crawlx_core::time::Duration;
 use super::reports::{exec, on_zdr_db, scalar_bytes, scalar_i64, tenant_of, Bind};
 use crate::rig::Rig;
 use crawlx_core::counters::{ActionStatus, ReconcileResolution, RunStatus};
@@ -15,6 +14,7 @@ use crawlx_core::repo::{ActionJournal, EventRepo, Reconciliation, RunRepo, Sessi
 use crawlx_core::session_binding::{
     BindingState, RetirementReason, SessionBindingError, SessionBindingV1, SessionIdentityV1, SessionLimits,
 };
+use crawlx_core::time::Duration;
 use crawlx_core::{StoreError, TenantId, Timestamp, WorkerId};
 use crawlx_storage::leases::{LeaseRepo, SessionLease};
 use crawlx_storage::profiles::{BrowserProfileRepo, ProfileCipher, ProfileFiles, ProfileScopeV1};
@@ -227,11 +227,7 @@ async fn anonymous_binding_fixture<R: Binder>(
     let digest = Digest::of("fixture", b"binding-lifecycle");
     let identity = SessionIdentityV1::new(tenant, &lease.session, digest, digest, digest, digest, None);
     let binding = repo
-        .bind_session(
-            &lease,
-            identity,
-            repo.now().await.unwrap() + Duration::minutes(1),
-        )
+        .bind_session(&lease, identity, repo.now().await.unwrap() + Duration::minutes(1))
         .await
         .unwrap();
     (lease, binding)
@@ -277,20 +273,14 @@ async fn login_credit<R: Binder>(rig: &Rig, repo: &R, tenant: TenantId) {
         .bind_session(&lease, identity, raw_deadline + Duration::days(1))
         .await
         .unwrap();
-    assert_eq!(
-        binding.expires_at,
-        raw_deadline + Duration::milliseconds(11_000)
-    );
+    assert_eq!(binding.expires_at, raw_deadline + Duration::milliseconds(11_000));
     // Another slot cannot borrow the first slot's active reservation.
     let identity = SessionIdentityV1::new(tenant, &other.session, digest, digest, digest, digest, None);
     let binding = repo
         .bind_session(&other, identity, raw_deadline + Duration::days(1))
         .await
         .unwrap();
-    assert_eq!(
-        binding.expires_at,
-        raw_deadline + Duration::milliseconds(1_000)
-    );
+    assert_eq!(binding.expires_at, raw_deadline + Duration::milliseconds(1_000));
     EventRepo::append(
         repo,
         run.id,
@@ -358,11 +348,7 @@ async fn recovery<R: Binder>(rig: &Rig, repo: &R, tenant: TenantId) {
     assert_eq!(replacement.session.id, lease.session.id);
     assert_ne!(replacement.fencing_token, lease.fencing_token);
     let mut renewed = repo
-        .bind_session(
-            &replacement,
-            identity.clone(),
-            raw + Duration::seconds(20),
-        )
+        .bind_session(&replacement, identity.clone(), raw + Duration::seconds(20))
         .await
         .unwrap();
     assert_eq!(renewed.generation, old.generation);

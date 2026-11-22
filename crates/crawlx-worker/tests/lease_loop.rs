@@ -3,12 +3,12 @@
 
 mod common;
 
-use crawlx_core::time::Duration as SpanDuration;
 use crawlx_browser::fake::{FakeAxSpec, FakeEffect, FakePage, FakeScript};
 use crawlx_browser::FakeBackend;
 use crawlx_core::config::CrawlMode;
 use crawlx_core::counters::{PlaneCounters, RunFailure, RunFailureCode, RunStatus, TerminalReason};
 use crawlx_core::repo::{CrawlRun, SessionStatus};
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{Clock, CrawlRunId, CreateCrawl, SystemClock};
 use crawlx_fetch::StaticResolver;
 use crawlx_scheduler::RunPlanner;

@@ -1,7 +1,7 @@
 //! One bounded, zero-network record graph and logical payload resolver for all offline consumers.
 
-use crawlx_core::time::Timestamp;
 use super::{warc, ArchiveError, Limits};
+use crawlx_core::time::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Location of one validated physical WARC member within an approved local source.

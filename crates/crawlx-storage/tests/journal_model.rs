@@ -7,10 +7,10 @@
 //! I5 each action reaches `perform` (intend) at most once per proposed/reconciled generation
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::counters::{ActionStatus, ReconcileResolution};
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::repo::*;
+use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::{
     ActionId, Clock as _, CrawlRunId, SessionId, StateClusterId, SystemClock, TenantId, WorkerId,
 };
@@ -111,7 +111,10 @@ impl Backend for Pgb {
 
 impl Pgb {
     async fn crash(&self) {
-        self.0.reap(Timestamp::now() + Duration::seconds(600)).await.unwrap();
+        self.0
+            .reap(Timestamp::now() + Duration::seconds(600))
+            .await
+            .unwrap();
     }
     async fn eligible(&self, run: CrawlRunId) -> Vec<ActionId> {
         self.0

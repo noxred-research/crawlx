@@ -14,10 +14,10 @@
 //! and the feed finalization terminal updates (`feed_finalization.rs`). Pause and resume only
 //! move between the non-terminal `running` and `paused` states, which the triggers ignore.
 
-use crawlx_core::time::SecondsFormat;
 use crate::backend::strategy::{Conn, Timestamp};
 use crate::backend::{Backend, BackendKind, Dialect};
 use crate::sql::{db_clock, stmt, Sql, SqlRow, Stmt};
+use crawlx_core::time::SecondsFormat;
 use crawlx_core::CrawlRunId;
 use crawlx_core::StoreError;
 use uuid::Uuid;

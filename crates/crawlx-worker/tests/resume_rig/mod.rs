@@ -9,8 +9,8 @@
 //! PostgreSQL variants use `CRAWLX_TEST_DATABASE_URL` and skip without it.
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::Duration as SpanDuration;
 use crate::common::authorization as authorization_fixture;
+use crawlx_core::time::Duration as SpanDuration;
 
 use axum::extract::{Path as UrlPath, State};
 use axum::http::header;

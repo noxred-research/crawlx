@@ -3,8 +3,8 @@
 //! (PostgreSQL casts allowed, each placeholder used once and in order) and expanded for the
 //! rig's engine.
 
-use crawlx_core::time::{NaiveDateTime, Timestamp};
 use crate::rig::Rig;
+use crawlx_core::time::{NaiveDateTime, Timestamp};
 use crawlx_storage::backend::BackendKind;
 use crawlx_storage::sql::Built;
 use sqlx::Row as _;

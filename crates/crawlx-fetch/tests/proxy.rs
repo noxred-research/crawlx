@@ -3,9 +3,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod common;
 
-use crawlx_core::time::Timestamp;
 use bytes::Bytes;
 use common::LOOPBACK;
+use crawlx_core::time::Timestamp;
 use crawlx_core::traffic::{BodyDigest, Protocol, ProxyFlow, ProxyFlowSource, REDACTED_PLACEHOLDER};
 use crawlx_fetch::{EgressProxy, EgressProxyHandle, StaticResolver, DENIED_HEADER};
 use crawlx_policy::egress::{DenyRule, EgressPolicy};

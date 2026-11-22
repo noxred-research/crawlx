@@ -1,11 +1,11 @@
 //! Exact payload-reuse custody checks shared by both catalog implementations.
 
-use crawlx_core::time::Duration;
 use super::{expires_before, live};
 use crawlx_core::archive::{ArchiveDedupe, ArchiveRepresentation};
 use crawlx_core::archive_catalog::{
     ArchiveExportState, ArchiveExportV1, ArchivePayloadKeyV1, ArchiveRecordV1,
 };
+use crawlx_core::time::Duration;
 use crawlx_core::Timestamp;
 
 pub(super) fn key_matches(record: &ArchiveRecordV1, key: &ArchivePayloadKeyV1) -> bool {

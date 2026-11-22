@@ -10,13 +10,13 @@ mod common;
 #[path = "common/scrape_rig.rs"]
 mod scrape_rig;
 
-use crawlx_core::time::Duration as SpanDuration;
 use axum::http::{header, Method, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
 use crawlx_api::scrape_service::{failure_code, FAILURE_CODES};
 use crawlx_api::CompatConfig;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{Clock, SystemClock};
 use crawlx_model::llm::MockLlm;
 use crawlx_policy::authorization::AuthorizationRecord;

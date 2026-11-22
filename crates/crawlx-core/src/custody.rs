@@ -698,8 +698,8 @@ pub trait SecretRegistrar: Send + Sync + std::fmt::Debug {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crate::time::Duration;
     use super::*;
+    use crate::time::Duration;
 
     fn lease(fence: i64) -> CustodyLease {
         CustodyLease::new(

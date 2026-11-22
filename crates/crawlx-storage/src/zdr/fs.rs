@@ -1,7 +1,7 @@
 //! Crash-safe page files; every entry point is called from `spawn_blocking`.
 
-use crawlx_core::time::Duration;
 use super::{BufferLimits, BufferedPage, PageKey, PageMeta, Pages, DEFAULT_TTL};
+use crawlx_core::time::Duration;
 use crawlx_core::{CrawlRunId, StoreError, TenantId};
 use serde::Deserialize;
 use std::collections::BTreeMap;

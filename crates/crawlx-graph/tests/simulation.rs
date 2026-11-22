@@ -5,11 +5,11 @@
 //! becoming confident edges while true edges converge.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{Timestamp, Duration};
 use crawlx_core::hash::Digest;
 use crawlx_core::identity::ElementIdentityHash;
 use crawlx_core::repo::EdgeRecord;
 use crawlx_core::seed::CrawlSeed;
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::{ActionContextId, CrawlRunId, StateClusterId, TrustLane};
 use crawlx_graph::{Confounders, EdgeTarget, EnablementGraph, TransitionObservation};
 use rand::RngExt as _;

@@ -413,8 +413,8 @@ impl SessionBindingV1 {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crate::time::Duration;
     use super::*;
+    use crate::time::Duration;
 
     fn binding() -> SessionBindingV1 {
         let digest = Digest::of("fixture", b"identity");

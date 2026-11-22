@@ -16,9 +16,9 @@
 //! * P6 `isolation_proofs_fail_without_the_guard` (feature `unscoped-for-test`): with the guard
 //!   off, P2 fails. Run it with `--features unscoped-for-test` (the other cases skip then).
 
-use crawlx_core::time::{Duration, Timestamp};
 use crate::rig::Rig;
 use crawlx_core::hash::Digest;
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::{ApprovalId, CrawlRunId, StoreError, TenantId};
 use crawlx_storage::tenant_tables::{self, TenantKey};
 use crawlx_storage::testkit::tenancy::{seed, Handle, Harness, TenantRows};
@@ -679,11 +679,7 @@ async fn cross_tenant_sweep(w: &World) {
             refused("purge_expired", store.purge_expired(now, now).await);
             assert_eq!(
                 store
-                    .usage_totals(
-                        a.tenant,
-                        now - Duration::hours(1),
-                        now + Duration::hours(1)
-                    )
+                    .usage_totals(a.tenant, now - Duration::hours(1), now + Duration::hours(1))
                     .await
                     .map_or(0, |t| t.credits),
                 0

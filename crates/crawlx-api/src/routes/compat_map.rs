@@ -653,8 +653,8 @@ pub async fn map(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
-    use crawlx_core::time::Timestamp;
     use crawlx_core::hash::Digest;
+    use crawlx_core::time::Timestamp;
     use crawlx_core::{CrawlRunId, TrustLane};
     use crawlx_storage::testkit;
 

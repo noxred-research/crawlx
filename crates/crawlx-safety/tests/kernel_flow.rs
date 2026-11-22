@@ -3,7 +3,6 @@
 
 mod common;
 
-use crawlx_core::time::{Clock as _, Duration};
 use common::{config, kernel, kernel_with_clock, manual_clock, verified_sinks, Case, PROFILES, SEED};
 use crawlx_core::action::{BrowserAction, PointerButton};
 use crawlx_core::config::{DestructiveActions, LaunchProfile, SafetyProfile};
@@ -12,6 +11,7 @@ use crawlx_core::ids::SafetyDecisionId;
 use crawlx_core::observation::LiveTargetFacts;
 use crawlx_core::repo::SafetyGate;
 use crawlx_core::safety::{ModelHint, RiskClass, SafetyDecision};
+use crawlx_core::time::{Clock as _, Duration};
 use crawlx_safety::{
     AdjudicateOptions, Adjudication, ApprovalError, ApprovalStore, AuditEntry, AuditError, AuditSink,
     InMemoryApprovalStore, KernelError, MemoryAuditLog, SafetyDenied, SafetyKernel, SinkSpec, TestSinks,

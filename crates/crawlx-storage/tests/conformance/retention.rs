@@ -5,7 +5,6 @@
 //! partitions are PostgreSQL machinery (plain tables elsewhere) and stay in `tests/pg.rs`.
 
 use crate::rig::Rig;
-use crawlx_core::time::{Timestamp, Duration, NaiveDate};
 use crawlx_core::acquisition::{BackendCapabilitiesV1, WORKER_CAPABILITY_SNAPSHOT_LIMIT};
 use crawlx_core::config::{LaunchProfile, RetentionMode};
 use crawlx_core::counters::{ActionStatus, RunStatus, TerminalReason};
@@ -13,6 +12,7 @@ use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::hash::Digest;
 use crawlx_core::observation::BrowserBuildInfo;
 use crawlx_core::repo::{ActionJournal, ArtifactStore, EventRepo, RunRepo, Sensitivity, SessionStatus};
+use crawlx_core::time::{Duration, NaiveDate, Timestamp};
 use crawlx_core::{
     ActionId, ArtifactId, CrawlRunId, StateClusterId, StoreError, SystemClock, TenantId, WorkerId,
 };

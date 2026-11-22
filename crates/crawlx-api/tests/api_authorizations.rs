@@ -4,7 +4,6 @@
 //! that reference a record, and the deployment lists. Every scenario runs on the in-memory store
 //! and, when `CRAWLX_TEST_DATABASE_URL` is set, again on PostgreSQL in its own schema.
 
-use crawlx_core::time::Duration;
 use axum::body::Body;
 #[allow(
     clippy::disallowed_types,
@@ -15,6 +14,7 @@ use axum::Router;
 use crawlx_api::auth::{generate_key, key_record, tenant_id_for};
 use crawlx_api::ownership::StaticProbe;
 use crawlx_api::{ApiConfig, AppState, CompatConfig, Repos, Scope, Settings};
+use crawlx_core::time::Duration;
 use crawlx_core::{AuthorizationRecordId, Clock, CrawlRunId, SystemClock, TenantId};
 use crawlx_policy::attestation::OperatorKeys;
 use crawlx_policy::authorization::{AuthorizationRecord, OwnershipProof};

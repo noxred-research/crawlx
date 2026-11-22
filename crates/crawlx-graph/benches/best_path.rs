@@ -6,9 +6,9 @@
 //! from the origin to the far corner traverses the full label-setting loop.
 #![allow(missing_docs, clippy::unwrap_used, clippy::expect_used)]
 
-use crawlx_core::time::{Timestamp, Duration};
 use crawlx_core::hash::Digest;
 use crawlx_core::identity::ElementIdentityHash;
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::{ActionContextId, CrawlRunId, StateClusterId, TrustLane};
 use crawlx_graph::{best_path, Confounders, EnablementGraph, PathGoal, SearchParams, TransitionObservation};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};

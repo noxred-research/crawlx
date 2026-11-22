@@ -211,8 +211,8 @@ pub async fn coverage(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crawlx_core::time::Timestamp;
     use super::*;
+    use crawlx_core::time::Timestamp;
 
     #[test]
     fn run_summary_and_endpoint_exclude_trusted_actions_from_unreachable_states() {

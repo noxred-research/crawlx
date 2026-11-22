@@ -1,7 +1,7 @@
 //! A point on the UTC time line, and an instant with the offset it was written in.
 
 use super::civil::{write_date, write_time, NaiveDate, NaiveDateTime, Parsed};
-use super::error::{ParseError, ParseResult, INVALID, IMPOSSIBLE, OUT_OF_RANGE, TOO_LONG, TOO_SHORT};
+use super::error::{ParseError, ParseResult, IMPOSSIBLE, INVALID, OUT_OF_RANGE, TOO_LONG, TOO_SHORT};
 use super::scan::{self, Colon};
 use super::Duration;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -35,7 +35,13 @@ fn write_offset(w: &mut impl fmt::Write, offset: i32, use_z: bool) -> fmt::Resul
     write!(w, "{sign}{:02}:{:02}", minutes / 60, minutes % 60)
 }
 
-fn write_rfc3339(w: &mut impl fmt::Write, local: PlainDateTime, offset: i32, format: SecondsFormat, use_z: bool) -> fmt::Result {
+fn write_rfc3339(
+    w: &mut impl fmt::Write,
+    local: PlainDateTime,
+    offset: i32,
+    format: SecondsFormat,
+    use_z: bool,
+) -> fmt::Result {
     write_date(w, local.date())?;
     w.write_str("T")?;
     let time = local.time();
@@ -116,7 +122,10 @@ impl Timestamp {
             return None;
         }
         let nanos = i128::from(secs) * 1_000_000_000 + i128::from(nsecs);
-        UtcDateTime::from_unix_timestamp_nanos(nanos).ok().map(Self).and_then(Self::in_range)
+        UtcDateTime::from_unix_timestamp_nanos(nanos)
+            .ok()
+            .map(Self)
+            .and_then(Self::in_range)
     }
 
     /// The instant `secs` whole seconds after the epoch.
@@ -129,20 +138,35 @@ impl Timestamp {
     #[must_use]
     pub fn from_timestamp_millis(millis: i64) -> Option<Self> {
         let nanos = i128::from(millis) * 1_000_000;
-        UtcDateTime::from_unix_timestamp_nanos(nanos).ok().map(Self).and_then(Self::in_range)
+        UtcDateTime::from_unix_timestamp_nanos(nanos)
+            .ok()
+            .map(Self)
+            .and_then(Self::in_range)
     }
 
     /// The instant `micros` microseconds after the epoch.
     #[must_use]
     pub fn from_timestamp_micros(micros: i64) -> Option<Self> {
         let nanos = i128::from(micros) * 1_000;
-        UtcDateTime::from_unix_timestamp_nanos(nanos).ok().map(Self).and_then(Self::in_range)
+        UtcDateTime::from_unix_timestamp_nanos(nanos)
+            .ok()
+            .map(Self)
+            .and_then(Self::in_range)
     }
 
     /// The instant at a calendar date and time of day in UTC, `None` when it does not exist.
     #[must_use]
-    pub fn from_ymd_hms(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> Option<Self> {
-        NaiveDate::from_ymd_opt(year, month, day)?.and_hms_opt(hour, minute, second).map(NaiveDateTime::and_utc)
+    pub fn from_ymd_hms(
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        minute: u32,
+        second: u32,
+    ) -> Option<Self> {
+        NaiveDate::from_ymd_opt(year, month, day)?
+            .and_hms_opt(hour, minute, second)
+            .map(NaiveDateTime::and_utc)
     }
 
     /// Whole seconds since the epoch (floor).
@@ -397,10 +421,39 @@ impl From<Timestamp> for std::time::SystemTime {
 
 /// An instant together with the UTC offset its text was written in. Parsing keeps the offset so
 /// the local date and the original spelling survive; everything else works on the instant.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+///
+/// Equality, ordering and hashing compare the instant only, so the same instant written with two
+/// offsets is equal, as it was with the former `chrono::DateTime<FixedOffset>`.
+#[derive(Clone, Copy, Debug)]
 pub struct FixedDateTime {
     instant: Timestamp,
     offset: i32,
+}
+
+impl PartialEq for FixedDateTime {
+    fn eq(&self, other: &Self) -> bool {
+        self.instant == other.instant
+    }
+}
+
+impl Eq for FixedDateTime {}
+
+impl PartialOrd for FixedDateTime {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for FixedDateTime {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.instant.cmp(&other.instant)
+    }
+}
+
+impl std::hash::Hash for FixedDateTime {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.instant.hash(state);
+    }
 }
 
 impl FixedDateTime {
@@ -418,7 +471,10 @@ impl FixedDateTime {
             .map(Timestamp::from_plain)
             .and_then(Timestamp::in_range)
             .ok_or(OUT_OF_RANGE)?;
-        Ok(Self { instant, offset: offset_secs })
+        Ok(Self {
+            instant,
+            offset: offset_secs,
+        })
     }
 
     fn local(self) -> PlainDateTime {

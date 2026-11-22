@@ -104,9 +104,9 @@ project is pre-1.0; minor versions may contain breaking changes.
   before (checked against chrono on several hundred thousand mutated inputs). Two behaviour notes: a
   leap-second `:60` reads as the first instant of the next minute (chrono kept it as a second of
   `1_000_000_000+` nanoseconds), and zone names must be spelled as the IANA database spells them (as
-  with `chrono-tz`). `deny.toml` drops the RUSTSEC-2026-0555 exception; RUSTSEC-2026-0543 stays, now only
-  for the third-party crate that still exposes `chrono` (`rskafka`), and the comment
-  says when to remove it.
+  with `chrono-tz`). `deny.toml` drops both exceptions: chrono stays in the lockfile only
+  through `rskafka` (the Kafka record timestamp type), and cargo-deny checks unmaintained advisories for
+  workspace dependencies only (`unmaintained = "workspace"`).
 - Politeness: back-off after `429`/`503` no longer turns one throttling answer into minutes of slow
   crawling (#76). With the new default profile, `politeness.backoffProfile = "balanced"`, the first
   throttling answer after a success sets the origin's spacing to `max(Retry-After, 2 × floor)` (floor =

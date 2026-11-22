@@ -7,7 +7,6 @@
 //! runs the cases whose contract it shares.
 
 use crate::rig::Rig;
-use crawlx_core::time::{Timestamp, Duration};
 use crawlx_core::config::RetentionMode;
 use crawlx_core::counters::{RunStatus, TerminalReason};
 use crawlx_core::epoch::ObservationEpoch;
@@ -17,6 +16,7 @@ use crawlx_core::repo::{
     ModelDecisionRecord, PageRecord, SessionStatus, SplitMember, SplitSuccessor,
 };
 use crawlx_core::safety::SafetyDecision;
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::{
     ArtifactId, ArtifactRef, CheckpointId, CrawlRunId, SessionId, StateClusterId, StoreError, SystemClock,
     TenantId, TrustLane,
@@ -1146,14 +1146,7 @@ async fn site_run(
     run.id
 }
 
-async fn store_page(
-    env: &Env<'_>,
-    tenant: TenantId,
-    run: CrawlRunId,
-    zdr: bool,
-    at: Timestamp,
-    spec: &Spec,
-) {
+async fn store_page(env: &Env<'_>, tenant: TenantId, run: CrawlRunId, zdr: bool, at: Timestamp, spec: &Spec) {
     use crawlx_core::repo::FrontierRepo as _;
     use crawlx_core::scrape::{ScrapeDocument, ScrapeOptions};
     let frontier = if memory(env.rig) {

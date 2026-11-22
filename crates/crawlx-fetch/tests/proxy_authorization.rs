@@ -6,8 +6,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod common;
 
-use crawlx_core::time::Timestamp;
 use common::LOOPBACK;
+use crawlx_core::time::Timestamp;
 use crawlx_fetch::{EgressProxy, EgressProxyHandle, StaticResolver, DENIED_HEADER};
 use crawlx_policy::egress::{DenyRule, EgressPolicy};
 use crawlx_policy::testkit::sample_record;

@@ -92,7 +92,6 @@ pub(crate) async fn archive_completion_notice(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crawlx_core::time::{Duration, FixedDateTime, ManualClock, Timestamp};
     use super::*;
     use crate::archive_recorder::{finalize, Finalization};
     use crawlx_core::counters::TerminalReason;
@@ -101,6 +100,7 @@ mod tests {
     use crawlx_core::repo::{FrontierStatus, PageRecord, Sensitivity};
     use crawlx_core::request::RequestEnvelopeV1;
     use crawlx_core::secret::{ArtifactSink, Redactor};
+    use crawlx_core::time::{Duration, FixedDateTime, ManualClock, Timestamp};
     use crawlx_core::traffic::TrustLane;
     use crawlx_core::WorkerId;
     use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};

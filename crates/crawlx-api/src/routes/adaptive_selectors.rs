@@ -1,6 +1,5 @@
 //! Authenticated structural descriptor capture and offline relocation over retained page HTML.
 //! Scope authority comes from the caller and source run, never from a submitted descriptor.
-use crawlx_core::time::Duration;
 use crate::auth::Principal;
 use crate::errors::{ApiResult, HttpError};
 use crate::routes::crawls::load_run;
@@ -15,6 +14,7 @@ use crawlx_core::cache::AdaptiveSelectorRecordV1;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::repo::{CrawlRun, PageRecord};
 use crawlx_core::selectors::SelectorScopeV1;
+use crawlx_core::time::Duration;
 use serde::Deserialize;
 use serde_json::json;
 

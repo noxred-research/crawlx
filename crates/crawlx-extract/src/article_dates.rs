@@ -169,7 +169,9 @@ pub(crate) fn parse(raw: &str, policy: &ExtractionPolicyV1) -> Option<(ArticleDa
                     )
                     .ok()?;
                     let instant = zone.to_ambiguous_timestamp(civil).unambiguous().ok()?;
-                    FixedDateTime::from_local(local, zone.to_offset(instant).seconds()).ok()?.to_rfc3339()
+                    FixedDateTime::from_local(local, zone.to_offset(instant).seconds())
+                        .ok()?
+                        .to_rfc3339()
                 }
             };
             return finish(local.date(), Some(utc), false, policy);
@@ -192,9 +194,7 @@ pub(crate) fn parse(raw: &str, policy: &ExtractionPolicyV1) -> Option<(ArticleDa
     };
     if let Some(days) = relative {
         return finish(
-            policy
-                .reference_date?
-                .checked_sub_signed(Duration::days(days))?,
+            policy.reference_date?.checked_sub_signed(Duration::days(days))?,
             None,
             true,
             policy,

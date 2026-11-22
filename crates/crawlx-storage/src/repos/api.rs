@@ -14,7 +14,6 @@
 
 #![deny(clippy::disallowed_methods)]
 
-use crawlx_core::time::Duration;
 use crate::backend::strategy::{Row, WebhookClaim};
 use crate::backend::{Dialect, LockMode, PgBackend, RowLock};
 use crate::codec::conv;
@@ -24,6 +23,7 @@ use crate::store::Store;
 use crate::tenant::{Dia, ScopedQuery, Tenancy};
 use crawlx_core::counters::ActionStatus;
 use crawlx_core::hash::Digest;
+use crawlx_core::time::Duration;
 use crawlx_core::traffic::TrustLane;
 use crawlx_core::{
     ActionId, ApprovalId, CrawlRunId, NetworkEpochId, SessionId, StateId, StoreError, TenantId, Timestamp,

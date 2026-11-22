@@ -10,11 +10,11 @@ mod instant;
 mod scan;
 mod span;
 
+pub use ::time::Weekday;
 pub use civil::{Days, IsoWeek, NaiveDate, NaiveDateTime, NaiveTime};
 pub use error::{OutOfRangeError, ParseError, ParseErrorKind};
 pub use instant::{FixedDateTime, SecondsFormat, Timestamp};
 pub use span::Duration;
-pub use ::time::Weekday;
 
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;

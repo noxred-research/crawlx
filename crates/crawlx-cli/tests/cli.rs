@@ -4,8 +4,8 @@
 #[path = "support/site.rs"]
 mod site;
 
-use crawlx_core::time::Timestamp;
 use clap::Parser as _;
+use crawlx_core::time::Timestamp;
 use crawlx_core::{Clock, SystemClock, TenantId};
 use crawlx_policy::testkit::sample_record;
 use crawlx_policy::AuthorizationRecord;

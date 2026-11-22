@@ -1,7 +1,6 @@
 //! Dataset/KV/outbox consumer regressions. PostgreSQL cases require CRAWLX_TEST_DATABASE_URL.
 //! These tests exercise real repositories and retention-aware artifacts, not source-text wiring.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::acquisition::BackendCapabilitiesV1;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::data_capabilities::WorkerDataCapabilitiesV1;
@@ -14,6 +13,7 @@ use crawlx_core::orchestration::{RequestBatchV1, RequestCommitRepo, RequestCommi
 use crawlx_core::repo::{ArtifactStore, CrawlRun, FrontierRepo, FrontierStatus, RunRepo};
 use crawlx_core::request::RequestEnvelopeV1;
 use crawlx_core::secret::ArtifactSink;
+use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::{Clock, CrawlRunId, StoreError, TenantId, WorkerId};
 use crawlx_storage::artifacts::FsArtifactStore;
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};

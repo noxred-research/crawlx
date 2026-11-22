@@ -450,7 +450,7 @@ pub struct RobotsCache {
     entries: HashMap<String, Entry>,
 }
 
-fn chrono_of(d: Duration) -> SpanDuration {
+fn span_of(d: Duration) -> SpanDuration {
     SpanDuration::from_std(d).unwrap_or(SpanDuration::MAX)
 }
 
@@ -482,7 +482,7 @@ impl RobotsCache {
     }
 
     fn add(at: Timestamp, d: Duration) -> Timestamp {
-        at.checked_add_signed(chrono_of(d)).unwrap_or(at)
+        at.checked_add_signed(span_of(d)).unwrap_or(at)
     }
 
     /// Decide whether `path_and_query` on `origin` may be fetched.
@@ -513,7 +513,7 @@ impl RobotsCache {
                 ..
             }) => {
                 let give_up =
-                    now.signed_duration_since(*first_failure) >= chrono_of(self.config.unreachable_max);
+                    now.signed_duration_since(*first_failure) >= span_of(self.config.unreachable_max);
                 RobotsVerdict::Disallowed(DisallowedBy::Unreachable {
                     retry_at: *retry_at,
                     give_up,

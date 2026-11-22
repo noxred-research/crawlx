@@ -8,11 +8,11 @@ use super::{
     database_now, denied, live, AuthorityRow, SecretAuthority, EXPIRY_MARGIN_MS, MAX_AUTHORITY_TTL,
     MAX_CLOCK_SKEW_MS, MAX_EPOCH,
 };
-use crawlx_core::time::Duration;
 use crate::backend::strategy::Conn;
 use crate::backend::WriteTx;
 use crate::sql::{stmt, Sql, SqlRow};
 use crawlx_core::custody::{CustodyLease, RunSecretSnapshot, SecretEpoch};
+use crawlx_core::time::Duration;
 use crawlx_core::{StoreError, Timestamp};
 use uuid::Uuid;
 
@@ -149,8 +149,7 @@ impl<B: Sql> SecretAuthority<B> {
         let remaining = deadline.signed_duration_since(now);
         let window = i64::try_from(MAX_AUTHORITY_TTL.as_millis())
             .map_err(|_| denied("secret renewal duration overflow"))?;
-        if remaining <= Duration::milliseconds(EXPIRY_MARGIN_MS)
-            || remaining > Duration::milliseconds(window)
+        if remaining <= Duration::milliseconds(EXPIRY_MARGIN_MS) || remaining > Duration::milliseconds(window)
         {
             return Err(denied(
                 "secret renewal absolute deadline exceeds bounded live window",

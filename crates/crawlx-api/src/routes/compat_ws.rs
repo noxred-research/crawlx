@@ -505,8 +505,8 @@ async fn watch(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crawlx_core::time::Timestamp;
     use super::*;
+    use crawlx_core::time::Timestamp;
 
     fn counts(status: &'static str) -> Counts {
         Counts {

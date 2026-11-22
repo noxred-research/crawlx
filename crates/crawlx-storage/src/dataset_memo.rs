@@ -1,8 +1,8 @@
 //! Hash-only source memo metadata; ZDR uses shared volatile custody without SQL memo writes.
-use crawlx_core::time::Duration;
 use super::*;
 use crawlx_core::dataset::memo::*;
 use crawlx_core::hash::Digest;
+use crawlx_core::time::Duration;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

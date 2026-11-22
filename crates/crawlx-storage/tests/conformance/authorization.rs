@@ -2,8 +2,8 @@
 //! the run binding. Ported from the PostgreSQL-only `pg_authorization.rs`.
 
 use crate::rig::Rig;
-use crawlx_core::time::{Timestamp, Duration};
 use crawlx_core::hash::Digest;
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::{AuthorizationRecordId, CrawlRunId, StoreError, TenantId};
 use crawlx_policy::testkit::sample_record;
 use crawlx_policy::{AuthorizationRecord, AuthzFailure, OwnershipProof};
@@ -78,12 +78,7 @@ fn new_row<'a>(
 }
 
 /// Create `r` verified at `at`; returns the digest stored.
-async fn create<B: Tenancy>(
-    repo: &ApiRepo<B>,
-    r: &AuthorizationRecord,
-    by: Uuid,
-    at: Timestamp,
-) -> Digest {
+async fn create<B: Tenancy>(repo: &ApiRepo<B>, r: &AuthorizationRecord, by: Uuid, at: Timestamp) -> Digest {
     let body = serde_json::to_value(r).unwrap();
     let digest = r.body_digest().unwrap();
     let verification = json!({ "kind": "dns_txt", "checkedAt": at, "hosts": ["app.example.test"] });

@@ -5,6 +5,7 @@
 use crate::error::WorkerError;
 use crate::run::RunContext;
 use crawlx_core::repo::CrawlSession;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{SessionId, Timestamp};
 use crawlx_policy::{BudgetKind, Remaining};
 use serde::{Deserialize, Serialize};
@@ -42,7 +43,7 @@ impl Allocation {
         let millis = u64::try_from(remaining.time.as_millis()).unwrap_or(u64::MAX);
         let slice_millis = millis.div_ceil(u64::from(count));
         let deadline = now
-            .checked_add_signed(Duration::milliseconds(
+            .checked_add_signed(SpanDuration::milliseconds(
                 i64::try_from(slice_millis).unwrap_or(i64::MAX),
             ))
             .unwrap_or(now);
@@ -124,11 +125,9 @@ impl RoleBudget {
             let run = rc.stores.runs.get(rc.run).await?;
             let started = run.started_at.unwrap_or(run.created_at);
             let credited_deadline = started
-                .checked_add_signed(Duration::seconds(i64::from(
-                    rc.crawl.limits.duration_seconds,
-                )))
+                .checked_add_signed(SpanDuration::seconds(i64::from(rc.crawl.limits.duration_seconds)))
                 .and_then(|deadline| {
-                    deadline.checked_add_signed(Duration::milliseconds(
+                    deadline.checked_add_signed(SpanDuration::milliseconds(
                         i64::try_from(credit_ms).unwrap_or(i64::MAX),
                     ))
                 })
@@ -167,7 +166,7 @@ impl RoleBudget {
     pub(crate) async fn reserve_login(
         &mut self,
         rc: &RunContext,
-        allowance: Duration,
+        allowance: SpanDuration,
     ) -> Result<(), WorkerError> {
         let millis = u64::try_from(allowance.num_milliseconds()).unwrap_or(0);
         if millis > crawlx_storage::session_binding::MAX_LOGIN_RESERVATION_MS {
@@ -191,7 +190,7 @@ impl RoleBudget {
     pub(crate) async fn credit_login(
         &mut self,
         rc: &RunContext,
-        spent: Duration,
+        spent: SpanDuration,
     ) -> Result<(), WorkerError> {
         let millis = u64::try_from(spent.num_milliseconds()).unwrap_or(0);
         if millis == 0 {
@@ -255,8 +254,8 @@ impl RoleBudget {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crawlx_core::time::Duration;
     use super::*;
+    use crawlx_core::time::Duration;
 
     #[test]
     fn parallel_credit_snapshots_are_idempotent_and_stale_reads_do_not_roll_back() {

@@ -48,7 +48,18 @@ pub(super) fn field(s: &str, max: usize) -> ParseResult<(&str, i64)> {
 /// Read a fraction of a second (one or more digits after the dot) as nanoseconds. Digits past
 /// the ninth are skipped.
 pub(super) fn nanosecond(s: &str) -> ParseResult<(&str, u32)> {
-    const SCALE: [u32; 10] = [0, 100_000_000, 10_000_000, 1_000_000, 100_000, 10_000, 1_000, 100, 10, 1];
+    const SCALE: [u32; 10] = [
+        0,
+        100_000_000,
+        10_000_000,
+        1_000_000,
+        100_000,
+        10_000,
+        1_000,
+        100,
+        10,
+        1,
+    ];
     let original = s.len();
     let (rest, v) = number(s, 1, 9)?;
     let consumed = original - rest.len();
@@ -192,14 +203,21 @@ pub(super) fn timezone_offset(
 /// An RFC 2822 zone: `+hhmm`, `-hhmm`, `UT`, `GMT`, the North American names, or a military
 /// letter (read as `-0000`).
 pub(super) fn timezone_offset_2822(s: &str) -> ParseResult<(&str, i32)> {
-    let upto = s.as_bytes().iter().position(|c| !c.is_ascii_alphabetic()).unwrap_or(s.len());
+    let upto = s
+        .as_bytes()
+        .iter()
+        .position(|c| !c.is_ascii_alphabetic())
+        .unwrap_or(s.len());
     if upto == 0 {
         return timezone_offset(s, Colon::Absent, false, false);
     }
     let name = &s.as_bytes()[..upto];
     let rest = &s[upto..];
     let hours = |h: i32| Ok((rest, h * 3600));
-    if name.eq_ignore_ascii_case(b"gmt") || name.eq_ignore_ascii_case(b"ut") || name.eq_ignore_ascii_case(b"z") {
+    if name.eq_ignore_ascii_case(b"gmt")
+        || name.eq_ignore_ascii_case(b"ut")
+        || name.eq_ignore_ascii_case(b"z")
+    {
         return hours(0);
     } else if name.eq_ignore_ascii_case(b"edt") {
         return hours(-4);

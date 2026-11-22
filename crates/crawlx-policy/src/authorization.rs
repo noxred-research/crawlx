@@ -12,12 +12,12 @@
 //! `window`, and `version` is also accepted as `recordVersion`. Unknown fields are rejected, so a
 //! record file never loses a field silently.
 
-use crawlx_core::time::{Duration, Timestamp};
 use crate::error::PolicyError;
 use crawlx_core::config::SafetyProfile;
 use crawlx_core::hash::Digest;
 use crawlx_core::ids::{ArtifactId, AuthorizationRecordId, TenantId};
 use crawlx_core::safety::RiskClass;
+use crawlx_core::time::{Duration, Timestamp};
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};

@@ -6,7 +6,6 @@
 //! database clock is the process clock (one host). `RETURNING` yields rows in scan order,
 //! so callers that need an order sort the returned rows.
 
-use crawlx_core::time::Timestamp;
 use super::dialect::{Dialect, SqliteDialect, SQLITE_NEG_INFINITY_MICROS};
 use super::sqlite::{SqliteBackend, SqliteHandle};
 use super::strategy::{
@@ -16,6 +15,7 @@ use super::strategy::{
 use crate::codec::ts_from_micros;
 use crate::error::db;
 use crate::worker_eligibility::{claim_eligible, WorkerFacts};
+use crawlx_core::time::Timestamp;
 use crawlx_core::StoreError;
 use serde_json::Value;
 use sqlx::sqlite::SqliteRow;

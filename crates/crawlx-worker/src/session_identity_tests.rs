@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use super::*;
 use crawlx_core::identity_profile::IdentityProfileV1;
 use crawlx_core::repo::CrawlRun;
+use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::{Clock, CreateCrawl};
 
 async fn fixture(

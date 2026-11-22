@@ -630,11 +630,11 @@ async fn artifact_store<B: Sql>(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crawlx_core::time::Timestamp;
     use super::*;
     use crate::decision_dataset::{Hindsight, SCHEMA};
     use crawlx_core::hash::Digest;
     use crawlx_core::ids::{CrawlRunId, ModelDecisionId, SessionId};
+    use crawlx_core::time::Timestamp;
     use serde_json::json;
 
     fn row(session: SessionId, decision: u64, ids: &[&str], chosen: Option<usize>) -> DatasetRow {

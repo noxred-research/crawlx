@@ -1365,8 +1365,8 @@ impl<B: Sql> Store<B> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crawlx_core::time::Duration;
     use super::*;
+    use crawlx_core::time::Duration;
     fn scope() -> ProfileScopeV1 {
         ProfileScopeV1 {
             tenant: TenantId::new(),

@@ -10,7 +10,6 @@
 //! reply fails closed before any effect, and cancellation or expiry shuts the actor down without
 //! a profile commit.
 
-use crawlx_core::time::Duration;
 use super::*;
 use crate::durable::DurableAuthority;
 use crate::interactive_profiles::{
@@ -19,6 +18,7 @@ use crate::interactive_profiles::{
 };
 use crawlx_core::custody::{CustodyLease, SecretRegistrar};
 use crawlx_core::observation::DomSelector;
+use crawlx_core::time::Duration;
 use crawlx_core::{SecretOr, Timestamp};
 use crawlx_storage::artifact_key_crypto::ArtifactKeys;
 use crawlx_storage::custody::profiles::CustodyProfiles;

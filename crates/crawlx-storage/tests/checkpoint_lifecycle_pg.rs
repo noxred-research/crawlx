@@ -1,9 +1,9 @@
 //! Terminal checkpoint revocation preserves structural custody through physical erasure.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::Duration;
 use crawlx_core::counters::{RunStatus, TerminalReason};
 use crawlx_core::repo::{ArtifactStore, CheckpointRecord, CheckpointRepo, RunRepo, Sensitivity};
+use crawlx_core::time::Duration;
 use crawlx_core::{CheckpointId, TenantId};
 use crawlx_storage::artifacts::FsArtifactStore;
 use crawlx_storage::checkpoint_crypto::{CheckpointContext, CheckpointKeys, MemoryCheckpointKeys};

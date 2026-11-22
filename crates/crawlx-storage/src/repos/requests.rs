@@ -1,5 +1,4 @@
 //! Request extensions of the authoritative URL frontier.
-use crawlx_core::time::Duration;
 use super::*;
 use crate::backend::strategy::Conn;
 use crate::backend::{Backend, BackendKind, Dialect, RowLock};
@@ -13,6 +12,7 @@ use crawlx_core::hash::Digest;
 use crawlx_core::orchestration::*;
 use crawlx_core::repo::RunRepo;
 use crawlx_core::request::{RequestEnvelopeV1, RequestIdentityV1};
+use crawlx_core::time::Duration;
 use crawlx_core::{CrawlRunId, StoreError, TenantId};
 use std::collections::{BTreeMap, BTreeSet};
 

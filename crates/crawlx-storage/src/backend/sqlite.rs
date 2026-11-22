@@ -7,7 +7,6 @@
 //! with `SQLITE_BUSY_SNAPSHOT` without ever invoking the busy handler, which is why no write
 //! path may use a plain `BEGIN`.
 
-use crawlx_core::time::Timestamp;
 use super::dialect::SqliteDialect;
 use super::strategy::{
     AuditEntry, Concurrency, FenceSeq, FrontierClaim, LockMode, MonitorClaim, OutboxClaim, Query,
@@ -16,6 +15,7 @@ use super::strategy::{
 use super::{Backend, BackendKind, BackendRefusal, DatabaseUrl};
 use crate::error::db;
 use crate::store::{Store, StoreConfig};
+use crawlx_core::time::Timestamp;
 use crawlx_core::StoreError;
 use sqlx::migrate::Migrator;
 use sqlx::sqlite::{

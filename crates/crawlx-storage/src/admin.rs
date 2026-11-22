@@ -6,7 +6,6 @@
 //! (`actor = "admin:<operator>"`). Containment (`pause`, `freeze`, `drain`) stays expressible
 //! in plain SQL (RB-11) because an emergency stop must not depend on this binary.
 
-use crawlx_core::time::Duration as SpanDuration;
 use crate::artifacts::ArtifactBlobs;
 use crate::backend::{Backend, BackendKind, Dialect, MariaBackend, PgBackend, RowLock, SqliteBackend};
 use crate::codec::get;
@@ -17,6 +16,7 @@ use crate::sql::{stmt, Sql, SqlRow, Stmt};
 use crate::store::{Pg, Store};
 use async_trait::async_trait;
 use crawlx_core::hash::Digest;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{ActionId, CrawlRunId, SessionId, StoreError, TenantId, Timestamp, WorkerId};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -495,8 +495,8 @@ mod registry {
     use crate::worker_eligibility::{claim_eligible, WorkerFacts};
     use crawlx_core::acquisition::{BackendCapabilitiesV1, WorkerCapabilitiesV1};
     use crawlx_core::data_capabilities::{WorkerDataCapabilitiesV1, WorkerDataRequirementsV1};
-    use crawlx_core::{CrawlRunId, StoreError, Timestamp, WorkerId};
     use crawlx_core::time::Duration as SpanDuration;
+    use crawlx_core::{CrawlRunId, StoreError, Timestamp, WorkerId};
     use serde_json::{Map, Value};
     use std::time::Duration;
 
@@ -946,9 +946,7 @@ impl WorkerRegistry for crate::MemoryStore {
         }
         let now = self.worker_registry_now();
         let cutoff = now
-            - SpanDuration::milliseconds(
-                i64::try_from(max_age.as_millis().min(90_000)).unwrap_or(90_000),
-            );
+            - SpanDuration::milliseconds(i64::try_from(max_age.as_millis().min(90_000)).unwrap_or(90_000));
         let registry = self.worker_registry.lock();
         for (row, backends) in registry.rows.values() {
             let facts = registry.data.get(&row.id).cloned().unwrap_or_default();

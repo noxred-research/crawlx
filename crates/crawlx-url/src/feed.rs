@@ -3,8 +3,8 @@
 //! No I/O is performed. Resolved references are proposals, never network authority.
 //! DTDs and entity declarations are rejected. Namespace aliases are resolved by URI.
 
-use crawlx_core::time::NaiveDateTime;
 use crawlx_core::discovery::{DiscoveryErrorV1, SourceDiscoveryPolicyV1};
+use crawlx_core::time::NaiveDateTime;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::ResolveResult;
 use quick_xml::reader::NsReader;

@@ -15,7 +15,6 @@
 //! (object first, row second); a crash in between leaves an orphan
 //! object that [`ArtifactReaper::collect_orphans`] removes after a grace period.
 
-use crawlx_core::time::Duration as SpanDuration;
 use crate::retention::{artifact_expiry, zdr_write_gate};
 use crate::spool::UploadSpool;
 use crate::zdr::DeliveryBuffer;
@@ -25,6 +24,7 @@ use crawlx_core::archive_catalog::ArchiveCustodyV1;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{ArtifactStore, RunRepo, Sensitivity};
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{ArtifactId, ArtifactRef, Clock, CrawlRunId, StoreError, TenantId, Timestamp};
 use crawlx_telemetry::metrics::names;
 use crawlx_telemetry::Metrics;

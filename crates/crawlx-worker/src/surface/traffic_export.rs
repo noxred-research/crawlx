@@ -548,11 +548,7 @@ impl TrafficExporter {
         event.insert("id".to_owned(), Value::from(uuid::Uuid::now_v7().to_string()));
         event.insert(
             "timestamp".to_owned(),
-            Value::from(
-                exchange
-                    .timestamp
-                    .to_rfc3339_opts(SecondsFormat::Nanos, true),
-            ),
+            Value::from(exchange.timestamp.to_rfc3339_opts(SecondsFormat::Nanos, true)),
         );
         event.insert(
             "captured_at".to_owned(),

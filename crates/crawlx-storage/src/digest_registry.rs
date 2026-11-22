@@ -1,6 +1,5 @@
 //! Hash-only first-commit arbitration. No independent claim API can outlive a failed page commit.
 
-use crawlx_core::time::Duration;
 use crate::backend::strategy::Conn;
 use crate::backend::{BackendKind, Dialect};
 use crate::sql::{stmt, Sql, SqlRow};
@@ -11,6 +10,7 @@ use crawlx_core::digest_registry::{
 use crawlx_core::hash::Digest;
 use crawlx_core::orchestration::RequestCommitV1;
 use crawlx_core::repo::{FrontierStatus, RunRepo};
+use crawlx_core::time::Duration;
 use crawlx_core::{CrawlRunId, StoreError, TenantId, Timestamp};
 use std::collections::BTreeMap;
 type RegistryKey = (TenantId, CrawlRunId, Digest, DigestStageV1, Digest);

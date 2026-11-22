@@ -15,7 +15,6 @@
 //! change or a satisfied terminal `waitvisible`; a failed flow falls back to `builtin:form`
 //! ([`login_session`]).
 
-use crawlx_core::time::Duration as SpanDuration;
 use crate::actor::SessionHandle;
 use crate::analysis::StateAnalyzer;
 use crate::driven::{Attribution, DriveFailure, Driver};
@@ -31,6 +30,7 @@ use crawlx_core::observation::{
 use crawlx_core::repo::CrawlSession;
 use crawlx_core::safety::RiskClass;
 use crawlx_core::secret::SecretOr;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{BrowserContext, BrowserError, CoreError};
 use crawlx_elements::{CandidateDiscovery, DiscoveryConfig};
 use crawlx_forms::{

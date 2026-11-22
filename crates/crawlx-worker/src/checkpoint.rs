@@ -8,6 +8,7 @@ use crawlx_core::checkpoint_crypto::Ciphertext;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{ArtifactStore, CheckpointRecord, CheckpointRepo, Sensitivity};
 use crawlx_core::secret::ArtifactSink;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{
     BrowserContext, CheckpointId, Clock, CrawlRunId, ObservationEpoch, SessionId, TenantId, Timestamp,
 };
@@ -179,7 +180,7 @@ impl Checkpointer {
         let ciphertext: Ciphertext = self.keys.seal(&context, bytes).await?;
         let now = self.clock.now();
         let expires_at = self.binding.as_ref().map_or(
-            now + Duration::days(i64::from(self.retention_days.max(1))),
+            now + SpanDuration::days(i64::from(self.retention_days.max(1))),
             |binding| binding.expires_at,
         );
         let artifact = ArtifactSink::over(self.artifacts.as_ref())
@@ -272,8 +273,8 @@ impl Checkpointer {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crawlx_core::time::Duration;
     use super::*;
+    use crawlx_core::time::Duration;
 
     #[test]
     fn debug_never_exposes_checkpoint_credentials() {

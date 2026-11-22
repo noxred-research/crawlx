@@ -5,10 +5,10 @@
 //! selects base elements and evaluates its nested fields relative to each one (optionally from a
 //! sibling of the base). Nothing here fetches or evaluates code: selectors, transforms and the
 //! schema are all static data under one shared operation budget.
-use crawlx_core::time::{FixedDateTime, NaiveDate};
 use crate::handlers;
 use crate::regex_builtins;
 use crate::xpath::{CompiledSelector, SelectorDocument, SelectorError, XPathValue};
+use crawlx_core::time::{FixedDateTime, NaiveDate};
 use crawlx_core::{
     extraction::{DiscoveryIntentV1, DiscoveryPurposeV1},
     hash::Digest,

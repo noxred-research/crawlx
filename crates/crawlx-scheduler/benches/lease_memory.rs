@@ -5,8 +5,8 @@
 //! claim ordering, barrier checks) with storage latency removed.
 #![allow(missing_docs, clippy::unwrap_used, clippy::expect_used)]
 
-use crawlx_core::time::{ManualClock, Timestamp};
 use crawlx_core::repo::{RunRepo, SessionStatus};
+use crawlx_core::time::{ManualClock, Timestamp};
 use crawlx_core::{TenantId, WorkerId};
 use crawlx_scheduler::{RunPlanner, Scheduler};
 use crawlx_storage::testkit::{crawl_run, create_crawl};

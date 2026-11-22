@@ -9,9 +9,9 @@
 //! once each and in ascending order, because MariaDB binds positionally.
 
 use crate::rig::Rig;
-use crawlx_core::time::Timestamp;
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::repo::{CrawlRun, RunRepo};
+use crawlx_core::time::Timestamp;
 use crawlx_core::TenantId;
 use crawlx_storage::backend::{BackendKind, Database, DatabaseUrl, MariaBackend, PgBackend, SqliteBackend};
 use crawlx_storage::sql::{Built, Sql, SqlRow};
@@ -66,12 +66,8 @@ macro_rules! binder {
     };
 }
 
-binder!(
-    bind_pg,
-    Postgres,
-    |t: Timestamp| t,
-    |j: &serde_json::Value| j.clone()
-);
+binder!(bind_pg, Postgres, |t: Timestamp| t, |j: &serde_json::Value| j
+    .clone());
 binder!(
     bind_mariadb,
     MySql,

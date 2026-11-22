@@ -9,7 +9,6 @@
 //! tests always did.
 
 use crate::rig::Rig;
-use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::acquisition::BackendCapabilitiesV1;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::counters::{RunStatus, TerminalReason};
@@ -28,6 +27,7 @@ use crawlx_core::orchestration::{RequestBatchV1, RequestCommitRepo, RequestCommi
 use crawlx_core::repo::{ArtifactStore, CrawlRun, FrontierRepo, FrontierStatus, RunRepo};
 use crawlx_core::request::RequestEnvelopeV1;
 use crawlx_core::secret::{ArtifactSink, Redactor};
+use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::{Clock, StoreError, TenantId, WorkerId};
 use crawlx_storage::artifacts::FsArtifactStore;
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl, Engine};
@@ -1460,8 +1460,8 @@ async fn terminal_empty_source_commits_with_status_and_rolls_back_invalid_feed(r
             .unwrap();
         // The artifact expires one day after the case clock (an exact instant); a database
         // keeps microseconds. A deadline of whole milliseconds never exceeds the stored expiry.
-        let deadline = Timestamp::from_timestamp_millis(env.now().timestamp_millis()).unwrap()
-            + Duration::days(1);
+        let deadline =
+            Timestamp::from_timestamp_millis(env.now().timestamp_millis()).unwrap() + Duration::days(1);
         let mut batch = DeliveryBatchV1::for_request(
             "empty".into(),
             "terminal.empty.empty".into(),
@@ -2312,7 +2312,12 @@ async fn outbox_claims_in_id_order_and_bounds_leases_acks_and_retries(rig: &Rig)
         ));
         assert!(matches!(
             store
-                .retry(run.id, second.id, second.fence, Timestamp::now() + Duration::days(2))
+                .retry(
+                    run.id,
+                    second.id,
+                    second.fence,
+                    Timestamp::now() + Duration::days(2)
+                )
                 .await,
             Err(StoreError::LeaseLost)
         ));

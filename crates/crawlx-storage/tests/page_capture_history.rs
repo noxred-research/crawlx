@@ -1,13 +1,13 @@
 //! Immutable retained generations share the request result transaction on memory and PostgreSQL.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::config::RetentionMode;
 use crawlx_core::hash::Digest;
 use crawlx_core::orchestration::{OrchestrationConfigV1, RequestBatchV1, RequestCommitRepo, RequestCommitV1};
 use crawlx_core::repo::{CrawlRun, FrontierRepo, FrontierStatus, PageRecord, PageRepo, RunRepo, Sensitivity};
 use crawlx_core::request::RequestEnvelopeV1;
 use crawlx_core::secret::{ArtifactSink, Redactor};
+use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::traffic::TrustLane;
 use crawlx_core::{Clock, StoreError, TenantId, WorkerId};
 use crawlx_storage::artifacts::ArtifactIndex;

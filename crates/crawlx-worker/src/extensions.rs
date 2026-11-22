@@ -4,6 +4,7 @@
 //! and append a new identity, never fetch a mutated already-leased request.
 
 use crate::runtime::CpuPool;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{
     extensions::{
         document_item, json_size, ExtensionCallbackReceiptV1, ExtensionConfigV1, ExtensionError,
@@ -932,7 +933,7 @@ pub async fn store_candidate(
         .expires_at()
         .or_else(|| {
             run.created_at
-                .checked_add_signed(Duration::days(i64::from(run.config.retention.days)))
+                .checked_add_signed(SpanDuration::days(i64::from(run.config.retention.days)))
         })
         .ok_or_else(|| StoreError::RetentionDenied("item expiry unavailable".into()))?;
     let mut item = AcceptedItemV1::new(

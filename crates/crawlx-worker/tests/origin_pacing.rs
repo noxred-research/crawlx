@@ -3,7 +3,6 @@
 
 mod common;
 
-use crawlx_core::time::{Duration as SpanDuration, Timestamp};
 use async_trait::async_trait;
 use common::{canonical, proposal_for, RigCore, SEED};
 use crawlx_browser::fake::{FakeAxSpec, FakeEffect, FakePage, FakeScript};
@@ -17,6 +16,7 @@ use crawlx_core::observation::{
 };
 use crawlx_core::page_op::{PageOp, PageOpResult};
 use crawlx_core::secret::SecretOr;
+use crawlx_core::time::{Duration as SpanDuration, Timestamp};
 use crawlx_core::traffic::TrafficEvent;
 use crawlx_core::{
     BrowserBackend, BrowserContext, BrowserError, CanonicalUrl, ContextConfig, ObservationEpoch,

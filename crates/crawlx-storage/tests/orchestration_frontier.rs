@@ -1,7 +1,6 @@
 //! Request frontier parity sources. Optional PostgreSQL tests require CRAWLX_TEST_DATABASE_URL.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::hash::Digest;
 use crawlx_core::orchestration::{
     FrontierActivityV1, LoaderCursorV1, OrchestrationConfigV1, ProducerModeV1, RequestBatchV1,
@@ -9,6 +8,7 @@ use crawlx_core::orchestration::{
 };
 use crawlx_core::repo::{CrawlRun, EventRepo, FrontierRepo, FrontierStatus, RunRepo};
 use crawlx_core::request::RequestEnvelopeV1;
+use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::{Clock, StoreError, TenantId, WorkerId};
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};
 use crawlx_storage::{LeaseRepo, MemoryStore, Pg, StoreConfig};

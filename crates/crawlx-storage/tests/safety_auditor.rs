@@ -1,12 +1,12 @@
 //! Independent auditor integration coverage; uses isolated schemas and real limited logins.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::counters::RunStatus;
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{ActionJournal, EventRepo, RunRepo};
 use crawlx_core::safety::{RiskClass, SafetyDecision};
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::{ActionId, ApprovalId, CrawlRunId, StateClusterId, TenantId, WorkerId};
 use crawlx_storage::testkit::{allow_verdict, crawl_run, create_crawl, proposal, sessions, verdict};
 use crawlx_storage::{
@@ -305,10 +305,7 @@ async fn privileged_bypass_pauses_only_affected_run_with_independent_identities(
         .unwrap();
     assert!(!durable.to_string().contains("private-zdr-sink-canary"));
     assert!(auditor.audit().await.unwrap().violations.is_empty());
-    buffer
-        .sweep(Timestamp::now() + Duration::hours(2))
-        .await
-        .unwrap();
+    buffer.sweep(Timestamp::now() + Duration::hours(2)).await.unwrap();
     assert!(auditor.audit().await.unwrap().violations.is_empty());
 
     sqlx::query(

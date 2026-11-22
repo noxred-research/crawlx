@@ -921,7 +921,10 @@ async fn replaced_parent_fence_during_uncached_robots_cannot_dispatch_selected_t
         .unwrap();
     let reaped = stores
         .leases
-        .reap_frontier(crawlx_core::SystemClock.now() + Duration::hours(1), 5)
+        .reap_frontier(
+            crawlx_core::SystemClock.now() + crawlx_core::time::Duration::hours(1),
+            5,
+        )
         .await
         .unwrap();
     assert_eq!(reaped.requeued, 1);
@@ -959,7 +962,10 @@ async fn replaced_parent_fence_cancels_target_waiting_for_origin_governor() {
     assert_eq!(
         stores
             .leases
-            .reap_frontier(crawlx_core::SystemClock.now() + Duration::hours(1), 5)
+            .reap_frontier(
+                crawlx_core::SystemClock.now() + crawlx_core::time::Duration::hours(1),
+                5
+            )
             .await
             .unwrap()
             .requeued,
@@ -1047,7 +1053,10 @@ async fn completed_short_governor_wait_rechecks_original_parent_fence_before_dis
             assert_eq!(
                 stores
                     .leases
-                    .reap_frontier(crawlx_core::SystemClock.now() + Duration::hours(1), 5)
+                    .reap_frontier(
+                        crawlx_core::SystemClock.now() + crawlx_core::time::Duration::hours(1),
+                        5
+                    )
                     .await
                     .unwrap()
                     .requeued,

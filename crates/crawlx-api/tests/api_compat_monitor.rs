@@ -3,7 +3,6 @@
 //! tracking, goal judging, search targets, webhooks, the ticker and retention. Everything runs
 //! in memory on a manual clock with mocked scrape, search, LLM and webhook transport.
 
-use crawlx_core::time::{Duration as SpanDuration, ManualClock, Timestamp};
 use async_trait::async_trait;
 use axum::body::Body;
 #[allow(
@@ -19,6 +18,7 @@ use crawlx_api::intel::tools::{MapLink, MockPageTools, ToolError};
 use crawlx_api::intel::webhook::{compat_signature, JobWebhookSink};
 use crawlx_api::webhooks::{TransportError, WebhookRequest, WebhookTransport};
 use crawlx_api::{ApiConfig, AppState, MemoryApiStore, Repos, Scope};
+use crawlx_core::time::{Duration as SpanDuration, ManualClock, Timestamp};
 use crawlx_core::{Clock, SystemClock, TenantId};
 use crawlx_model::llm::{LlmError, MockLlm};
 use crawlx_policy::AdmissionPolicy;
@@ -36,7 +36,7 @@ use uuid::Uuid;
 const BASE: &str = "/compat/v2";
 const SECRET: &str = "whsec-monitor-test";
 
-fn utc(s: &str) -> chrono::DateTime<chrono::Utc> {
+fn utc(s: &str) -> crawlx_core::Timestamp {
     s.parse().unwrap()
 }
 

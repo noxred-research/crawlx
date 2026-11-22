@@ -1,6 +1,5 @@
 //! Session binding metadata subordinate to the existing session lease, never a new lock service.
 
-use crawlx_core::time::Duration;
 use crate::backend::strategy::Conn;
 use crate::backend::{BackendKind, Dialect, RowLock};
 use crate::codec::{from_json, to_json};
@@ -12,6 +11,7 @@ use crawlx_core::repo::{EventRepo, RunRepo};
 use crawlx_core::session_binding::{
     BindingState, RetirementReason, SessionBindingError, SessionBindingV1, SessionIdentityV1, SessionLimits,
 };
+use crawlx_core::time::Duration;
 use crawlx_core::{StoreError, TenantId, Timestamp};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -175,9 +175,7 @@ pub(crate) async fn budget_clock_deadline<R: RunRepo + EventRepo + ?Sized>(
     let deadline = run
         .started_at
         .unwrap_or(run.created_at)
-        .checked_add_signed(Duration::seconds(i64::from(
-            run.config.limits.duration_seconds,
-        )))
+        .checked_add_signed(Duration::seconds(i64::from(run.config.limits.duration_seconds)))
         .and_then(|deadline| {
             i64::try_from(millis)
                 .ok()

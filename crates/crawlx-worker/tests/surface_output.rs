@@ -7,9 +7,9 @@
 #[path = "common/authorization.rs"]
 mod authorization_fixture;
 
-use crawlx_core::time::Timestamp;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::PageRecord;
+use crawlx_core::time::Timestamp;
 use crawlx_core::{CrawlRunId, TrustLane};
 use crawlx_worker::output::{
     expand_patterns, field_names, write_error_log, Dsl, ExportFormat, Exporter, Field, OutputFilters,

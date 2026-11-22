@@ -1,7 +1,6 @@
 //! Conformance cases (URL graph): persistence over the producer's custody lease, exact
 //! fencing and invalidation, restart, retention, ZDR and tenant isolation.
 
-use crawlx_core::time::{Duration, ManualClock};
 use super::reports::{exec, on_zdr_db, on_zdr_repo, scalar_i64, scalar_text, tenant_of, Bind};
 use crate::rig::Rig;
 use crawlx_core::config::RetentionMode;
@@ -10,6 +9,7 @@ use crawlx_core::hash::Digest;
 use crawlx_core::orchestration::{OrchestrationConfigV1, ProducerModeV1, RequestBatchV1};
 use crawlx_core::repo::{CrawlRun, FrontierRepo, FrontierStatus, RunRepo};
 use crawlx_core::request::RequestEnvelopeV1;
+use crawlx_core::time::{Duration, ManualClock};
 use crawlx_core::url_graph::{
     UrlGraphBatchV1, UrlGraphEdgeV1, UrlGraphPolicyV1, UrlGraphRankStateV1, UrlGraphRepo, UrlGraphSnapshotV1,
     UrlHandleV1,

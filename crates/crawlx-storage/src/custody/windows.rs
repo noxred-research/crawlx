@@ -153,8 +153,8 @@ impl<B: Sql> SecretAuthority<B> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crawlx_core::time::Duration as SpanDuration;
     use super::*;
+    use crawlx_core::time::Duration as SpanDuration;
 
     #[test]
     fn long_retention_needs_both_explicit_permissions_and_respects_operator_maximum() {

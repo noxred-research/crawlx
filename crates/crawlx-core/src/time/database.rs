@@ -98,6 +98,8 @@ impl Encode<'_, MySql> for NaiveDateTime {
 
 impl<'r> Decode<'r, MySql> for NaiveDateTime {
     fn decode(value: MySqlValueRef<'r>) -> Result<Self, BoxDynError> {
-        Ok(Self::from_plain(<PrimitiveDateTime as Decode<MySql>>::decode(value)?))
+        Ok(Self::from_plain(<PrimitiveDateTime as Decode<MySql>>::decode(
+            value,
+        )?))
     }
 }

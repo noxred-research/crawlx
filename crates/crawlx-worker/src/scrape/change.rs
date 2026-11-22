@@ -16,11 +16,11 @@
 //! `visibility` is `visible` when the link graph or a sitemap still reaches the URL, `hidden`
 //! when nothing does or the page is gone (see [`super::visibility`]).
 
-use crawlx_core::time::Duration;
 use crate::scrape::llm::{charge, failure};
 use crate::scrape::{rfc3339, ScrapeFailure};
 use crawlx_core::repo::{ArtifactStore, PageRepo, RunRepo};
 use crawlx_core::scrape::{ChangeMode, ChangeStatus, ChangeTrackingResult, ScrapeDocument};
+use crawlx_core::time::Duration;
 use crawlx_core::{CanonicalUrl, StoreError, TenantId, Timestamp};
 use crawlx_extract::diff::{json_diff, markdown_diff};
 use crawlx_model::llm::{LlmExtractor, TokenUsage};

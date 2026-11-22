@@ -1,7 +1,7 @@
 //! Focused hash-only registry state tests; no backend or wall-clock dependencies.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-use crawlx_core::time::Timestamp;
 use super::*;
+use crawlx_core::time::Timestamp;
 
 fn claim() -> ContentDedupeClaimV1 {
     serde_json::from_value(serde_json::json!({

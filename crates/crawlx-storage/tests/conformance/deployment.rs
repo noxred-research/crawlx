@@ -1,8 +1,8 @@
 //! The deployment id: one random id per database, created on first use, read back identically
 //! by every handle and every concurrent first user, on every engine.
 
-use crawlx_core::time::{Duration, Timestamp};
 use crate::rig::Rig;
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_storage::deployment::{deployment_id_of, DeploymentIdentity};
 use futures::future::join_all;
 

@@ -4,7 +4,6 @@
 //! object keys and logical search IDs make retries idempotent where the destination supports it.
 //! Stdout, FTP gateways and generic HTTP endpoints may duplicate after an acknowledged-send crash.
 
-use crawlx_core::time::{Duration as SpanDuration, Timestamp};
 use crate::runtime::CpuPool;
 use crate::stores::Stores;
 use async_trait::async_trait;
@@ -14,6 +13,7 @@ use crawlx_core::config::RetentionMode;
 use crawlx_core::dataset::{DeliveryBatchV1, DurableDeliveryOutboxV1, MAX_VALUE_BYTES};
 use crawlx_core::repo::{ArtifactStore, CrawlRun};
 use crawlx_core::secret::{ArtifactSink, Redacted, Redactor};
+use crawlx_core::time::{Duration as SpanDuration, Timestamp};
 use crawlx_core::{Clock, StoreError, WorkerId};
 use crawlx_extract::serialize::{write_article, ArticleFormat, ArticleStream};
 use crawlx_storage::ArtifactBlobs;

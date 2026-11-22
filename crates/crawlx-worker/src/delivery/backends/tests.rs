@@ -4,7 +4,6 @@
 //! created.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{Duration, Timestamp};
 use super::amqp::{connection_uri, AmqpDestination, AmqpSettings};
 use super::clickhouse::ClickHouseDestination;
 use super::http::InfraHttp;
@@ -17,6 +16,7 @@ use crawlx_core::config::RetentionMode;
 use crawlx_core::dataset::{DatasetContentV1, DeliveryBatchV1};
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::CrawlRun;
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::{ArtifactId, ArtifactRef};
 use reqwest::header::HeaderMap;
 use reqwest::Method;

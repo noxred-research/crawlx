@@ -4,7 +4,6 @@
 //! at connect; dropping it would turn `||` into a logical OR). The code never relies on
 //! `INSERT IGNORE`, which swallows foreign key, check and `NOT NULL` errors.
 
-use crawlx_core::time::Timestamp;
 use super::dialect::MariaDbDialect;
 use super::strategy::{
     AuditEntry, Concurrency, FenceSeq, FrontierClaim, LockMode, MonitorClaim, OutboxClaim, Query,
@@ -13,6 +12,7 @@ use super::strategy::{
 use super::{Backend, BackendKind, BackendRefusal, DatabaseUrl};
 use crate::error::db;
 use crate::store::{Store, StoreConfig};
+use crawlx_core::time::Timestamp;
 use crawlx_core::StoreError;
 use sqlx::migrate::Migrator;
 use sqlx::mysql::MySqlRow;

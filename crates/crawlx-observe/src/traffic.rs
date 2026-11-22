@@ -294,8 +294,8 @@ pub fn is_third_party(page_origin: &str, request_url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crawlx_core::time::Timestamp;
     use super::*;
+    use crawlx_core::time::Timestamp;
     use crawlx_core::traffic::TrafficOrigin;
 
     fn event(url: &str) -> TrafficEvent {

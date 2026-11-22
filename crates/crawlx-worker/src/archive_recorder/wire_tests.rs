@@ -1,7 +1,6 @@
 //! Wire evidence records: observed protocol, true status, TLS facts, redacted request headers.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{Duration, FixedDateTime, ManualClock};
 use super::*;
 use crawlx_core::archive_catalog::ArchiveTrafficV1;
 use crawlx_core::counters::TerminalReason;
@@ -9,6 +8,7 @@ use crawlx_core::orchestration::{RequestBatchV1, RequestCommitV1};
 use crawlx_core::repo::{FrontierStatus, PageRecord, Sensitivity};
 use crawlx_core::request::RequestEnvelopeV1;
 use crawlx_core::secret::{ArtifactSink, Redactor as ArtifactRedactor};
+use crawlx_core::time::{Duration, FixedDateTime, ManualClock};
 use crawlx_core::traffic::{Protocol, TrustLane};
 use crawlx_core::WorkerId;
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};

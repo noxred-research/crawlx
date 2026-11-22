@@ -1,8 +1,8 @@
 //! Small conversions between `crawlx-core` values and column representations.
 
-use crawlx_core::time::{Duration as SpanDuration, NaiveDateTime, Timestamp};
 use crate::error::db;
 use crawlx_core::hash::Digest;
+use crawlx_core::time::{Duration as SpanDuration, NaiveDateTime, Timestamp};
 use crawlx_core::traffic::TrafficOrigin;
 use crawlx_core::url::CanonicalUrl;
 use crawlx_core::StoreError;
@@ -192,10 +192,7 @@ pub(crate) fn from_json_text(text: &str) -> Result<serde_json::Value, StoreError
 }
 
 /// Retention horizon of `days` days after `from`; `0` means no expiry.
-pub(crate) fn expiry(
-    from: Timestamp,
-    days: u32,
-) -> Option<Timestamp> {
+pub(crate) fn expiry(from: Timestamp, days: u32) -> Option<Timestamp> {
     if days == 0 {
         None
     } else {
@@ -228,8 +225,8 @@ pub(crate) fn unpack_u64s(b: &[u8]) -> Result<Vec<u64>, StoreError> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crawlx_core::time::{NaiveDate, Timestamp};
     use super::*;
+    use crawlx_core::time::{NaiveDate, Timestamp};
     use crawlx_core::traffic::TrustLane;
 
     #[test]

@@ -12,7 +12,7 @@
 //! to the validity period and the issuer/subject names, rejects indefinite lengths and
 //! high tag numbers, and never reads past the slice it was given.
 
-use crawlx_core::time::{Timestamp, NaiveDate};
+use crawlx_core::time::{NaiveDate, Timestamp};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 

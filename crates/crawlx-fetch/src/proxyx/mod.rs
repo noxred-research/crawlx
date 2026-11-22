@@ -35,12 +35,12 @@ pub use signals::{
     is_challenge, target_of, BlockReporter, BlockSignal, SignalKind, SignalStats, QUEUE_CAPACITY,
 };
 
-use crawlx_core::time::Timestamp;
 use crate::resolver::Resolver;
 use crate::upstream::UpstreamProxy;
 use crawlx_core::hash::Digest;
 use crawlx_core::secret::SecretOr;
 use crawlx_core::session_binding::{BindingState, SessionBindingV1, SessionIdentityV1};
+use crawlx_core::time::Timestamp;
 use crawlx_policy::egress::EgressPolicy;
 use http::{HeaderMap, StatusCode};
 use parking_lot::Mutex;
@@ -592,11 +592,7 @@ mod tests {
             "profile": null,
         }))
         .unwrap();
-        SessionBindingV1::new(
-            identity,
-            7,
-            Timestamp::from_timestamp(2_000_000_000, 0).unwrap(),
-        )
+        SessionBindingV1::new(identity, 7, Timestamp::from_timestamp(2_000_000_000, 0).unwrap())
     }
 
     #[test]

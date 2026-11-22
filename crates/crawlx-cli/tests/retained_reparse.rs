@@ -1,7 +1,6 @@
 //! CLI retained-source binding: real native parsing, scope, expiry and zero added acquisition.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::Duration;
 use async_trait::async_trait;
 use crawlx_core::acquisition::AcquisitionResultV1;
 use crawlx_core::captcha::CaptchaSecrets;
@@ -9,6 +8,7 @@ use crawlx_core::custody::{
     ArtifactReadState, CustodyLease, RunSecretAuthority, RunSecretSnapshot, SecretEpoch,
 };
 use crawlx_core::repo::{ArtifactStore, Sensitivity};
+use crawlx_core::time::Duration;
 use crawlx_core::{
     ArtifactId, ArtifactRef, Clock as _, CrawlRunId, SecretOr, StoreError, SystemClock, TenantId, Timestamp,
 };

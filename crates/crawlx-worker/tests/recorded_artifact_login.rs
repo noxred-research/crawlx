@@ -3,7 +3,6 @@
 
 mod common;
 
-use crawlx_core::time::Duration;
 use async_trait::async_trait;
 use crawlx_browser::fake::{FakeAxSpec, FakeEffect, FakePage, FakeScript};
 use crawlx_browser::FakeBackend;
@@ -12,6 +11,7 @@ use crawlx_core::counters::{PlaneCounters, RunStatus};
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{CrawlRun, CrawlSession, Sensitivity};
 use crawlx_core::secret::{CredentialRef, SecretOr, SecretResolver};
+use crawlx_core::time::Duration;
 use crawlx_core::{
     ArtifactId, ArtifactRef, BrowserBackend, Clock, CoreError, CrawlRunId, SystemClock, TenantId, Timestamp,
 };

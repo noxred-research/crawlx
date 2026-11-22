@@ -9,13 +9,13 @@ mod common;
 mod scrape_rig;
 
 use axum::http::{Method, StatusCode};
-use crawlx_core::time::{Duration as SpanDuration, Timestamp};
 use crawlx_api::Scope;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::counters::{RunStatus, TerminalReason};
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{FrontierRepo, PageRecord, PageRepo, RunRepo};
 use crawlx_core::scrape::{ScrapeDocument, ScrapeOptions};
+use crawlx_core::time::{Duration as SpanDuration, Timestamp};
 use crawlx_core::{CrawlRunId, TenantId, TrustLane};
 use crawlx_storage::testkit;
 use scrape_rig::{Rig, RigConfig};

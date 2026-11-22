@@ -63,9 +63,9 @@
 //! This module never reads the wall clock: every instant is an argument.
 
 use crawlx_core::time::Timestamp;
-use jiff::tz::TimeZone;
 use croner::parser::{CronParser, Seconds, Year};
 use croner::Cron;
+use jiff::tz::TimeZone;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Shortest allowed gap between two consecutive runs, in seconds (5 minutes).
@@ -305,7 +305,11 @@ impl Schedule {
     /// returned instant back in to walk the series.
     #[must_use]
     pub fn next_after(&self, after: Timestamp) -> Option<Timestamp> {
-        let instant = jiff::Timestamp::new(after.timestamp(), i32::try_from(after.timestamp_subsec_nanos()).ok()?).ok()?;
+        let instant = jiff::Timestamp::new(
+            after.timestamp(),
+            i32::try_from(after.timestamp_subsec_nanos()).ok()?,
+        )
+        .ok()?;
         let local = instant.to_zoned_datetime(self.zone.clone());
         let next = self.cron.find_next_occurrence(&local, false).ok()?.timestamp();
         Timestamp::from_timestamp(next.as_second(), u32::try_from(next.subsec_nanosecond()).ok()?)

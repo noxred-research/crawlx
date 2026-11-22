@@ -233,8 +233,8 @@ impl Budget {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crawlx_core::time::Duration as SpanDuration;
     use super::*;
+    use crawlx_core::time::Duration as SpanDuration;
 
     fn t0() -> Timestamp {
         Timestamp::from_ymd_hms(2026, 10, 20, 0, 0, 0).unwrap()

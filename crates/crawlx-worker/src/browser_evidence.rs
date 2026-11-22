@@ -1,6 +1,5 @@
 //! Opt-in, run-scoped browser evidence retention and observation provenance.
 
-use crawlx_core::time::Duration;
 use crate::{RunContext, SessionHandle, WorkerError};
 use async_trait::async_trait;
 use crawlx_core::browser_capture::{
@@ -14,6 +13,7 @@ use crawlx_core::page_op::{PageOp, PageOpResult, PdfSpec, ShotSpec};
 use crawlx_core::repo::{ArtifactStore, RunRepo, Sensitivity};
 use crawlx_core::request_controls::RequestControls;
 use crawlx_core::secret::{ArtifactSink, Redacted, Redactor};
+use crawlx_core::time::Duration;
 use crawlx_core::{ArtifactRef, CrawlRunId, StoreError};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

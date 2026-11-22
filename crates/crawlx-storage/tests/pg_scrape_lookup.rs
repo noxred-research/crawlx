@@ -3,9 +3,9 @@
 //! schema on `CRAWLX_TEST_DATABASE_URL`; without that variable every test returns early.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{Timestamp, Duration};
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{PageRecord, PageRepo, RunRepo};
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::{ArtifactId, ArtifactRef, CanonicalUrl, CrawlRunId, TenantId, TrustLane};
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};
 use crawlx_storage::{Pg, StoreConfig};

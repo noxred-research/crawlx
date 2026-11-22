@@ -4,8 +4,8 @@
 //! acquires links, resolves DNS, runs scripts, submits forms, or downloads external entities.
 //! Native parser results are not claims of upstream parser/algorithm equivalence.
 
-use crawlx_core::time::FixedDateTime;
 use crawlx_core::hash::Digest;
+use crawlx_core::time::FixedDateTime;
 use url::Url;
 
 use super::{

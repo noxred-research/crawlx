@@ -1,6 +1,5 @@
 //! Isolated local archive replay and baseline QA. Never contacts a live origin.
 
-use crawlx_core::time::{Duration, Timestamp};
 use anyhow::{anyhow, bail, Context as _};
 use clap::Args;
 use crawlx_core::config::{CreateCrawl, RetentionMode};
@@ -9,6 +8,7 @@ use crawlx_core::parser_memory::{global, AdmittedBytes};
 use crawlx_core::repo::{CrawlRun, RunRepo, Sensitivity};
 use crawlx_core::secret::ArtifactSink;
 use crawlx_core::seed::CrawlSeed;
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::{ArtifactRef, CrawlRunId, TenantId};
 use crawlx_storage::artifacts::{BoundedArtifactError, FsArtifactStore};
 use crawlx_storage::memory::MemoryStore;

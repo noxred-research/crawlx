@@ -37,6 +37,7 @@ use crawlx_core::repo::{
     RunRepo, StateRepo,
 };
 use crawlx_core::safety::SafetyDecision;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::traffic::{Fidelity, TrafficEvent, TrafficOrigin, UnattributedReason};
 use crawlx_core::{
     ActionId, BlockedNavigation, BrowserAction, BrowserContext, BrowserError, CanonicalUrl, CheckpointId,

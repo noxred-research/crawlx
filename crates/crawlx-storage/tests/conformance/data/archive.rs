@@ -4,7 +4,6 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{Duration, FixedDateTime, ManualClock};
 use crate::data::raw::{Raw, V};
 use crate::rig::Rig;
 use crawlx_core::archive::{
@@ -17,6 +16,7 @@ use crawlx_core::archive_catalog::{
 };
 use crawlx_core::counters::TerminalReason;
 use crawlx_core::repo::{ArtifactStore, RunRepo, Sensitivity};
+use crawlx_core::time::{Duration, FixedDateTime, ManualClock};
 use crawlx_core::{ArtifactRef, Clock, StoreError, TenantId, Timestamp};
 use crawlx_storage::archive::{cdxj, warc, Limits};
 use crawlx_storage::sql::Sql;
@@ -1349,10 +1349,7 @@ async fn authority_contract<B: Sql>(rig: &Rig, pg: Store<B>, tenant: TenantId) {
             let updated = raw
                 .exec(
                     "UPDATE artifacts SET expires_at=$1 WHERE artifact_id=$2",
-                    &[
-                        V::Ts(deadline - Duration::seconds(1)),
-                        V::Uuid(evidence.id.0),
-                    ],
+                    &[V::Ts(deadline - Duration::seconds(1)), V::Uuid(evidence.id.0)],
                 )
                 .await;
             assert_eq!(updated, 1);

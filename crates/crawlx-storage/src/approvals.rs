@@ -9,7 +9,6 @@
 
 #![deny(clippy::disallowed_methods)]
 
-use crawlx_core::time::Duration;
 use crate::backend::strategy::Conn;
 use crate::backend::{BackendKind, Dialect as _, RowLock};
 use crate::codec::{conv, from_json, to_json};
@@ -23,6 +22,7 @@ use async_trait::async_trait;
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::hash::Digest;
 use crawlx_core::safety::{RiskClass, SafetyDecision, SafetyVerdict};
+use crawlx_core::time::Duration;
 use crawlx_core::{
     ActionContextId, ActionId, ApprovalId, CrawlRunId, SessionId, StoreError, TenantId, Timestamp,
 };

@@ -8,7 +8,6 @@
 //! `Host` and SNI keep the original name because the URL is unchanged. After
 //! the response the connected peer is asserted against the checked set.
 
-use crawlx_core::time::Timestamp;
 use crate::body_limits::DEFAULT_MAX_BODY_BYTES;
 use crate::certificate::{
     CertificateEvidence, CertificateExport, CertificateUnavailable, PEER_CERTIFICATE_HEADER,
@@ -40,6 +39,7 @@ use crawlx_core::hash::Digest;
 use crawlx_core::parser_memory::BytePermit;
 use crawlx_core::request_controls::RequestControls;
 use crawlx_core::seed::CrawlSeed;
+use crawlx_core::time::Timestamp;
 use crawlx_core::tls::TlsImpersonation;
 use crawlx_core::traffic::{BodyDigest, ProxyFlow, ProxyFlowSource};
 use crawlx_core::transport_policy::ProxyRule;

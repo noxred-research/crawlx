@@ -4,7 +4,6 @@
 //! privacy gate before any archive spool. Each gzip shard commits before its catalog row;
 //! the final package commits before manifest publication. Stable ordinals permit recovery.
 
-use crawlx_core::time::Duration;
 use crate::{Stores, WorkerError};
 use crawlx_core::archive::{
     ArchiveCapture, ArchiveCaptureFactsV1, ArchiveFormat, ArchiveManifestV1, ArchiveOmissionV1,
@@ -15,6 +14,7 @@ use crawlx_core::config::RetentionMode;
 use crawlx_core::custody::FrozenArchiveSource;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::CrawlRun;
+use crawlx_core::time::Duration;
 use crawlx_core::{ArtifactRef, Clock};
 use crawlx_storage::archive::{cdxj, rollover, staging::StagedFile, wacz, warc, ArchiveError, Limits};
 use crawlx_storage::custody::frozen_archive::with_terminal_grant;

@@ -2,7 +2,6 @@
 //! PostgreSQL. PostgreSQL cases require `CRAWLX_TEST_DATABASE_URL`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::acquisition::BackendCapabilitiesV1;
 use crawlx_core::custody::CustodyLease;
 use crawlx_core::data_capabilities::WorkerDataCapabilitiesV1;
@@ -21,6 +20,7 @@ use crawlx_core::report_history::{
 };
 use crawlx_core::request::RequestEnvelopeV1;
 use crawlx_core::secret::{ArtifactSink, Redactor};
+use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::{Clock, CrawlRunId, StoreError, TenantId, WorkerId};
 use crawlx_storage::artifacts::{ArtifactIndex, FsArtifactStore};
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};

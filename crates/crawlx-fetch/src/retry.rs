@@ -75,9 +75,9 @@ pub fn parse_retry_after(headers: &HeaderMap, now: Timestamp) -> Option<Duration
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crawlx_core::time::FixedDateTime;
     use super::*;
     use crawlx_core::seed::CrawlSeed;
+    use crawlx_core::time::FixedDateTime;
     use http::HeaderValue;
 
     fn hm(v: &str) -> HeaderMap {

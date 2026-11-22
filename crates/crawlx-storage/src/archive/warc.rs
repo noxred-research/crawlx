@@ -1,7 +1,7 @@
 //! WARC 1.1 exact framing and record-at-a-time gzip. Based only on the IIPC normative format.
 
-use crawlx_core::time::{FixedDateTime, SecondsFormat, Timestamp};
 use super::{ArchiveError, Limits};
+use crawlx_core::time::{FixedDateTime, SecondsFormat, Timestamp};
 use flate2::{bufread::GzDecoder, Compression, GzBuilder};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};

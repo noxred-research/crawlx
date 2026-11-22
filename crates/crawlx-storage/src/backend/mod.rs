@@ -25,10 +25,10 @@ pub use sqlite::{SqliteBackend, WorkerLock};
 pub use strategy::{Concurrency, FenceSeq, LockMode, WriteTx};
 pub use url::DatabaseUrl;
 
-use crawlx_core::time::Timestamp;
 use crate::store::{Pg, Store, StoreConfig};
 use async_trait::async_trait;
 use crawlx_core::origin::OriginAdmission;
+use crawlx_core::time::Timestamp;
 use crawlx_core::StoreError;
 use std::fmt;
 use std::sync::Arc;

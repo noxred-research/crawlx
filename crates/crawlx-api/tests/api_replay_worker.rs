@@ -3,7 +3,6 @@
 
 mod common;
 
-use crawlx_core::time::Duration as SpanDuration;
 use async_trait::async_trait;
 use axum::http::StatusCode;
 use common::{env, Env};
@@ -12,6 +11,7 @@ use crawlx_browser::FakeBackend;
 use crawlx_core::config::{CrawlMode, SafetyProfile};
 use crawlx_core::counters::{ActionStatus, RunStatus, TerminalReason};
 use crawlx_core::repo::{RunEvent, SessionStatus};
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{ActionId, Clock, CrawlRunId, CreateCrawl, StoreError, SystemClock};
 use crawlx_fetch::StaticResolver;
 use crawlx_policy::AuthorizationRecord;

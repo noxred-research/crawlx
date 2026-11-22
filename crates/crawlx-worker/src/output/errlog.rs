@@ -7,10 +7,10 @@
 //! `status_code`. The file is created even when nothing failed, as the reference tool creates it at
 //! start-up.
 
-use crawlx_core::time::Timestamp;
 use super::text_file::TextFile;
 use super::OutputError;
 use crate::run::UrlFailure;
+use crawlx_core::time::Timestamp;
 use serde::Serialize;
 use std::io::Write;
 use std::path::{Path, PathBuf};

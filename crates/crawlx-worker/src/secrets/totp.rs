@@ -169,8 +169,8 @@ fn hotp<M: Mac + KeyInit>(key: &[u8], counter: u64, digits: u32) -> Result<u32, 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crawlx_core::time::{ManualClock, Timestamp};
     use super::*;
+    use crawlx_core::time::{ManualClock, Timestamp};
 
     /// RFC 6238 Appendix B secrets: ASCII `1234567890` repeated to 20, 32 and 64 bytes.
     fn secret_b32(len: usize) -> String {

@@ -6,7 +6,6 @@
 //! Recovery repairs both journal-derived interaction counters and committed browser URL counters
 //! before the session resumes; a dynamic-only run has no HTTP runner to repair its URL projection.
 
-use crawlx_core::time::Duration as SpanDuration;
 use crate::actor::{under, ActionOutcome, DropReason, SessionHandle, SessionState};
 use crate::analysis::StateAnalyzer;
 use crate::counters::{Attempt, Plane};
@@ -33,6 +32,7 @@ use crawlx_core::repo::{
 use crawlx_core::request::RequestEnvelopeV1;
 use crawlx_core::safety::SafetyDecision;
 use crawlx_core::seed::CrawlSeed;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{
     ActionContextId, ActionContextKey, ActionId, ActionKind, BrowserAction, BrowserError, CanonicalUrl,
     ElementIdentityHash, InputClass, ResourceContext, StateClusterId, StateId,

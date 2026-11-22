@@ -13,7 +13,6 @@
 #[path = "support/authorization.rs"]
 mod authorization;
 
-use crawlx_core::time::Duration;
 use crawlx_bench::gym::manifest::FixtureManifest;
 use crawlx_bench::gym::GymServer;
 use crawlx_bench::trail::{verify_trail, TrailReport, TrailStore, TrailViolation};
@@ -21,6 +20,7 @@ use crawlx_bench::worker_exec::{authorize_fixture, crawl_request, worker_config}
 use crawlx_core::config::{CrawlMode, SafetyProfile};
 use crawlx_core::counters::PlaneCounters;
 use crawlx_core::repo::{FrontierStatus, RunRepo};
+use crawlx_core::time::Duration;
 use crawlx_core::{Clock, CrawlRunId, SystemClock, TenantId};
 use crawlx_policy::testkit::sample_record;
 use crawlx_policy::AuthorizationRecord;

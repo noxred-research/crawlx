@@ -1258,8 +1258,8 @@ impl WorkerConfig {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use crawlx_core::time::Timestamp;
     use super::*;
+    use crawlx_core::time::Timestamp;
     use crawlx_fetch::proxyx::PoolTier;
 
     #[tokio::test]
@@ -1418,11 +1418,8 @@ mod tests {
             "profile": null,
         }))
         .unwrap();
-        let binding = SessionBindingV1::new(
-            identity,
-            7,
-            Timestamp::from_timestamp(2_000_000_000, 0).unwrap(),
-        );
+        let binding =
+            SessionBindingV1::new(identity, 7, Timestamp::from_timestamp(2_000_000_000, 0).unwrap());
         let enhanced = egress.enhanced_route().unwrap();
         assert!(enhanced.bind(&binding, None).is_err());
         let mut changed = binding.identity.clone();

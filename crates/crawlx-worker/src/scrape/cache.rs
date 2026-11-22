@@ -2,13 +2,13 @@
 //!
 //! Both API fast paths and workers use this implementation. Reads verify source-run
 //! ownership, retention, validator/backend identity and every referenced artifact.
-use crawlx_core::time::Duration;
 use crawlx_core::acquisition::{AcquisitionPolicyV1, AcquisitionResultV1};
 use crawlx_core::cache::{CacheKeyV1, SafeCacheEntryV1};
 use crawlx_core::config::RetentionMode;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{ArtifactStore, PageRecord, PageRepo, RunRepo, Sensitivity};
 use crawlx_core::scrape::{ScrapeDocument, ScrapeOptions};
+use crawlx_core::time::Duration;
 use crawlx_core::{CanonicalUrl, CrawlRunId, StoreError, TenantId, Timestamp};
 
 const CANDIDATES: u32 = 64;

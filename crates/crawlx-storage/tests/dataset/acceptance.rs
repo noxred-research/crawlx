@@ -1,9 +1,9 @@
 //! Scale and metadata contracts share the real repository/artifact fixtures in the parent harness.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::Timestamp;
 use super::*;
 use crawlx_core::dataset::{DatasetConfigV1, MAX_BATCH_ITEMS};
+use crawlx_core::time::Timestamp;
 
 const ITEM_COUNT: u64 = 100_000;
 // Reserve one slot for a repeated identity in every transaction.

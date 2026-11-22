@@ -30,11 +30,17 @@ as literals. The readers (RFC 3339 strict and relaxed, RFC 2822, the strptime-st
 %:z`) follow the former grammar, including leading white space before numbers and three-letter month names.
 
 Database codecs for `Timestamp` and for `NaiveDateTime` (the MariaDB `DATETIME(6)` bind form) live in
-`crawlx_core::time` behind the `sqlx` feature, which the crates that bind timestamps enable.
+`crawlx_core::time` behind the optional `sqlx` feature, which only `crawlx-storage` enables. The orphan rule
+puts these impls in the crate that owns the types, so `ci/lint-static.sh` exempts that one optional
+dependency and file (`src/time/database.rs`) from the rule that only `crawlx-storage` names `sqlx`; the file
+runs no SQL.
 
 ## What still depends on chrono
 
 `chrono` remains in the dependency tree only through one third-party crate: `rskafka` (the record timestamp
-is a `chrono::DateTime<Utc>`; the Kafka sink builds it with `From<SystemTime>` and never names the type).
-RUSTSEC-2026-0543 therefore stays in `deny.toml`, with a comment naming the condition for removing it.
+is a `chrono::DateTime<Utc>`; the Kafka sink builds it from epoch milliseconds with `rskafka::chrono`). No
+CrawlX crate names `chrono` in its manifest. `deny.toml` carries no exception for RUSTSEC-2026-0543:
+`unmaintained = "workspace"` limits that advisory class to workspace dependencies, and the
+"advisory was not encountered" warning showed the former ignore had become dead. Remove the `rskafka`
+edge when rskafka releases a version without `chrono`.
 `cargo tree -i chrono` lists the edge.

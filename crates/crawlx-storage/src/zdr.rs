@@ -21,8 +21,8 @@
 //! process can access this namespace. Redis uses first-insert native TTL instead.
 //! Time for application expiry comes exclusively from the injected [`Clock`].
 
-use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::hash::Digest;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{ArtifactId, ArtifactRef, Clock, CrawlRunId, StoreError, TenantId, Timestamp};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -551,8 +551,7 @@ impl DeliveryBuffer {
         let now = self.clock.now();
         let expires_at = now
             .checked_add_signed(
-                SpanDuration::from_std(limits.ttl)
-                    .map_err(|e| StoreError::RetentionDenied(e.to_string()))?,
+                SpanDuration::from_std(limits.ttl).map_err(|e| StoreError::RetentionDenied(e.to_string()))?,
             )
             .ok_or_else(|| StoreError::RetentionDenied("zdr delivery expiry overflows timestamp".into()))?;
         let expires_at = deadline.map_or(expires_at, |deadline| deadline.min(expires_at));

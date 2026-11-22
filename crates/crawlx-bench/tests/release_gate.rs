@@ -4,12 +4,12 @@
 //! only with an owner and a reason.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::NaiveDate;
 use crawlx_bench::gates::CHAOS_SUITES;
 use crawlx_bench::release_gate::{
     check_runbook_links, evaluate, exported_metric_names, item_ids, parse_libtest, parse_waivers,
     record_suite, states, waivable_item_ids, GateInputs, ItemState, ReleaseReport, Waiver, SUITE_IDS,
 };
+use crawlx_core::time::NaiveDate;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 

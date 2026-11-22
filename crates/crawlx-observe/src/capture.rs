@@ -35,9 +35,9 @@
 use crate::error::CaptureError;
 use crate::traffic::Redactor;
 use async_trait::async_trait;
-use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::config::CaptureBackend;
 use crawlx_core::ids::{NetworkEpochId, SessionId};
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::traffic::{
     Protocol, ProxyFlow, ProxyFlowSource, TrafficEvent, TrafficOrigin, UnattributedReason,
 };

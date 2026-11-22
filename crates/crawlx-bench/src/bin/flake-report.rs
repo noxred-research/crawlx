@@ -19,12 +19,12 @@
 //! them (the nightly run). `check` exits 1 for a test quarantined for more than 14 days. Exit
 //! status 2 is a usage or input error. See `docs/ops/flaky-tests.md`.
 
-use crawlx_core::time::{NaiveDate, Timestamp};
 use clap::{Parser, Subcommand};
 use crawlx_bench::flake::{
     report_markdown, FlakeError, History, JunitReport, Outcome, Quarantine, QUARANTINE_DEADLINE_DAYS,
     RELEASE_MAX_FLAKE_PERCENT,
 };
+use crawlx_core::time::{NaiveDate, Timestamp};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 

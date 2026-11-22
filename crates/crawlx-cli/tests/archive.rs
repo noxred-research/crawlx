@@ -1,7 +1,6 @@
 //! Real retained-run archive CLI fixtures. No live network and no fake origin response bytes.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{Duration as SpanDuration, FixedDateTime, ManualClock};
 use clap::Parser;
 use crawlx_cli::archive::{
     execute_with_clock, ArchiveArgs, ArchiveCommand, ArchiveExportArgs, ArchiveImportArgs,
@@ -10,6 +9,7 @@ use crawlx_cli::archive::{
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{PageRecord, RunRepo, Sensitivity};
 use crawlx_core::secret::ArtifactSink;
+use crawlx_core::time::{FixedDateTime, ManualClock};
 use crawlx_core::{TenantId, TrustLane};
 use crawlx_storage::archive::{wacz, warc, Limits};
 use crawlx_storage::testkit::{crawl_run, create_crawl};
@@ -929,7 +929,7 @@ mod manage {
     };
     use crawlx_core::counters::TerminalReason;
     use crawlx_core::repo::{ArtifactStore, RunRepo, Sensitivity};
-    use crawlx_core::time::ManualClock;
+    use crawlx_core::time::{Duration as SpanDuration, FixedDateTime, ManualClock};
     use crawlx_core::{TenantId, Timestamp};
     use crawlx_storage::archive::{warc, Limits};
     use crawlx_storage::testkit::{crawl_run, create_crawl};

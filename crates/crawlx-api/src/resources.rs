@@ -1,11 +1,11 @@
 //! JSON resource builders: wire names are camelCase.
 
 use crate::util::{ts, ts_opt};
-use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::config::{QueryPolicy, RetentionMode, TargetIsolation};
 use crawlx_core::counters::{Counters, PlaneCounters};
 use crawlx_core::identity::CoverageStatus;
 use crawlx_core::repo::{CrawlRun, CrawlSession, RunMetadata};
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{CrawlRunId, StoreError, TrustLane};
 use crawlx_storage::CoverageRow;
 use serde::{Deserialize, Serialize};

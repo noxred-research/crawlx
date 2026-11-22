@@ -5,10 +5,10 @@
 //! early.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_core::time::{Timestamp, Duration};
 use crawlx_core::counters::{RunStatus, TerminalReason};
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::RunRepo;
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::{AuthorizationRecordId, CrawlRunId, StoreError, TenantId};
 use crawlx_policy::testkit::sample_record;
 use crawlx_policy::{AuthorizationRecord, AuthzFailure, OwnershipProof};

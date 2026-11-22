@@ -3,9 +3,9 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use crawlx_core::time::{ManualClock, Timestamp};
 use crawlx_core::config::RetentionMode;
 use crawlx_core::repo::{ArtifactStore, RunRepo, Sensitivity};
+use crawlx_core::time::{ManualClock, Timestamp};
 use crawlx_core::{Clock as _, StoreError, TenantId};
 use crawlx_storage::testkit::{crawl_run, create_crawl};
 use crawlx_storage::{

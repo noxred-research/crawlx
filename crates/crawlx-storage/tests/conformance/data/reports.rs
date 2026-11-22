@@ -2,7 +2,6 @@
 //! binding and URL graph families share: raw statements in `$n` notation, tenant creation and
 //! repository dispatch with a volatile delivery buffer attached.
 
-use crawlx_core::time::Duration;
 use crate::rig::Rig;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::custody::{CustodyLease, CustodySource};
@@ -16,6 +15,7 @@ use crawlx_core::report_history::{
     ReportHistoryRepo, ReportKindV1, ReportQueryV1, StageOutcomeV1,
 };
 use crawlx_core::request::RequestEnvelopeV1;
+use crawlx_core::time::Duration;
 use crawlx_core::{StoreError, TenantId, Timestamp, WorkerId};
 use crawlx_storage::sql::Built;
 use crawlx_storage::testkit::{self, Engine};

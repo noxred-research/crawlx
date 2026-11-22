@@ -1,8 +1,8 @@
 //! Source memo hooks live below URL-plane discovery, preserving current admission authority.
-use crawlx_core::time::Duration;
 use super::*;
 use crawlx_core::dataset::memo::{CategoryCacheEntryV1, MemoScopeV1, MAX_CATEGORY_CACHE_BYTES};
 use crawlx_core::dataset::DatasetContentV1;
+use crawlx_core::time::Duration;
 
 fn memo_digest<T: serde::Serialize>(domain: &str, value: &T) -> Result<Digest, WorkerError> {
     Digest::of_value(domain, value)
@@ -202,9 +202,7 @@ impl UrlPlaneRunner {
             .checked_add_signed(retention)
             .ok_or_else(|| StoreError::RetentionDenied("category retention overflow".into()))?;
         let deadline = now
-            .checked_add_signed(Duration::seconds(i64::from(
-                policy.category_cache.ttl_seconds,
-            )))
+            .checked_add_signed(Duration::seconds(i64::from(policy.category_cache.ttl_seconds)))
             .ok_or_else(|| StoreError::RetentionDenied("category expiry overflow".into()))?
             .min(horizon);
         if deadline <= now {

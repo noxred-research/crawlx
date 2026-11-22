@@ -10,7 +10,6 @@ mod crawl_rig;
 #[path = "common/scrape_rig.rs"]
 mod scrape_rig;
 
-use crawlx_core::time::{FixedDateTime, ManualClock, Timestamp};
 use async_trait::async_trait;
 use axum::http::{header, HeaderMap, Method, StatusCode};
 use common::env_with;
@@ -19,6 +18,7 @@ use crawlx_api::webhooks::{TransportError, WebhookRequest, WebhookSender, Webhoo
 use crawlx_api::{ApiConfig, CompatConfig, CompatMode, Settings};
 use crawlx_core::config::QueryPolicy;
 use crawlx_core::repo::{EventRepo, RunRepo};
+use crawlx_core::time::{FixedDateTime, ManualClock, Timestamp};
 use crawlx_core::CrawlRunId;
 use parking_lot::Mutex;
 use scrape_rig::RigConfig;
@@ -142,10 +142,9 @@ async fn a_running_crawl_has_an_expiry_but_no_next_without_stored_pages() {
     assert_eq!(s, StatusCode::OK, "{status}");
     assert_eq!(status["status"], "scraping", "{status}");
     let created = FixedDateTime::parse_rfc3339(status["createdAt"].as_str().unwrap()).unwrap();
-    let expires = FixedDateTime::parse_rfc3339(
-        status["expiresAt"].as_str().unwrap_or_else(|| panic!("{status}")),
-    )
-    .unwrap();
+    let expires =
+        FixedDateTime::parse_rfc3339(status["expiresAt"].as_str().unwrap_or_else(|| panic!("{status}")))
+            .unwrap();
     assert!(expires > created, "{status}");
     assert_eq!(status["next"], Value::Null, "{status}");
     assert_eq!(status["data"], json!([]));

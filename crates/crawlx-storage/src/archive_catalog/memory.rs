@@ -1,6 +1,5 @@
 //! In-process mirror of the durable archive transaction boundary.
 
-use crawlx_core::time::Duration;
 use super::{history_key, invalid, live, publish_bounds, record_bounds, scope, writer};
 use crate::MemoryStore;
 use async_trait::async_trait;
@@ -11,6 +10,7 @@ use crawlx_core::archive_catalog::{
 };
 use crawlx_core::config::RetentionMode;
 use crawlx_core::repo::RunRepo;
+use crawlx_core::time::Duration;
 use crawlx_core::{ArtifactRef, CrawlRunId, StoreError, TenantId, Timestamp};
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;

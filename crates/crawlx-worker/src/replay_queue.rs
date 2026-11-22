@@ -18,6 +18,7 @@ use crawlx_core::epoch::EpochPolicy;
 use crawlx_core::observation::BrowserBuildInfo;
 use crawlx_core::repo::{ActionRecord, CheckpointRecord, CrawlSession, SessionStatus};
 use crawlx_core::state::StateSignature;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{ActionId, CheckpointId, CrawlRunId, PrincipalId, SessionId, StateId, TransitionId};
 use crawlx_elements::IdentityResolver;
 use crawlx_observe::spec;

@@ -16,9 +16,9 @@
 //! [`classify_endpoint`] is ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md.
 //! The upstream's "skip" outcome is [`EndpointClass::Static`].
 
-use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::ids::{ActionId, NetworkEpochId};
 use crawlx_core::observation::NetworkEpochSummary;
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::traffic::{TrafficEvent, TrafficOrigin};
 use crawlx_url::RouteTemplater;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
