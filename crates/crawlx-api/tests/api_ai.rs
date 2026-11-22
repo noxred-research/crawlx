@@ -5,7 +5,6 @@
 mod common;
 
 use axum::http::{Method, StatusCode};
-use chrono::Utc;
 use common::Env;
 use crawlx_api::auth::{generate_key, key_record, tenant_id_for};
 use crawlx_api::intel::govern::AiPolicy;
@@ -13,7 +12,7 @@ use crawlx_api::intel::tools::MockPageTools;
 use crawlx_api::{ApiConfig, ApiStore, AppState, MemoryApiStore, Repos, Scope, Settings};
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{PageRecord, PageRepo, RunRepo, Sensitivity};
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{ManualClock, Timestamp};
 use crawlx_core::{Clock, CrawlRunId, TrustLane};
 use crawlx_model::llm::{LlmError, LlmExtractor, MockLlm};
 use crawlx_model::policy::{
@@ -116,7 +115,7 @@ async fn rig(llm: Arc<MockLlm>, with_ai: bool) -> Rig {
 }
 
 async fn rig_with_ai(llm: Arc<MockLlm>, ai: AiPolicy) -> Rig {
-    let clock = ManualClock::new(Utc::now());
+    let clock = ManualClock::new(Timestamp::now());
     let dyn_clock: Arc<dyn Clock> = Arc::new(clock.clone());
     let store = Arc::new(MemoryStore::with_clock(dyn_clock.clone()));
     let zdr = Arc::new(DeliveryBuffer::with_defaults(dyn_clock.clone()));
@@ -232,7 +231,7 @@ impl Rig {
                     html: html_ref,
                     metadata: json!({}),
                     links: vec![],
-                    fetched_at: Utc::now(),
+                    fetched_at: Timestamp::now(),
                     lane: TrustLane::Diagnostic,
                 })
                 .await
@@ -572,7 +571,7 @@ async fn a_tampered_spec_cannot_be_created() {
     r.parts
         .repos
         .intel
-        .setting_put(r.env.tenant, &key, stored, Utc::now())
+        .setting_put(r.env.tenant, &key, stored, Timestamp::now())
         .await
         .unwrap();
     let (s, v) = r
@@ -1789,7 +1788,7 @@ async fn compile_and_create_validate_native_extraction_options() {
     r.parts
         .repos
         .intel
-        .setting_put(r.env.tenant, &secret_key, full, Utc::now())
+        .setting_put(r.env.tenant, &secret_key, full, Timestamp::now())
         .await
         .unwrap();
     let (s, v) = r
@@ -1949,7 +1948,7 @@ async fn plan_execution_is_governed_like_every_other_model_call() {
             r.env.tenant,
             "zero-data-retention",
             json!({"forced": true}),
-            Utc::now(),
+            Timestamp::now(),
         )
         .await
         .unwrap();

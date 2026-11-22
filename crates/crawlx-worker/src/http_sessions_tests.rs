@@ -5,7 +5,7 @@ use super::*;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{CrawlSession, SessionStatus};
 use crawlx_core::session_binding::SessionIdentityV1;
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{Duration as SpanDuration, ManualClock, Timestamp};
 use crawlx_core::SessionId;
 use crawlx_fetch::StaticResolver;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -215,7 +215,7 @@ fn owner() -> HttpSessionOwner {
 
 fn clock() -> Arc<ManualClock> {
     Arc::new(ManualClock::new(
-        chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+        Timestamp::from_timestamp(1_700_000_000, 0).unwrap(),
     ))
 }
 
@@ -236,7 +236,7 @@ fn binding(clock: &ManualClock, slot: u128) -> SessionBindingV1 {
     SessionBindingV1::new(
         SessionIdentityV1::new(owner.tenant, &session, digest, digest, digest, digest, None),
         7,
-        clock.now() + chrono::Duration::minutes(30),
+        clock.now() + SpanDuration::minutes(30),
     )
 }
 
@@ -797,7 +797,7 @@ fn cookie_security_attributes_and_public_suffixes_are_enforced() {
     assert!(cookie.matches("www.example.com", "/private/next", true));
     assert!(!cookie.matches("other.www.example.com", "/private/next", true));
     assert!(!cookie.matches("www.example.com", "/private/next", false));
-    assert_eq!(cookie.expires_at, Some(now + chrono::Duration::seconds(2)));
+    assert_eq!(cookie.expires_at, Some(now + SpanDuration::seconds(2)));
     assert!(StoredCookie::parse("sid=secret; Secure", &plain, now).is_none());
     assert!(StoredCookie::parse("sid=secret; Domain=com", &secure, now).is_none());
     assert!(StoredCookie::parse("sid=secret; Domain=foreign.test", &secure, now).is_none());
@@ -819,7 +819,7 @@ fn cookie_security_attributes_and_public_suffixes_are_enforced() {
         now,
     )
     .unwrap();
-    assert_eq!(precedence.expires_at, Some(now + chrono::Duration::seconds(2)));
+    assert_eq!(precedence.expires_at, Some(now + SpanDuration::seconds(2)));
 }
 
 #[tokio::test]

@@ -5,13 +5,13 @@
 //! proximity and orphans).
 #![allow(missing_docs, clippy::unwrap_used, clippy::expect_used)]
 
-use chrono::NaiveDate;
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::hash::Digest;
 use crawlx_core::identity::{ActionContextKey, ActionKind, ElementIdentityHash, InputClass, ResourceContext};
 use crawlx_core::ids::{BackendNodeId, FrameId, PrincipalId, StateClusterId, TabId};
 use crawlx_core::observation::{ObservedDescriptor, RuntimeLocator};
 use crawlx_core::seed::CrawlSeed;
+use crawlx_core::time::NaiveDate;
 use crawlx_core::url::RouteTemplate;
 use crawlx_forms::{
     FormGrouper, Partition, ValueContext, ValuePartitions, ALL_PARTITIONS, GENERATOR_VERSION,

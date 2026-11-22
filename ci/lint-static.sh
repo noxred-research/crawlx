@@ -7,7 +7,10 @@
 #     comment lines are skipped so docs may name the forbidden calls.
 #  2. `sqlx` is a regular dependency of `crawlx-storage` only, and no
 #     non-test Rust source outside `crawlx-storage` names `sqlx::`. Dev-dependencies and
-#     `tests/` files may use it for assertions.
+#     `tests/` files may use it for assertions. One exception: `crawlx-core` carries the
+#     column codecs of `Timestamp` (`src/time/database.rs`) behind its optional `sqlx`
+#     feature, because the orphan rule puts those impls in the crate that owns the type; the
+#     file runs no SQL and only `crawlx-storage` enables the feature.
 #  3. `crawlx inspect traffic` / `coverage` read through `TrustedCorpus`: the CLI
 #     inspect module must reference it and must not name the `traffic_events` /
 #     `action_contexts` tables in SQL.
@@ -37,13 +40,16 @@ meta = json.loads(subprocess.check_output(["cargo", "metadata", "--format-versio
 bad = 0
 for p in meta["packages"]:
     for d in p["dependencies"]:
-        if d["name"] == "sqlx" and d["kind"] is None and p["name"] != "crawlx-storage":
-            print(f"sqlx is a regular dependency of {p['name']} (only crawlx-storage may run SQL)")
-            bad += 1
+        if d["name"] != "sqlx" or d["kind"] is not None or p["name"] == "crawlx-storage":
+            continue
+        if p["name"] == "crawlx-core" and d["optional"]:
+            continue
+        print(f"sqlx is a regular dependency of {p['name']} (only crawlx-storage may run SQL)")
+        bad += 1
 sys.exit(1 if bad else 0)
 PY
 hits=$(grep -rn --include='*.rs' -E '\bsqlx::' crates \
-  | grep -v -E '^crates/crawlx-storage/' \
+  | grep -v -E '^crates/crawlx-storage/|^crates/crawlx-core/src/time/database\.rs:' \
   | grep -v -E '^crates/[^/]+/(tests|benches)/' \
   | grep -v -E '^[^:]+:[0-9]+:\s*//' || true)
 if [ -n "$hits" ]; then

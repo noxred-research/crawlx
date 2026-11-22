@@ -16,10 +16,9 @@
 //! [`classify_endpoint`] is ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md.
 //! The upstream's "skip" outcome is [`EndpointClass::Static`].
 
-use chrono::Duration;
 use crawlx_core::ids::{ActionId, NetworkEpochId};
 use crawlx_core::observation::NetworkEpochSummary;
-use crawlx_core::time::Timestamp;
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::traffic::{TrafficEvent, TrafficOrigin};
 use crawlx_url::RouteTemplater;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -575,11 +574,11 @@ impl NetworkEpochTracker {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
-    use chrono::{DateTime, Utc};
+    use crawlx_core::time::Timestamp;
     use proptest::prelude::*;
 
     fn t(ms: i64) -> Timestamp {
-        DateTime::<Utc>::from_timestamp_millis(1_700_000_000_000 + ms).unwrap()
+        Timestamp::from_timestamp_millis(1_700_000_000_000 + ms).unwrap()
     }
 
     fn req(id: &str, method: &str, url: &str, at: i64) -> RequestEvent {

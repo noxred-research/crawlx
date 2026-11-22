@@ -9,9 +9,9 @@
 
 use super::support::{epoch, lease_scale, open_sibling, tenant};
 use async_trait::async_trait;
-use chrono::Duration;
 use crawlx_core::counters::ActionStatus;
 use crawlx_core::repo::{ActionJournal, RunRepo, SessionStatus};
+use crawlx_core::time::Duration;
 use crawlx_core::{CrawlRunId, SessionId, StateClusterId, StoreError, Timestamp, WorkerId};
 use crawlx_storage::leases::FrontierReap;
 use crawlx_storage::testkit::{allow_verdict, crawl_run, create_crawl, proposal};

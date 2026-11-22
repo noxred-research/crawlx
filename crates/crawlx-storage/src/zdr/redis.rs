@@ -7,6 +7,7 @@
 
 use super::{BufferLimits, BufferedBlob, BufferedPage, DEFAULT_TTL};
 use ::redis::FromRedisValue;
+use crawlx_core::time::Duration;
 use crawlx_core::{ArtifactId, ArtifactRef, CrawlRunId, StoreError, TenantId, Timestamp};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -426,7 +427,7 @@ fn decode_page(wire: PageWire) -> Result<BufferedPage, StoreError> {
     };
     let latest = page
         .inserted_at
-        .checked_add_signed(chrono::Duration::from_std(DEFAULT_TTL).map_err(serialization_error)?)
+        .checked_add_signed(Duration::from_std(DEFAULT_TTL).map_err(serialization_error)?)
         .ok_or_else(|| serialization_error("redis page expiry overflows timestamp"))?;
     if page.expires_at < page.inserted_at || page.expires_at > latest || page.blobs.is_empty() {
         return Err(serialization_error("invalid redis page lifetime or renditions"));

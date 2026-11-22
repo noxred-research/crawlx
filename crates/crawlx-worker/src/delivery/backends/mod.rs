@@ -56,6 +56,7 @@ mod scope_tests {
     use crawlx_core::config::RetentionMode;
     use crawlx_core::dataset::{DatasetContentV1, DeliveryBatchV1};
     use crawlx_core::hash::Digest;
+    use crawlx_core::time::{Duration, Timestamp};
     use crawlx_core::{ArtifactId, ArtifactRef};
 
     fn batch(key: &str) -> DeliveryBatchV1 {
@@ -69,14 +70,14 @@ mod scope_tests {
                 },
             },
             1,
-            chrono::Utc::now() + chrono::Duration::hours(1),
+            Timestamp::now() + Duration::hours(1),
         )
     }
 
     #[test]
     fn identity_separates_runs_tenants_and_keys_but_not_retries() {
-        let first = run(RetentionMode::Standard, chrono::Utc::now(), &["json"]);
-        let second = run(RetentionMode::Standard, chrono::Utc::now(), &["json"]);
+        let first = run(RetentionMode::Standard, Timestamp::now(), &["json"]);
+        let second = run(RetentionMode::Standard, Timestamp::now(), &["json"]);
         let id = scoped_batch_id(&first, &batch("request.1.f"));
         assert_eq!(id.len(), 64);
         assert!(id.bytes().all(|b| b.is_ascii_hexdigit()));

@@ -22,6 +22,7 @@ use crawlx_core::captcha::CaptchaSecrets;
 use crawlx_core::custody::CustodyLease;
 use crawlx_core::hash::Digest;
 use crawlx_core::session_binding::SessionIdentityV1;
+use crawlx_core::time::Duration;
 use crawlx_core::{BrowserError, SecretOr, SessionId, Timestamp};
 use crawlx_storage::artifact_key_crypto::ArtifactKeys;
 use crawlx_storage::custody::profiles::{CustodyProfileInspection, CustodyProfiles};
@@ -517,11 +518,11 @@ impl ProfileCustodyRuntime {
         let custody = crawlx_core::custody::current_producer()
             .ok_or_else(|| unavailable("session producer lease required"))?;
         let run = rc.stores.runs.get_metadata(rc.run).await?;
-        let retention_end = run.created_at + chrono::Duration::days(i64::from(rc.crawl.retention.days));
+        let retention_end = run.created_at + Duration::days(i64::from(rc.crawl.retention.days));
         let ttl = i64::try_from(policy.max_ttl.as_secs()).map_err(|_| unavailable("profile TTL overflow"))?;
         // The catalog stores whole microseconds; the authenticated header must carry exactly the
         // value the row will read back, or no later restore can match it.
-        let fresh_expiry = (rc.clock.now() + chrono::Duration::seconds(ttl)).min(retention_end);
+        let fresh_expiry = (rc.clock.now() + Duration::seconds(ttl)).min(retention_end);
         let fresh_expiry = Timestamp::from_timestamp_micros(fresh_expiry.timestamp_micros())
             .ok_or_else(|| unavailable("profile expiry out of range"))?;
         Self::new(ProfileCustodyInputs {

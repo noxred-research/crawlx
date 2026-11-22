@@ -2910,6 +2910,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
     use crawlx_core::ids::SessionId;
+    use crawlx_core::time::Duration;
     use crawlx_core::traffic::{Fidelity, TrustLane};
     use crawlx_core::{Modifiers, PointerButton, ScrollDelta, SecretOr};
 
@@ -4401,7 +4402,7 @@ mod tests {
         assert_eq!(b.captured_at, at);
         clock.advance_ms(5);
         let b2 = ctx.observe(ObservationSpec::default()).await.unwrap();
-        assert_eq!(b2.captured_at, at + chrono::Duration::milliseconds(5));
+        assert_eq!(b2.captured_at, at + Duration::milliseconds(5));
     }
 
     #[test]

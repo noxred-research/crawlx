@@ -11,7 +11,6 @@ description = "crawlx: canonicalization, query-parameter classification, sitemap
 [dependencies]
 crawlx-core = { path = "../crawlx-core" }
 blake3.workspace = true
-chrono.workspace = true
 ego-tree.workspace = true
 parking_lot.workspace = true
 quick-xml.workspace = true

@@ -1,9 +1,9 @@
 //! Fenced approval transactions on PostgreSQL; skips without CRAWLX_TEST_DATABASE_URL.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::Duration;
 use crawlx_core::repo::{ActionJournal, RunRepo};
 use crawlx_core::safety::{SafetyDecision, SafetyVerdict};
+use crawlx_core::time::Duration;
 use crawlx_core::{ApprovalId, CrawlRunId, StateClusterId, TenantId, Timestamp, WorkerId};
 use crawlx_storage::approvals::{
     ApprovalBindingV1, ApprovalRepository, ApprovalRequestV1, DurableApprovalV1,

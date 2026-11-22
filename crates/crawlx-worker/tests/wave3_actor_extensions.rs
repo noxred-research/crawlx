@@ -12,6 +12,7 @@ use crawlx_core::extensions::{ExtensionConfigV1, ExtensionSpecV1, ExtensionStage
 use crawlx_core::repo::{CrawlRun, CrawlSession};
 use crawlx_core::request::RequestEnvelopeV1;
 use crawlx_core::scrape::ScrapeAction;
+use crawlx_core::time::Timestamp;
 use crawlx_core::{CrawlRunId, SafetyProfile, SystemClock};
 use crawlx_scheduler::RunPlanner;
 use crawlx_storage::MemoryStore;
@@ -174,7 +175,7 @@ async fn fixture_with(
         config: crawl.clone(),
         policy_version: 1,
         counters: PlaneCounters::default(),
-        created_at: chrono::Utc::now(),
+        created_at: Timestamp::now(),
         started_at: None,
         finished_at: None,
         trace_id: None,

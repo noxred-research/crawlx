@@ -23,7 +23,6 @@ use crate::leases::{
 };
 use crate::repos::{pick_successor, split_event};
 use async_trait::async_trait;
-use chrono::Duration as ChronoDuration;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::counters::{ActionStatus, PlaneCounters, RunStatus, TerminalReason};
 use crawlx_core::epoch::ObservationEpoch;
@@ -41,6 +40,7 @@ use crawlx_core::repo::{
 };
 use crawlx_core::safety::{SafetyDecision, SafetyVerdict};
 use crawlx_core::state::StateSignature;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::traffic::{TrafficEvent, TrustLane};
 use crawlx_core::url::CanonicalUrl;
 use crawlx_core::{
@@ -251,8 +251,8 @@ fn nf(entity: &'static str, id: impl std::fmt::Display) -> StoreError {
     }
 }
 
-fn chrono_dur(d: Duration) -> ChronoDuration {
-    ChronoDuration::milliseconds(i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+fn span_of(d: Duration) -> SpanDuration {
+    SpanDuration::milliseconds(i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 impl MemoryStore {
@@ -930,7 +930,7 @@ fn head_source_live(run: &CrawlRun, now: Timestamp) -> Result<(), StoreError> {
     }
     if run.config.retention.mode != RetentionMode::Zdr
         && run.config.retention.days != 0
-        && run.created_at + ChronoDuration::days(i64::from(run.config.retention.days)) <= now
+        && run.created_at + SpanDuration::days(i64::from(run.config.retention.days)) <= now
     {
         return Err(head_unavailable());
     }
@@ -1449,7 +1449,7 @@ impl FrontierRepo for MemoryStore {
         limit: u32,
     ) -> Result<Vec<(FrontierEntry, i64)>, StoreError> {
         let now = self.clock.now();
-        let ttl = chrono_dur(self.url_ttl);
+        let ttl = span_of(self.url_ttl);
         let mut g = self.inner.lock();
         let admitted = g.runs.get(&run).ok_or_else(|| nf("crawl run", run))?;
         if admitted.config.mode == crawlx_core::CrawlMode::Dynamic {
@@ -1516,7 +1516,7 @@ impl FrontierRepo for MemoryStore {
         if !matches!(admitted.status, RunStatus::Queued | RunStatus::Running)
             || admitted.config.mode == crawlx_core::CrawlMode::Dynamic
             || admitted.started_at.unwrap_or(admitted.created_at)
-                + ChronoDuration::seconds(i64::from(admitted.config.limits.duration_seconds))
+                + SpanDuration::seconds(i64::from(admitted.config.limits.duration_seconds))
                 <= now
             || admitted
                 .config
@@ -1548,7 +1548,7 @@ impl FrontierRepo for MemoryStore {
         row.e.attempts += 1;
         row.owner = Some(worker);
         row.token = Some(token);
-        row.expires = Some(now + chrono_dur(self.url_ttl));
+        row.expires = Some(now + span_of(self.url_ttl));
         Ok(Some((row.e.clone(), token)))
     }
 
@@ -1695,7 +1695,7 @@ impl PageRepo for MemoryStore {
             ));
         }
         if source.config.retention.days != 0
-            && source.created_at + ChronoDuration::days(i64::from(source.config.retention.days))
+            && source.created_at + SpanDuration::days(i64::from(source.config.retention.days))
                 <= self.clock.now()
         {
             return Err(StoreError::RetentionDenied(
@@ -1869,7 +1869,7 @@ impl PageRepo for MemoryStore {
                         r.tenant == tenant
                             && r.config.retention.mode != RetentionMode::Zdr
                             && (r.config.retention.days == 0
-                                || r.created_at + ChronoDuration::days(i64::from(r.config.retention.days))
+                                || r.created_at + SpanDuration::days(i64::from(r.config.retention.days))
                                     > now)
                     })
             })
@@ -2380,7 +2380,7 @@ impl ActionJournal for MemoryStore {
                     }),
                     decision: crate::ApprovalDecision::Pending,
                     requested_at: now,
-                    expires_at: now + ChronoDuration::hours(24),
+                    expires_at: now + SpanDuration::hours(24),
                     decided_by: None,
                     decided_at: None,
                     reason: None,
@@ -2732,7 +2732,7 @@ fn claim_memory(
         return Ok(None);
     }
     let now = store.clock.now();
-    let ttl = chrono_dur(store.session_ttl);
+    let ttl = span_of(store.session_ttl);
     let mut state = store.inner.lock();
     if !state
         .runs
@@ -2891,7 +2891,7 @@ impl LeaseRepo for MemoryStore {
         let token = state.fence;
         let mut session = session.clone();
         session.status = SessionStatus::Running;
-        let expires_at = now + chrono_dur(self.session_ttl);
+        let expires_at = now + span_of(self.session_ttl);
         state.sessions.insert(
             session.id,
             SessionRow {
@@ -2912,7 +2912,7 @@ impl LeaseRepo for MemoryStore {
 
     async fn heartbeat(&self, lease: &SessionLease) -> Result<Timestamp, StoreError> {
         let now = self.clock.now();
-        let ttl = chrono_dur(self.session_ttl);
+        let ttl = span_of(self.session_ttl);
         let mut g = self.inner.lock();
         let r = g
             .sessions
@@ -3008,7 +3008,7 @@ impl LeaseRepo for MemoryStore {
         leases: &[(i64, i64)],
     ) -> Result<Vec<i64>, StoreError> {
         let now = self.clock.now();
-        let ttl = chrono_dur(self.url_ttl);
+        let ttl = span_of(self.url_ttl);
         let mut g = self.inner.lock();
         let mut renewed = Vec::new();
         for f in &mut g.frontier {
@@ -3547,7 +3547,7 @@ mod exact_frontier_lease_tests {
     use crawlx_core::time::ManualClock;
 
     async fn fixture() -> (Arc<MemoryStore>, ManualClock, CrawlRun, [i64; 2]) {
-        let clock = ManualClock::new(chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap());
+        let clock = ManualClock::new(Timestamp::from_timestamp(1_700_000_000, 0).unwrap());
         let store = Arc::new(MemoryStore::with_clock(Arc::new(clock.clone())));
         let mut run = crawl_run(TenantId::new(), create_crawl("https://example.test/", &[], 1));
         run.created_at = clock.now();
@@ -3626,7 +3626,7 @@ mod exact_frontier_lease_tests {
         let claimed = snapshot(&store, id);
         assert_eq!(claimed.owner, Some(*worker));
         assert_eq!(claimed.token, Some(*token));
-        assert_eq!(claimed.expires, Some(clock.now() + chrono_dur(store.url_ttl)));
+        assert_eq!(claimed.expires, Some(clock.now() + span_of(store.url_ttl)));
         assert_unchanged(&before, &snapshot(&store, other));
         assert_eq!(store.inner.lock().fence, *token);
     }
@@ -3667,7 +3667,7 @@ mod exact_frontier_lease_tests {
             let mut g = store.inner.lock();
             let row = g.frontier.iter_mut().find(|row| row.e.id == id).unwrap();
             row.e.status = FrontierStatus::Pending;
-            row.next_attempt_at = clock.now() + ChronoDuration::seconds(10);
+            row.next_attempt_at = clock.now() + SpanDuration::seconds(10);
         }
         let before = snapshot(&store, id);
         assert!(store

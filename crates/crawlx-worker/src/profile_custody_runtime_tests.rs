@@ -3,6 +3,7 @@ use super::*;
 use crawlx_core::counters::RunStatus;
 use crawlx_core::custody::RunSecretAuthority as _;
 use crawlx_core::repo::RunRepo as _;
+use crawlx_core::time::{Duration as SpanDuration, Timestamp};
 use crawlx_core::{PrincipalId, TenantId, WorkerId};
 use crawlx_storage::artifact_key_crypto::FileArtifactKeys;
 use crawlx_storage::custody::PgSecretAuthority;
@@ -15,7 +16,7 @@ use std::time::Duration;
 const NOW: f64 = 1_000_000_000.0;
 
 fn at() -> Timestamp {
-    chrono::DateTime::from_timestamp(1_000_000_000, 0).unwrap()
+    Timestamp::from_timestamp(1_000_000_000, 0).unwrap()
 }
 const ORIGIN: &str = "https://example.test";
 
@@ -137,7 +138,7 @@ async fn secrets_reach_the_local_registry_before_import_and_stay_registered_on_f
         fail_import: true,
         ..Memory::default()
     };
-    let expires = chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap();
+    let expires = Timestamp::from_timestamp(2_000_000_000, 0).unwrap();
     assert!(
         apply_state(&secrets, &bytes(&document()), expires, NOW, &mut refusing)
             .await
@@ -152,7 +153,7 @@ async fn secrets_reach_the_local_registry_before_import_and_stay_registered_on_f
 #[tokio::test]
 async fn restore_requires_cookie_readback_and_confirms_web_storage_after_navigation() {
     let secrets = CaptchaSecrets::default();
-    let expires = chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap();
+    let expires = Timestamp::from_timestamp(2_000_000_000, 0).unwrap();
     let mut browser = Memory::default();
     let restored = apply_state(&secrets, &bytes(&document()), expires, NOW, &mut browser)
         .await
@@ -187,7 +188,7 @@ async fn restore_requires_cookie_readback_and_confirms_web_storage_after_navigat
 #[tokio::test]
 async fn a_store_hit_alone_is_not_a_restore() {
     let secrets = CaptchaSecrets::default();
-    let expires = chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap();
+    let expires = Timestamp::from_timestamp(2_000_000_000, 0).unwrap();
     let mut dropping = Memory {
         drop_cookies: true,
         ..Memory::default()
@@ -227,7 +228,7 @@ async fn expired_persistent_cookies_are_not_required_to_read_back() {
         drop_cookies: true,
         ..Memory::default()
     };
-    let expires = chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap();
+    let expires = Timestamp::from_timestamp(2_000_000_000, 0).unwrap();
     apply_state(
         &CaptchaSecrets::default(),
         &bytes(&state),
@@ -305,8 +306,8 @@ async fn origin_guard_confines_documents_requests_and_subresources() {
 
 /// The run's own retention (default days from creation) bounds every profile expiry used here.
 fn profile_expiry() -> Timestamp {
-    let later = chrono::Utc::now() + chrono::Duration::hours(1);
-    chrono::DateTime::from_timestamp_millis(later.timestamp_millis()).unwrap()
+    let later = Timestamp::now() + SpanDuration::hours(1);
+    Timestamp::from_timestamp_millis(later.timestamp_millis()).unwrap()
 }
 
 async fn leased_run(

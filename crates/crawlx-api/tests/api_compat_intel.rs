@@ -21,6 +21,7 @@ use crawlx_api::intel::tools::{MapLink, MockPageTools, ToolError};
 use crawlx_api::intel::webhook::{compat_signature, JobWebhookSink};
 use crawlx_api::webhooks::{TransportError, WebhookRequest, WebhookTransport};
 use crawlx_api::{ApiConfig, AppState, Repos, Scope};
+use crawlx_core::time::FixedDateTime;
 use crawlx_core::TenantId;
 use crawlx_model::llm::{LlmError, MockLlm};
 use crawlx_policy::AdmissionPolicy;
@@ -906,7 +907,7 @@ async fn extract_with_web_search_reads_found_pages_and_fails_cleanly_without_con
 /// `completedAt` per job) and return the trace without it, for exact comparison.
 fn untimed(trace: &Value) -> Value {
     let stamp = |v: &Value| {
-        chrono::DateTime::parse_from_rfc3339(v.as_str().unwrap_or_else(|| panic!("stamp: {v}")))
+        FixedDateTime::parse_rfc3339(v.as_str().unwrap_or_else(|| panic!("stamp: {v}")))
             .unwrap_or_else(|e| panic!("{v}: {e}"))
     };
     let entries = trace.as_array().unwrap_or_else(|| panic!("trace: {trace}"));

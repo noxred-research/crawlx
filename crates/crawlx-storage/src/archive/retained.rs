@@ -246,6 +246,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
+    use crawlx_core::time::FixedDateTime;
     use std::os::unix::fs::symlink;
 
     #[test]
@@ -282,9 +283,9 @@ mod tests {
         let root = directory.path();
         let tenant: TenantId = "00000000-0000-8000-8000-000000000001".parse().unwrap();
         let run: CrawlRunId = "00000000-0000-8000-8000-000000000002".parse().unwrap();
-        let now = chrono::DateTime::parse_from_rfc3339("2026-11-04T12:34:56Z")
+        let now = FixedDateTime::parse_rfc3339("2026-11-04T12:34:56Z")
             .unwrap()
-            .with_timezone(&chrono::Utc);
+            .to_utc();
         let body = b"approved retained payload";
         let artifact = ArtifactRef {
             id: "00000000-0000-8000-8000-000000000003".parse().unwrap(),

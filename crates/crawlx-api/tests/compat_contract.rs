@@ -14,11 +14,11 @@
 mod common;
 
 use axum::http::StatusCode;
-use chrono::Utc;
 use common::env;
 use crawlx_core::counters::{RunStatus, TerminalReason};
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{FrontierRepo, FrontierStatus, PageRecord, PageRepo, RunRepo, Sensitivity};
+use crawlx_core::time::Timestamp;
 use crawlx_core::{CrawlRunId, TrustLane};
 use crawlx_storage::testkit;
 use serde::Deserialize;
@@ -199,7 +199,7 @@ async fn facade_endpoints_and_responses_match_the_sdk_shapes() {
                 html: None,
                 metadata: json!({"description": "d", "language": "en"}),
                 links: vec![format!("https://docs.example.test/{}", n + 1)],
-                fetched_at: Utc::now(),
+                fetched_at: Timestamp::now(),
                 lane: TrustLane::Diagnostic,
             })
             .await

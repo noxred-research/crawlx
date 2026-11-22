@@ -3,8 +3,8 @@
 //! Envelopes contain content and PII. They are not safe structural telemetry and must
 //! pass the same retention/redaction boundary as the document they describe.
 
+use crate::time::NaiveDate;
 use crate::{hash::Digest, CoreError};
-use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
 mod regex_admission;

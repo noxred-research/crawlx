@@ -7,7 +7,7 @@ use crawlx_core::dataset::{AcceptedBatchV1, DatasetConfigV1, DeliveryOutboxRepo}
 use crawlx_core::orchestration::{RequestBatchV1, RequestCommitRepo, RequestCommitV1};
 use crawlx_core::repo::{FrontierRepo, FrontierStatus, RunRepo};
 use crawlx_core::request::RequestEnvelopeV1;
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{ManualClock, Timestamp};
 use crawlx_core::{Clock, TenantId};
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};
 use crawlx_storage::{MemoryStore, WorkerRegistry};
@@ -22,7 +22,7 @@ struct Fixture {
 }
 
 async fn fixture(feeds: Value, schema: &str, zdr: bool) -> Fixture {
-    let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     let directory = tempfile::tempdir().unwrap();
     let stores = Stores::over_memory(repo.clone(), directory.path()).await.unwrap();
@@ -159,7 +159,7 @@ async fn accept(f: &Fixture, values: &[Value], imported: bool) {
 fn accumulator_respects_item_bytes_and_contiguous_ranges() {
     let mut policy: FeedDeclarationV1 = serde_json::from_value(feed("first", "jsonl")).unwrap();
     policy.max_batch_bytes = 16;
-    let now = chrono::Utc::now();
+    let now = Timestamp::now();
     let mut output = Accumulator::new(16, now);
     assert!(output.push(&policy, false, 1, b"{\"n\":1}\n", now).unwrap());
     assert!(output.push(&policy, false, 2, b"{\"n\":2}\n", now).unwrap());
@@ -178,7 +178,7 @@ fn accumulator_respects_item_bytes_and_contiguous_ranges() {
 #[test]
 fn jsonl_accumulator_frames_records_with_or_without_fragment_newlines() {
     let policy: FeedDeclarationV1 = serde_json::from_value(feed("first", "jsonl")).unwrap();
-    let now = chrono::Utc::now();
+    let now = Timestamp::now();
     let mut output = Accumulator::new(4096, now);
     assert!(output.push(&policy, false, 1, b"{\"n\":1}", now).unwrap());
     assert!(output.push(&policy, false, 2, b"{\"n\":2}\n", now).unwrap());

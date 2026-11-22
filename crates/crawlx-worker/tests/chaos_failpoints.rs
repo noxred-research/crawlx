@@ -15,6 +15,7 @@ use crawlx_core::identity::ActionKind;
 use crawlx_core::observation::QuiescencePolicy;
 use crawlx_core::repo::{ActionJournal, ActionRecord, StateRepo};
 use crawlx_core::seed::CrawlSeed;
+use crawlx_core::time::Duration;
 use crawlx_core::{Clock, SafetyProfile, SystemClock};
 use crawlx_scheduler::{Reaper, ReaperConfig};
 use crawlx_storage::MemoryStore;
@@ -207,7 +208,7 @@ async fn crash_and_recover(point: Point) -> Rig {
 
     // the holder stopped heartbeating: the reaper flips intended -> unknown (and nothing else)
     r.store
-        .expire_session_lease(r.session, SystemClock.now() - chrono::Duration::hours(1));
+        .expire_session_lease(r.session, SystemClock.now() - Duration::hours(1));
     let summary = Reaper::new(r.store.clone(), r.store.clone(), ReaperConfig::default())
         .run_once()
         .await
@@ -372,7 +373,7 @@ async fn reconcile_without_markers_in_another_cluster_is_indeterminate_and_never
     chaos::configure("");
     let id = r.actions().await[0].id;
     r.store
-        .expire_session_lease(r.session, SystemClock.now() - chrono::Duration::hours(1));
+        .expire_session_lease(r.session, SystemClock.now() - Duration::hours(1));
     Reaper::new(r.store.clone(), r.store.clone(), ReaperConfig::default())
         .run_once()
         .await

@@ -6,13 +6,12 @@ mod common;
 
 use async_trait::async_trait;
 use axum::http::{Method, StatusCode};
-use chrono::Utc;
 use common::{env_with_zdr, json, Env};
 use crawlx_api::webhooks::{TransportError, WebhookRequest, WebhookSender, WebhookTransport};
 use crawlx_api::{ApiConfig, Settings};
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{ArtifactStore, EventRepo, PageRecord, PageRepo, Sensitivity};
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{ManualClock, Timestamp};
 use crawlx_core::TrustLane;
 use crawlx_core::{Clock, CrawlRunId};
 use crawlx_storage::testkit;
@@ -44,7 +43,7 @@ struct Rig {
 }
 
 fn rig() -> Rig {
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let cfg = ApiConfig {
         rate_limit_per_minute: 0,
         webhook_secret: SECRET.to_owned(),

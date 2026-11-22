@@ -20,6 +20,7 @@ use crawlx_core::repo::{CrawlRun, EventRepo, FrontierStatus, RunEvent, Sensitivi
 use crawlx_core::request::{keyed_body_digest, RequestBodyV1, RequestEnvelopeV1, WriteApprovalV1};
 use crawlx_core::safety::RiskClass;
 use crawlx_core::secret::SecretOr;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{Clock, CrawlRunId, CreateCrawl, SystemClock};
 use crawlx_fetch::StaticResolver;
 use crawlx_policy::AuthorizationRecord;
@@ -825,7 +826,7 @@ async fn a_crawl_killed_mid_send_never_replays_the_write() {
 
     // The dead holder's sessions and URL leases run out; the fleet reaper returns the row.
     for session in rig.stores.runs.list_sessions(rig.run).await.unwrap() {
-        store.expire_session_lease(session.id, SystemClock.now() - chrono::Duration::hours(1));
+        store.expire_session_lease(session.id, SystemClock.now() - SpanDuration::hours(1));
     }
     let reaper = crawlx_scheduler::Reaper::new(
         Arc::clone(&rig.stores.leases),

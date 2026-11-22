@@ -280,7 +280,7 @@ pub async fn compile(
         out.insert("specId".to_owned(), json!(record.id));
         out.insert(
             "expiresAt".to_owned(),
-            json!(ts(chrono_from_ms(record.expires_at_ms))),
+            json!(ts(timestamp_from_ms(record.expires_at_ms))),
         );
         out.extend(extra.clone());
         out.insert("targetIo".to_owned(), json!(false));
@@ -288,7 +288,7 @@ pub async fn compile(
     Ok(json_response(StatusCode::CREATED, &reply))
 }
 
-fn chrono_from_ms(ms: i64) -> crawlx_core::Timestamp {
+fn timestamp_from_ms(ms: i64) -> crawlx_core::Timestamp {
     crawlx_core::Timestamp::from_timestamp_millis(ms).unwrap_or_default()
 }
 
@@ -330,7 +330,7 @@ pub async fn approve(
         "specId": record.id,
         "digest": record.digest,
         "approvalToken": token,
-        "expiresAt": ts(chrono_from_ms(expires)),
+        "expiresAt": ts(timestamp_from_ms(expires)),
         "note": "the token is shown once, is bound to this digest and is spent by the first create",
     });
     Ok(json_response(StatusCode::OK, &reply))

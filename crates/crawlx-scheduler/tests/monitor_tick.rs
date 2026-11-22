@@ -4,8 +4,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use async_trait::async_trait;
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{Duration as SpanDuration, ManualClock, Timestamp};
 use crawlx_core::{Clock, TenantId};
 use crawlx_scheduler::monitor::{MonitorRunner, MonitorScheduler, MonitorSchedulerConfig};
 use crawlx_storage::{IntelRepo, MemoryIntel, MonitorRecord, MonitorStatus};
@@ -19,7 +18,7 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-fn utc(s: &str) -> DateTime<Utc> {
+fn utc(s: &str) -> Timestamp {
     s.parse().unwrap()
 }
 
@@ -409,7 +408,7 @@ async fn a_monitor_with_a_corrupt_schedule_stops_ticking() {
     assert_eq!(stored.claimed_until, None);
     assert_eq!(
         f.sched
-            .tick(f.clock.now() + ChronoDuration::days(1))
+            .tick(f.clock.now() + SpanDuration::days(1))
             .await
             .unwrap()
             .claimed,

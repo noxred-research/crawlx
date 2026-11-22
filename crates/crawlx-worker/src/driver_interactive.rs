@@ -18,6 +18,7 @@ use crate::interactive_profiles::{
 };
 use crawlx_core::custody::{CustodyLease, SecretRegistrar};
 use crawlx_core::observation::DomSelector;
+use crawlx_core::time::Duration;
 use crawlx_core::{SecretOr, Timestamp};
 use crawlx_storage::artifact_key_crypto::ArtifactKeys;
 use crawlx_storage::custody::profiles::CustodyProfiles;
@@ -171,7 +172,7 @@ impl ExplorationDriver {
         let now = self.rc.clock.now();
         let expires_at = binding
             .expires_at
-            .min(now + chrono::Duration::seconds(i64::from(request.ttl_seconds)));
+            .min(now + Duration::seconds(i64::from(request.ttl_seconds)));
         if expires_at <= now {
             return refused();
         }

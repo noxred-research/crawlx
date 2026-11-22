@@ -10,13 +10,13 @@ use axum::http::{header, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
-use chrono::Duration as Span;
 use crawlx_browser::fake::{FakeAxSpec, FakeEffect, FakePage, FakeScript};
 use crawlx_browser::FakeBackend;
 use crawlx_core::config::{CrawlMode, Role};
 use crawlx_core::counters::{PlaneCounters, RunStatus, TerminalReason};
 use crawlx_core::repo::{ActionJournal, CrawlRun, FrontierEntry, FrontierStatus, RunRepo, SessionStatus};
 use crawlx_core::scrape::{JobKind, ScrapeJob, ScrapeOptions};
+use crawlx_core::time::Duration as Span;
 use crawlx_core::{
     ActionProposal, AuthorizationRecordId, Clock, CrawlRunId, CreateCrawl, SafetyProfile, SystemClock,
     TenantId,

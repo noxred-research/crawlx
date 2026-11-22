@@ -17,8 +17,8 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Extension, Router};
-use chrono::{Datelike, Duration as ChronoDuration, TimeZone, Utc};
-use crawlx_core::{TenantId, Timestamp};
+use crawlx_core::time::{Duration as SpanDuration, NaiveDate, Timestamp};
+use crawlx_core::TenantId;
 use crawlx_model::llm::extractor::fence;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -149,7 +149,7 @@ const HISTORY_MONTHS: u32 = 12;
 
 /// Start of the UTC calendar month containing `t`, and of the next one.
 fn month_bounds(t: Timestamp) -> (Timestamp, Timestamp) {
-    let first = |y: i32, m: u32| Utc.with_ymd_and_hms(y, m, 1, 0, 0, 0).single().unwrap_or(t);
+    let first = |y: i32, m: u32| Timestamp::from_ymd_hms(y, m, 1, 0, 0, 0).unwrap_or(t);
     let start = first(t.year(), t.month());
     let end = if t.month() == 12 {
         first(t.year() + 1, 1)
@@ -161,10 +161,10 @@ fn month_bounds(t: Timestamp) -> (Timestamp, Timestamp) {
 
 /// Start of the month `months` before the month of `t`.
 fn months_back(t: Timestamp, months: u32) -> Timestamp {
-    let total = i64::from(t.year()) * 12 + i64::from(t.month0()) - i64::from(months);
+    let total = i64::from(t.year()) * 12 + i64::from(t.month() - 1) - i64::from(months);
     let y = i32::try_from(total.div_euclid(12)).unwrap_or(t.year());
     let m = u32::try_from(total.rem_euclid(12)).unwrap_or(0) + 1;
-    Utc.with_ymd_and_hms(y, m, 1, 0, 0, 0).single().unwrap_or(t)
+    Timestamp::from_ymd_hms(y, m, 1, 0, 0, 0).unwrap_or(t)
 }
 
 async fn current_totals(
@@ -242,10 +242,10 @@ async fn historical(
     }
     let mut periods = Vec::new();
     for (month, total) in months {
-        let Ok(start) = chrono::NaiveDate::parse_from_str(&format!("{month}-01"), "%Y-%m-%d") else {
+        let Ok(start) = NaiveDate::parse_from_str(&format!("{month}-01"), "%Y-%m-%d") else {
             continue;
         };
-        let start = Utc.from_utc_datetime(&start.and_hms_opt(0, 0, 0).unwrap_or_default());
+        let start = start.and_midnight().and_utc();
         let (s, e) = month_bounds(start);
         periods.push(json!({
             "startDate": ts(s),
@@ -346,7 +346,7 @@ pub async fn activity(
             .parse::<u32>()
             .map_err(|_| HttpError::malformed("invalid cursor"))?,
     };
-    let since = state.clock.now() - ChronoDuration::hours(24);
+    let since = state.clock.now() - SpanDuration::hours(24);
     let rows = state
         .repos
         .intel
@@ -680,13 +680,13 @@ mod tests {
 
     #[test]
     fn month_arithmetic() {
-        let t = Utc.with_ymd_and_hms(2026, 12, 31, 23, 0, 0).unwrap();
+        let t = Timestamp::from_ymd_hms(2026, 12, 31, 23, 0, 0).unwrap();
         let (s, e) = month_bounds(t);
         assert_eq!((s.month(), s.day(), e.year(), e.month()), (12, 1, 2027, 1));
         assert_eq!(months_back(t, 0).month(), 12);
         let back = months_back(t, 11);
         assert_eq!((back.year(), back.month()), (2026, 1));
-        let back = months_back(Utc.with_ymd_and_hms(2026, 2, 3, 0, 0, 0).unwrap(), 3);
+        let back = months_back(Timestamp::from_ymd_hms(2026, 2, 3, 0, 0, 0).unwrap(), 3);
         assert_eq!((back.year(), back.month()), (2025, 11));
     }
 }

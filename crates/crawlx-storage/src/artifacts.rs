@@ -24,6 +24,7 @@ use crawlx_core::archive_catalog::ArchiveCustodyV1;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{ArtifactStore, RunRepo, Sensitivity};
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{ArtifactId, ArtifactRef, Clock, CrawlRunId, StoreError, TenantId, Timestamp};
 use crawlx_telemetry::metrics::names;
 use crawlx_telemetry::Metrics;
@@ -764,7 +765,7 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
         })?;
         let run = self.runs.get_metadata(row.run).await?;
         let source_expiry = (run.retention.days != 0)
-            .then(|| run.created_at + chrono::Duration::days(i64::from(run.retention.days)));
+            .then(|| run.created_at + SpanDuration::days(i64::from(run.retention.days)));
         if row.id != artifact.id
             || row.digest != artifact.digest
             || row.sensitivity != custody.sensitivity
@@ -1971,7 +1972,7 @@ impl ArtifactBlobs for MemBlobs {
     async fn put(&self, key: &str, bytes: &[u8]) -> Result<(), StoreError> {
         self.map
             .lock()
-            .insert(key.to_owned(), (bytes.to_vec(), chrono::Utc::now()));
+            .insert(key.to_owned(), (bytes.to_vec(), Timestamp::now()));
         Ok(())
     }
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, StoreError> {

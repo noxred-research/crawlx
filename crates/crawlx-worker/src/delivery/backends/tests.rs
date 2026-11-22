@@ -16,6 +16,7 @@ use crawlx_core::config::RetentionMode;
 use crawlx_core::dataset::{DatasetContentV1, DeliveryBatchV1};
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::CrawlRun;
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::{ArtifactId, ArtifactRef};
 use reqwest::header::HeaderMap;
 use reqwest::Method;
@@ -51,12 +52,12 @@ fn batch(key: &str, bytes: &[u8]) -> DeliveryBatchV1 {
             },
         },
         bytes.len() as u64,
-        chrono::Utc::now() + chrono::Duration::hours(1),
+        Timestamp::now() + Duration::hours(1),
     )
 }
 
 fn standard_run() -> CrawlRun {
-    run(RetentionMode::Standard, chrono::Utc::now(), &["json"])
+    run(RetentionMode::Standard, Timestamp::now(), &["json"])
 }
 
 fn projection(id: &str, deleted: bool, title: &str) -> Bytes {
@@ -245,7 +246,7 @@ async fn search_cycle(url: &str, engine: SearchEngine, other_engine: SearchEngin
 }
 
 fn run_zdr() -> CrawlRun {
-    run(RetentionMode::Zdr, chrono::Utc::now(), &["json"])
+    run(RetentionMode::Zdr, Timestamp::now(), &["json"])
 }
 
 #[tokio::test]

@@ -5,7 +5,7 @@
 use crate::errors::ApiResult;
 use crate::intel::common::JOB_TTL_HOURS;
 use crate::state::AppState;
-use chrono::Duration as ChronoDuration;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::TenantId;
 use crawlx_storage::{JobKind, JobPatch, JobRecord, JobStatus};
 use parking_lot::Mutex;
@@ -109,7 +109,7 @@ pub async fn admit(
         created_at: now,
         updated_at: now,
         finished_at: None,
-        expires_at: now + ChronoDuration::hours(JOB_TTL_HOURS),
+        expires_at: now + SpanDuration::hours(JOB_TTL_HOURS),
     };
     state.repos.intel.job_insert(&job).await?;
     Ok(job)

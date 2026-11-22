@@ -10,10 +10,10 @@
 use crate::classify::{DateFlavor, InputConstraints};
 use crate::fixtures::{FIXTURE_OVERSIZED, FIXTURE_PDF, FIXTURE_SMALL_PNG};
 use crate::partition::Partition;
-use chrono::{Datelike, Days, NaiveDate};
 use crawlx_core::identity::ActionContextKey;
 use crawlx_core::secret::SecretOr;
 use crawlx_core::seed::CrawlSeed;
+use crawlx_core::time::{Days, NaiveDate};
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
 
@@ -392,9 +392,9 @@ fn date_value(rng: &mut ChaCha8Rng, d: NaiveDate, c: &InputConstraints) -> Strin
         d = d.min(hi);
     }
     match c.date_flavor {
-        DateFlavor::Date => d.format("%Y-%m-%d").to_string(),
-        DateFlavor::DateTimeLocal => format!("{}T{hh:02}:{mm:02}", d.format("%Y-%m-%d")),
-        DateFlavor::Month => d.format("%Y-%m").to_string(),
+        DateFlavor::Date => d.to_string(),
+        DateFlavor::DateTimeLocal => format!("{d}T{hh:02}:{mm:02}"),
+        DateFlavor::Month => format!("{:04}-{:02}", d.year(), d.month()),
         DateFlavor::Week => {
             let w = d.iso_week();
             format!("{}-W{:02}", w.year(), w.week())

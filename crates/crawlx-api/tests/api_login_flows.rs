@@ -10,7 +10,7 @@ use axum::http::{Method, Request, StatusCode};
 use crawlx_api::auth::{generate_key, key_record, tenant_id_for};
 use crawlx_api::{ApiConfig, AppState, ArtifactSource, Repos, Scope, Settings};
 use crawlx_core::repo::Sensitivity;
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::{ArtifactRef, CrawlRunId};
 use crawlx_storage::{ArtifactBlobs, FsArtifactStore, MemoryStore, Pg, StoreConfig};
 use serde_json::{json, Value};
@@ -42,7 +42,7 @@ struct Rig {
 
 impl Rig {
     async fn new(postgres: bool) -> Option<Self> {
-        let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+        let clock = Arc::new(ManualClock::new(Timestamp::now()));
         let delivery = Arc::new(crawlx_storage::DeliveryBuffer::with_defaults(clock.clone()));
         let dir = tempfile::Builder::new()
             .prefix("crawlx-api-login-")
@@ -193,7 +193,7 @@ async fn upload_contract(postgres: bool) {
         assert_eq!(status, StatusCode::CREATED, "{uploaded}");
         let artifact: ArtifactRef = serde_json::from_value(uploaded["artifact"].clone()).unwrap();
         let row = rig.artifacts.row(artifact.id).await.unwrap().unwrap();
-        let deadline = before.created_at + chrono::Duration::days(2);
+        let deadline = before.created_at + Duration::days(2);
         assert_eq!(row.run, source);
         assert_eq!(row.tenant, before.tenant);
         assert_eq!(row.sensitivity, Sensitivity::Content);

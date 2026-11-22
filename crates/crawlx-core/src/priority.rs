@@ -195,6 +195,7 @@ impl EligibilityRankingV1 {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+    use crate::time::Duration;
 
     fn u(s: &str) -> Url {
         Url::parse(s).unwrap()
@@ -249,15 +250,7 @@ mod tests {
         assert!(policy.key(now, None, None, 7, 500, 2, 9).unwrap().is_none());
         assert!(policy.key(now, None, Some(503), 7, 500, 2, 9).unwrap().is_none());
         assert!(policy
-            .key(
-                now,
-                Some(now + chrono::Duration::seconds(1)),
-                Some(200),
-                7,
-                500,
-                2,
-                9
-            )
+            .key(now, Some(now + Duration::seconds(1)), Some(200), 7, 500, 2, 9)
             .unwrap()
             .is_none());
         assert!(policy.key(now, None, Some(200), 7, 99, 2, 9).unwrap().is_none());

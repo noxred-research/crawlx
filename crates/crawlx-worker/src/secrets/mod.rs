@@ -286,13 +286,12 @@ fn json_key(body: &str, key: &str, reference: &str) -> Result<SecretOr<String>, 
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
-    use crawlx_core::time::ManualClock;
+    use crawlx_core::time::{ManualClock, Timestamp};
 
     #[tokio::test]
     async fn chain_dispatches_on_scheme() {
         std::env::set_var("CRAWLX_SECRETS_CHAIN_TEST", "u:p");
-        let clock: Arc<dyn Clock> =
-            Arc::new(ManualClock::new(chrono::DateTime::from_timestamp(59, 0).unwrap()));
+        let clock: Arc<dyn Clock> = Arc::new(ManualClock::new(Timestamp::from_timestamp(59, 0).unwrap()));
         let chain = ChainResolver::new()
             .with("env", Arc::new(EnvSecretResolver))
             .with("totp", Arc::new(TotpResolver::new(clock)));

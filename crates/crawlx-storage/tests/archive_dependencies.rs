@@ -2,6 +2,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use crawlx_core::archive::ArchiveManifestV1;
+use crawlx_core::time::FixedDateTime;
 use crawlx_core::TenantId;
 use crawlx_storage::archive::{
     cdxj,
@@ -102,9 +103,7 @@ fn package(
         let manifest = ArchiveManifestV1::available(
             owner,
             "00000000-0000-8000-8000-000000000999".parse().unwrap(),
-            chrono::DateTime::parse_from_rfc3339(DATE)
-                .unwrap()
-                .with_timezone(&chrono::Utc),
+            FixedDateTime::parse_rfc3339(DATE).unwrap().to_utc(),
         );
         std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
         files.push(("crawlx/manifest.json".into(), path));

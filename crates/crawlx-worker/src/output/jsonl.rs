@@ -486,7 +486,7 @@ pub(super) mod tests {
             html: None,
             metadata: meta,
             links: Vec::new(),
-            fetched_at: chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+            fetched_at: Timestamp::from_timestamp(1_700_000_000, 0).unwrap(),
             lane: TrustLane::Diagnostic,
         }
     }

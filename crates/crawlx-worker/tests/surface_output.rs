@@ -9,6 +9,7 @@ mod authorization_fixture;
 
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::PageRecord;
+use crawlx_core::time::Timestamp;
 use crawlx_core::{CrawlRunId, TrustLane};
 use crawlx_worker::output::{
     expand_patterns, field_names, write_error_log, Dsl, ExportFormat, Exporter, Field, OutputFilters,
@@ -42,7 +43,7 @@ fn page(url: &str, status: u16, metadata: Value) -> PageRecord {
         html: None,
         metadata,
         links: Vec::new(),
-        fetched_at: chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+        fetched_at: Timestamp::from_timestamp(1_700_000_000, 0).unwrap(),
         lane: TrustLane::Diagnostic,
     }
 }
@@ -935,7 +936,7 @@ async fn collector(status: u16) -> MockServer {
 }
 
 fn exchange(n: usize) -> Exchange {
-    let ts = chrono::DateTime::from_timestamp(1_700_000_000 + i64::try_from(n).unwrap(), 0).unwrap();
+    let ts = Timestamp::from_timestamp(1_700_000_000 + i64::try_from(n).unwrap(), 0).unwrap();
     Exchange::new("url", ts, "GET", format!("https://target.test/{n}"), 200).with_response(
         BTreeMap::from([("content-type".to_owned(), "text/html".to_owned())]),
         Some(format!("body {n}")),
@@ -1063,7 +1064,7 @@ async fn attributes_are_added_to_every_event_and_validated() {
 }
 
 fn credential_exchange() -> Exchange {
-    let ts = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    let ts = Timestamp::from_timestamp(1_700_000_000, 0).unwrap();
     Exchange::new("url", ts, "GET", "https://target.test/me", 200)
         .with_request(
             BTreeMap::from([
@@ -1274,7 +1275,7 @@ async fn redirects_are_never_followed_so_the_token_cannot_leak() {
 async fn bodies_are_previewed_hashed_and_bounded() {
     let server = collector(200).await;
     let exporter = TrafficExporter::new(config(&server)).unwrap();
-    let ts = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    let ts = Timestamp::from_timestamp(1_700_000_000, 0).unwrap();
     let big = "x".repeat(100 * 1024);
     exporter.record(
         Exchange::new("url", ts, "POST", "https://target.test/big", 200)

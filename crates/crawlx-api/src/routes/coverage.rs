@@ -212,6 +212,7 @@ pub async fn coverage(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+    use crawlx_core::time::Timestamp;
 
     #[test]
     fn run_summary_and_endpoint_exclude_trusted_actions_from_unreachable_states() {
@@ -258,7 +259,7 @@ mod tests {
             failures: 0,
             denied: 0,
             unknown: 7,
-            first_seen: chrono::Utc::now(),
+            first_seen: Timestamp::now(),
             last_exercised: None,
         };
         let mut counts = KeyCounts::default();

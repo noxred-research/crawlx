@@ -28,6 +28,7 @@ CrawlX is pre-1.0. Production qualification is in progress; see the
 | [Safety model](design/safety-model.md) | Safety profiles, the hard safety kernel, authorization records, egress and SSRF policy, robots, rate limits |
 | [Safety risk matrix](design/safety-matrix.md) | Generated table of what each profile allows per action class |
 | [Data and secrets](design/data-and-secrets.md) | Retention modes, zero data retention, secret boundaries, encrypted artifact custody, parse-memory budget, Chromium background traffic |
+| [Time handling](design/time.md) | The `crawlx_core::time` facade, why `time` and `jiff`, wire-format guarantees, what still depends on chrono |
 
 ## Integrations and operations
 

@@ -39,6 +39,7 @@ use crawlx_core::repo::{
 use crawlx_core::request_controls::{is_credential_reference, RequestControls};
 use crawlx_core::secret::SecretResolver;
 use crawlx_core::seed::CrawlSeed;
+use crawlx_core::time::Duration;
 use crawlx_core::{
     BrowserBackend, CanonicalUrl, Clock, ContextConfig, CrawlRunId, CreateCrawl, SystemClock, WorkerId,
 };
@@ -257,7 +258,7 @@ pub struct RunContext {
 /// Timing copied from the acquired binding, without copying browser controls or secrets.
 #[derive(Clone, Copy)]
 pub(crate) struct LoginBounds {
-    allowance: chrono::Duration,
+    allowance: Duration,
     binding_deadline: Option<crawlx_core::Timestamp>,
 }
 
@@ -1947,7 +1948,7 @@ impl RunContext {
         let material = self.login_material(&session.role.0).await?;
         cfg.login_allowance = material
             .as_ref()
-            .map_or(chrono::Duration::zero(), crate::login::login_allowance);
+            .map_or(Duration::zero(), crate::login::login_allowance);
         let mut role_budget = crate::role_budget::RoleBudget::load(self, session).await?;
         if material.is_some() {
             role_budget.reserve_login(self, cfg.login_allowance).await?;
@@ -1977,7 +1978,7 @@ impl RunContext {
         let allowance = bounds.binding_deadline.map_or(bounds.allowance, |deadline| {
             bounds.allowance.min(deadline.signed_duration_since(started))
         });
-        let logged_in = if allowance <= chrono::Duration::zero() {
+        let logged_in = if allowance <= Duration::zero() {
             Err(SessionError::LoginFailed("login deadline reached".into()))
         } else {
             tokio::time::timeout(
@@ -1991,7 +1992,7 @@ impl RunContext {
         let accounting = async {
             role_budget.credit_login(self, spent).await?;
             if spent.num_milliseconds() <= 0 {
-                role_budget.reserve_login(self, chrono::Duration::zero()).await?;
+                role_budget.reserve_login(self, Duration::zero()).await?;
             }
             // Loading reconciles the absolute durable clock without double-crediting it.
             let role_budget = crate::role_budget::RoleBudget::load(self, session).await?;
@@ -3563,7 +3564,7 @@ pub(crate) mod login_lifecycle_tests {
                 .started
                 .lock()
                 .map_or(std::time::Duration::ZERO, |start| start.elapsed());
-            self.at + chrono::Duration::from_std(elapsed).unwrap()
+            self.at + Duration::from_std(elapsed).unwrap()
         }
     }
 
@@ -3588,14 +3589,14 @@ pub(crate) mod login_lifecycle_tests {
         _dir: tempfile::TempDir,
     }
 
-    async fn fixture(valid_for: chrono::Duration) -> LoginFixture {
+    async fn fixture(valid_for: Duration) -> LoginFixture {
         fixture_with_bounds(valid_for, None, None).await
     }
 
     pub(crate) async fn fixture_with_bounds(
-        valid_for: chrono::Duration,
-        execution_ttl: Option<chrono::Duration>,
-        binding_ttl: Option<chrono::Duration>,
+        valid_for: Duration,
+        execution_ttl: Option<Duration>,
+        binding_ttl: Option<Duration>,
     ) -> LoginFixture {
         let dir = tempfile::tempdir().unwrap();
         let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
@@ -3780,7 +3781,7 @@ pub(crate) mod login_lifecycle_tests {
     #[tokio::test(start_paused = true)]
     async fn cancelled_hybrid_input_wait_distinguishes_revocation_from_worker_drain() {
         for revoked in [false, true] {
-            let f = fixture(chrono::Duration::minutes(5)).await;
+            let f = fixture(Duration::minutes(5)).await;
             f.handle.shutdown(ShutdownReason::Completed).await.unwrap();
             let guard = f.rc.authorization.as_ref().unwrap();
             guard.cancels(f.rc.cancel.clone());
@@ -3828,7 +3829,7 @@ pub(crate) mod login_lifecycle_tests {
     #[tokio::test(start_paused = true)]
     async fn role_lease_loss_is_fatal_even_when_worker_drain_follows() {
         for drain_after_loss in [false, true] {
-            let mut f = fixture(chrono::Duration::minutes(5)).await;
+            let mut f = fixture(Duration::minutes(5)).await;
             f.handle.shutdown(ShutdownReason::Completed).await.unwrap();
             let worker_drain = CancellationToken::new();
             f.rc.cancel = worker_drain.child_token();
@@ -3894,9 +3895,9 @@ pub(crate) mod login_lifecycle_tests {
     async fn driver_deadline_does_not_hide_an_earlier_idle_binding_or_lease_failure() {
         for lost_lease in [false, true] {
             let f = fixture_with_bounds(
-                chrono::Duration::minutes(5),
-                Some(chrono::Duration::milliseconds(500)),
-                (!lost_lease).then_some(chrono::Duration::milliseconds(100)),
+                Duration::minutes(5),
+                Some(Duration::milliseconds(500)),
+                (!lost_lease).then_some(Duration::milliseconds(100)),
             )
             .await;
             if lost_lease {
@@ -3955,35 +3956,20 @@ pub(crate) mod login_lifecycle_tests {
 
     #[tokio::test(start_paused = true)]
     async fn deadline_during_seed_admission_completes_normally_without_dispatch() {
-        execution_deadline_case(
-            chrono::Duration::minutes(5),
-            false,
-            TerminalReason::DeadlineReached,
-        )
-        .await;
+        execution_deadline_case(Duration::minutes(5), false, TerminalReason::DeadlineReached).await;
     }
 
     #[tokio::test(start_paused = true)]
     async fn authorization_expiry_coincident_with_execution_deadline_stays_authorization_failure() {
-        execution_deadline_case(
-            chrono::Duration::seconds(1),
-            false,
-            TerminalReason::AuthorizationRevoked,
-        )
-        .await;
+        execution_deadline_case(Duration::seconds(1), false, TerminalReason::AuthorizationRevoked).await;
     }
 
     #[tokio::test(start_paused = true)]
     async fn authorization_revocation_coincident_with_execution_deadline_bypasses_cached_authority() {
-        execution_deadline_case(
-            chrono::Duration::minutes(5),
-            true,
-            TerminalReason::AuthorizationRevoked,
-        )
-        .await;
+        execution_deadline_case(Duration::minutes(5), true, TerminalReason::AuthorizationRevoked).await;
     }
 
-    async fn execution_deadline_case(valid_for: chrono::Duration, revoke: bool, expected: TerminalReason) {
+    async fn execution_deadline_case(valid_for: Duration, revoke: bool, expected: TerminalReason) {
         let mut f = fixture(valid_for).await;
         f.handle.shutdown(ShutdownReason::Completed).await.unwrap();
         // Reuse the admitted durable allocation without logging in or resetting its clock.
@@ -3991,7 +3977,7 @@ pub(crate) mod login_lifecycle_tests {
         crate::role_budget::RoleBudget::load(&f.rc, &f.lease.session)
             .await
             .unwrap()
-            .reserve_login(&f.rc, chrono::Duration::zero())
+            .reserve_login(&f.rc, Duration::zero())
             .await
             .unwrap();
         let cap = Arc::new(crawlx_fetch::governor::GlobalOriginCap::new(1));
@@ -4077,14 +4063,14 @@ pub(crate) mod login_lifecycle_tests {
 
     #[tokio::test(start_paused = true)]
     async fn slow_login_credits_measured_time_without_spending_exploration_or_resetting_resume() {
-        let f = fixture(chrono::Duration::minutes(5)).await;
+        let f = fixture(Duration::minutes(5)).await;
         let original_deadline = f.rc.budget.lock().deadline();
         let started = f.rc.clock.now();
         f.rc.login_session_bounded(&f.lease.session, &f.handle, &f.analyzer, f.material, f.bounds)
             .await
             .unwrap();
         let measured = f.rc.clock.now().signed_duration_since(started);
-        assert!(measured >= chrono::Duration::seconds(2));
+        assert!(measured >= Duration::seconds(2));
         assert!(f.rc.clock.now() > original_deadline);
         assert_eq!(
             credited_millis(&f.rc).await,
@@ -4112,7 +4098,7 @@ pub(crate) mod login_lifecycle_tests {
 
     #[tokio::test(start_paused = true)]
     async fn login_timeout_does_not_extend_authorization_ceiling() {
-        let f = fixture(chrono::Duration::milliseconds(1500)).await;
+        let f = fixture(Duration::milliseconds(1500)).await;
         let ceiling = f.rc.authorization.as_ref().unwrap().record().valid_to;
         assert_eq!(f.bounds.binding_deadline, Some(ceiling));
         let error =
@@ -4149,11 +4135,11 @@ pub(crate) mod login_lifecycle_tests {
 
     #[tokio::test(start_paused = true)]
     async fn abandoned_builtin_login_stops_before_later_credential_effects() {
-        let mut f = fixture(chrono::Duration::minutes(5)).await;
+        let mut f = fixture(Duration::minutes(5)).await;
         f.material.plan = LoginPlan::builtin_form();
         // End the receiver while the first credential is waiting for the native
         // origin-spacing floor, well before the binding's own expiry.
-        f.bounds.allowance = chrono::Duration::milliseconds(100);
+        f.bounds.allowance = Duration::milliseconds(100);
         let error =
             f.rc.login_session_bounded(&f.lease.session, &f.handle, &f.analyzer, f.material, f.bounds)
                 .await
@@ -4184,7 +4170,7 @@ pub(crate) mod login_lifecycle_tests {
 
     #[tokio::test(start_paused = true)]
     async fn released_lease_cannot_authenticate_or_replace_its_fence() {
-        let f = fixture(chrono::Duration::minutes(5)).await;
+        let f = fixture(Duration::minutes(5)).await;
         Scheduler::new(Arc::clone(&f.rc.stores.leases))
             .release(&f.lease, SessionStatus::Failed)
             .await

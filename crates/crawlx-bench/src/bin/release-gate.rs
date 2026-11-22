@@ -13,8 +13,8 @@
 //! as `suites/SUITE.json` and exits with 0 whenever the result was recorded: the verdict is
 //! computed later by `check`.
 
-use chrono::NaiveDate;
 use crawlx_bench::release_gate::{evaluate, parse_waivers, record_suite, GateInputs, SUITE_IDS};
+use crawlx_core::time::{NaiveDate, Timestamp};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -139,7 +139,7 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
 
 /// `Ok(true)` when the release is ready.
 fn check(args: CheckArgs) -> Result<bool, String> {
-    let today = args.today.unwrap_or_else(|| chrono::Utc::now().date_naive());
+    let today = args.today.unwrap_or_else(|| Timestamp::now().date_naive());
     let mut inputs = GateInputs::new(&args.evidence, &args.repo, today);
     inputs.model_tier_changed = args.model_tier_changed;
     let default_waivers = args.repo.join("bench/baselines/release-waivers.json");

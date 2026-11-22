@@ -23,6 +23,7 @@ use crawlx_core::browser::BrowserContext;
 use crawlx_core::config::{CrawlMode, SafetyProfile};
 use crawlx_core::counters::ActionStatus;
 use crawlx_core::identity::{ActionKind, ElementIdentityHash};
+use crawlx_core::time::Duration;
 use crawlx_core::{ActionContextId, StateClusterId, Timestamp, TrustLane};
 use crawlx_elements::{Candidate, IdentityBuilder};
 use crawlx_graph::{
@@ -169,7 +170,7 @@ async fn replay_learned_edges(gym: &GymHandle, run: &FixtureRun) -> ReplayRates 
         .map(|r| r.last_observed_at)
         .max()
         .expect("non-empty")
-        + chrono::Duration::minutes(1);
+        + Duration::minutes(1);
     let mut graph = EnablementGraph::new(run.report.run_id);
     assert_eq!(graph.load(records.iter().cloned()), records.len());
 
@@ -238,7 +239,7 @@ async fn replay_learned_edges(gym: &GymHandle, run: &FixtureRun) -> ReplayRates 
     let mut replays = Vec::new();
     let mut retired = Vec::new();
     for round in 0..REPLAY_ROUNDS {
-        let at = now + chrono::Duration::seconds(i64::from(round));
+        let at = now + Duration::seconds(i64::from(round));
         for target in &targets {
             let params = SearchParams::new(at, &safe).with_resolvable(&resolves);
             let Some(plan) = best_path(&graph, entry_cluster, PathGoal::RevealIdentity(*target), &params)

@@ -5,9 +5,9 @@
 
 use super::support::{lease_scale, new_run, open_sibling, tenant, Raw, V};
 use crate::rig::Rig;
-use chrono::Duration;
 use crawlx_core::counters::{RunStatus, TerminalReason};
 use crawlx_core::repo::{DiscoveryOutcome, FrontierRepo, FrontierStateCounts, FrontierStatus, RunRepo};
+use crawlx_core::time::Duration;
 use crawlx_core::{CrawlRunId, StoreError, WorkerId};
 use crawlx_storage::testkit::{canonical_url, crawl_run};
 use crawlx_storage::{LeaseRepo, Store, StoreConfig};

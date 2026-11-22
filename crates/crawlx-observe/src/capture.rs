@@ -35,10 +35,9 @@
 use crate::error::CaptureError;
 use crate::traffic::Redactor;
 use async_trait::async_trait;
-use chrono::Duration;
 use crawlx_core::config::CaptureBackend;
 use crawlx_core::ids::{NetworkEpochId, SessionId};
-use crawlx_core::time::Timestamp;
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::traffic::{
     Protocol, ProxyFlow, ProxyFlowSource, TrafficEvent, TrafficOrigin, UnattributedReason,
 };
@@ -706,11 +705,11 @@ pub fn operations(events: &[TrafficEvent]) -> Vec<String> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
-    use chrono::{DateTime, Utc};
+    use crawlx_core::time::Timestamp;
     use crawlx_core::traffic::{Protocol, REDACTED_PLACEHOLDER};
 
     fn t(ms: i64) -> Timestamp {
-        DateTime::<Utc>::from_timestamp_millis(1_700_000_000_000 + ms).unwrap()
+        Timestamp::from_timestamp_millis(1_700_000_000_000 + ms).unwrap()
     }
 
     fn flow(method: &str, url: &str, at_ms: i64) -> ProxyFlow {

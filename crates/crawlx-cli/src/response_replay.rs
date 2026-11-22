@@ -5,6 +5,7 @@ use anyhow::Context;
 use base64::Engine;
 use clap::Args;
 use crawlx_core::hash::Digest;
+use crawlx_core::time::Timestamp;
 use crawlx_core::{CrawlRunId, TenantId};
 use crawlx_storage::artifact_key_crypto::ArtifactKeys;
 use crawlx_storage::sql::Sql;
@@ -85,7 +86,7 @@ async fn replay_on<B: Sql>(
             args.frontier,
             identity,
             args.principal,
-            chrono::Utc::now(),
+            Timestamp::now(),
             args.max_bytes,
         )
         .await?;

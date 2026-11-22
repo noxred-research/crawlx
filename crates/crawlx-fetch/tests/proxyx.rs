@@ -14,6 +14,7 @@ use common::{allow_private_policy, fast_config, url, LOOPBACK};
 use crawlx_core::hash::Digest;
 use crawlx_core::secret::SecretOr;
 use crawlx_core::session_binding::{RetirementReason, SessionBindingV1};
+use crawlx_core::time::Timestamp;
 use crawlx_fetch::proxyx::{
     PoolBinding, PoolCause, PoolPinAuthority, PoolSelector, PoolTier, ProxyxError, ProxyxRoute, Retryability,
 };
@@ -224,11 +225,7 @@ fn session(route: &ProxyxRoute, name: &str) -> SessionBindingV1 {
         "profile": null,
     }))
     .unwrap();
-    SessionBindingV1::new(
-        identity,
-        7,
-        chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap(),
-    )
+    SessionBindingV1::new(identity, 7, Timestamp::from_timestamp(2_000_000_000, 0).unwrap())
 }
 
 struct Rig {

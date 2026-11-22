@@ -5,6 +5,7 @@
 use crate::error::WorkerError;
 use crate::run::RunContext;
 use crawlx_core::repo::CrawlSession;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{SessionId, Timestamp};
 use crawlx_policy::{BudgetKind, Remaining};
 use serde::{Deserialize, Serialize};
@@ -42,7 +43,7 @@ impl Allocation {
         let millis = u64::try_from(remaining.time.as_millis()).unwrap_or(u64::MAX);
         let slice_millis = millis.div_ceil(u64::from(count));
         let deadline = now
-            .checked_add_signed(chrono::Duration::milliseconds(
+            .checked_add_signed(SpanDuration::milliseconds(
                 i64::try_from(slice_millis).unwrap_or(i64::MAX),
             ))
             .unwrap_or(now);
@@ -124,11 +125,9 @@ impl RoleBudget {
             let run = rc.stores.runs.get(rc.run).await?;
             let started = run.started_at.unwrap_or(run.created_at);
             let credited_deadline = started
-                .checked_add_signed(chrono::Duration::seconds(i64::from(
-                    rc.crawl.limits.duration_seconds,
-                )))
+                .checked_add_signed(SpanDuration::seconds(i64::from(rc.crawl.limits.duration_seconds)))
                 .and_then(|deadline| {
-                    deadline.checked_add_signed(chrono::Duration::milliseconds(
+                    deadline.checked_add_signed(SpanDuration::milliseconds(
                         i64::try_from(credit_ms).unwrap_or(i64::MAX),
                     ))
                 })
@@ -167,7 +166,7 @@ impl RoleBudget {
     pub(crate) async fn reserve_login(
         &mut self,
         rc: &RunContext,
-        allowance: chrono::Duration,
+        allowance: SpanDuration,
     ) -> Result<(), WorkerError> {
         let millis = u64::try_from(allowance.num_milliseconds()).unwrap_or(0);
         if millis > crawlx_storage::session_binding::MAX_LOGIN_RESERVATION_MS {
@@ -191,7 +190,7 @@ impl RoleBudget {
     pub(crate) async fn credit_login(
         &mut self,
         rc: &RunContext,
-        spent: chrono::Duration,
+        spent: SpanDuration,
     ) -> Result<(), WorkerError> {
         let millis = u64::try_from(spent.num_milliseconds()).unwrap_or(0);
         if millis == 0 {
@@ -256,20 +255,21 @@ impl RoleBudget {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+    use crawlx_core::time::Duration;
 
     #[test]
     fn parallel_credit_snapshots_are_idempotent_and_stale_reads_do_not_roll_back() {
-        let started = chrono::DateTime::from_timestamp(1_000, 0).unwrap();
+        let started = Timestamp::from_timestamp(1_000, 0).unwrap();
         let limits = crawlx_core::config::Limits::default();
         let shared = parking_lot::Mutex::new(crawlx_policy::Budget::new(&limits, started));
         let raw = shared.lock().deadline();
-        let a_persisted = raw + chrono::Duration::seconds(25);
+        let a_persisted = raw + Duration::seconds(25);
         // A persisted its login. B loads that durable credit before A resumes.
         reconcile_login_clock(&mut shared.lock(), a_persisted);
         // A's own post-login reload observes exactly the same credit, not an increment.
         reconcile_login_clock(&mut shared.lock(), a_persisted);
         assert_eq!(shared.lock().deadline(), a_persisted);
-        let both_persisted = a_persisted + chrono::Duration::seconds(10);
+        let both_persisted = a_persisted + Duration::seconds(10);
         reconcile_login_clock(&mut shared.lock(), both_persisted);
         reconcile_login_clock(&mut shared.lock(), a_persisted);
         assert_eq!(shared.lock().deadline(), both_persisted);
@@ -277,7 +277,7 @@ mod tests {
 
     #[test]
     fn uneven_demand_returns_unused_slices_to_later_turns() {
-        let now = chrono::DateTime::from_timestamp(1_000, 0).unwrap();
+        let now = Timestamp::from_timestamp(1_000, 0).unwrap();
         let limits = crawlx_core::config::Limits {
             interactions: 23,
             states: 23,
@@ -298,7 +298,7 @@ mod tests {
             assert_eq!(allocation.states, Some(allowance));
             assert_eq!(
                 allocation.deadline - now,
-                chrono::Duration::milliseconds(i64::from(allowance))
+                Duration::milliseconds(i64::from(allowance))
             );
             let used = demand.min(allowance);
             spent.push(used);
@@ -314,12 +314,12 @@ mod tests {
 
     #[test]
     fn recovered_usage_and_original_deadline_do_not_reset() {
-        let now = chrono::DateTime::from_timestamp(1_000, 0).unwrap();
+        let now = Timestamp::from_timestamp(1_000, 0).unwrap();
         let allocation = Allocation {
             session_id: SessionId::new(),
             interactions: Some(5),
             states: Some(3),
-            deadline: now + chrono::Duration::seconds(10),
+            deadline: now + Duration::seconds(10),
             login_credit_ms: 0,
             login_allowance_ms: 0,
         };
@@ -336,7 +336,7 @@ mod tests {
             Some(crawlx_core::counters::TerminalReason::LimitReached)
         );
         assert_eq!(
-            recovered.exhausted(now + chrono::Duration::seconds(10)),
+            recovered.exhausted(now + Duration::seconds(10)),
             Some(crawlx_core::counters::TerminalReason::DeadlineReached)
         );
     }

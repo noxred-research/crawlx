@@ -6,6 +6,7 @@ use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{ActionJournal, EventRepo, RunRepo};
 use crawlx_core::safety::{RiskClass, SafetyDecision};
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::{ActionId, ApprovalId, CrawlRunId, StateClusterId, TenantId, WorkerId};
 use crawlx_storage::testkit::{allow_verdict, crawl_run, create_crawl, proposal, sessions, verdict};
 use crawlx_storage::{
@@ -56,7 +57,7 @@ fn login_url(base: &str, role: &str, password: &str, schema: &str) -> String {
 }
 
 async fn opted_in_zdr_action(pg: &Pg, tenant: TenantId) -> (CrawlRunId, ActionId, Arc<DeliveryBuffer>) {
-    let now = chrono::Utc::now();
+    let now = Timestamp::now();
     let mut record = crawlx_policy::testkit::sample_record(tenant, now, &["https://example.test"]);
     record
         .test_sinks
@@ -304,10 +305,7 @@ async fn privileged_bypass_pauses_only_affected_run_with_independent_identities(
         .unwrap();
     assert!(!durable.to_string().contains("private-zdr-sink-canary"));
     assert!(auditor.audit().await.unwrap().violations.is_empty());
-    buffer
-        .sweep(chrono::Utc::now() + chrono::Duration::hours(2))
-        .await
-        .unwrap();
+    buffer.sweep(Timestamp::now() + Duration::hours(2)).await.unwrap();
     assert!(auditor.audit().await.unwrap().violations.is_empty());
 
     sqlx::query(

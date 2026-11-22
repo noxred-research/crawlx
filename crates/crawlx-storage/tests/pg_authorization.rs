@@ -5,10 +5,10 @@
 //! early.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::{DateTime, Duration, Utc};
 use crawlx_core::counters::{RunStatus, TerminalReason};
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::RunRepo;
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::{AuthorizationRecordId, CrawlRunId, StoreError, TenantId};
 use crawlx_policy::testkit::sample_record;
 use crawlx_policy::{AuthorizationRecord, AuthzFailure, OwnershipProof};
@@ -56,8 +56,8 @@ macro_rules! env {
 }
 
 /// PostgreSQL keeps microseconds; a test clock that already has only microseconds round-trips.
-fn now() -> DateTime<Utc> {
-    DateTime::from_timestamp_micros(Utc::now().timestamp_micros()).unwrap()
+fn now() -> Timestamp {
+    Timestamp::from_timestamp_micros(Timestamp::now().timestamp_micros()).unwrap()
 }
 
 impl Env {
@@ -101,7 +101,7 @@ fn new_row<'a>(
     digest: &'a Digest,
     by: Uuid,
     verification: &'a Value,
-    verified_at: DateTime<Utc>,
+    verified_at: Timestamp,
 ) -> NewAuthorization<'a> {
     NewAuthorization {
         tenant: r.tenant,
@@ -118,7 +118,7 @@ fn new_row<'a>(
 }
 
 /// Create `r` verified at `at`; returns the digest stored.
-async fn create(env: &Env, r: &AuthorizationRecord, by: Uuid, at: DateTime<Utc>) -> Digest {
+async fn create(env: &Env, r: &AuthorizationRecord, by: Uuid, at: Timestamp) -> Digest {
     let body = serde_json::to_value(r).unwrap();
     let digest = r.body_digest().unwrap();
     let verification = json!({ "kind": "dns_txt", "checkedAt": at, "hosts": ["app.example.test"] });

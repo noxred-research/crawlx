@@ -14,6 +14,7 @@ use crawlx_core::config::RetentionMode;
 use crawlx_core::custody::FrozenArchiveSource;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::CrawlRun;
+use crawlx_core::time::Duration;
 use crawlx_core::{ArtifactRef, Clock};
 use crawlx_storage::archive::{cdxj, rollover, staging::StagedFile, wacz, warc, ArchiveError, Limits};
 use crawlx_storage::custody::frozen_archive::with_terminal_grant;
@@ -127,7 +128,7 @@ pub(crate) async fn finalize(
         ));
     }
     let expires = (run.config.retention.days != 0)
-        .then(|| run.created_at + chrono::Duration::days(i64::from(run.config.retention.days)));
+        .then(|| run.created_at + Duration::days(i64::from(run.config.retention.days)));
     if expires.is_some_and(|expiry| expiry <= clock.now()) {
         return Err(WorkerError::PolicyDenied("archive source expired".into()));
     }

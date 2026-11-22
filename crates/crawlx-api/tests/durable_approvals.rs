@@ -4,13 +4,12 @@
 mod common;
 
 use axum::http::StatusCode;
-use chrono::{TimeZone, Utc};
 use crawlx_api::{ApiConfig, Settings};
 use crawlx_core::action::{BrowserAction, Modifiers, PointerButton};
 use crawlx_core::config::{DestructiveActions, LaunchProfile, SafetyProfile};
 use crawlx_core::observation::{LiveTargetFacts, RuntimeLocator};
 use crawlx_core::repo::{ActionJournal, RunRepo, SafetyContext};
-use crawlx_core::time::{Clock, ManualClock};
+use crawlx_core::time::{Clock, Duration, ManualClock, Timestamp};
 use crawlx_core::{BackendNodeId, FrameId, StateClusterId, TabId, WorkerId};
 use crawlx_safety::approvals::{ApprovalAuthority, VerifiedApproval};
 use crawlx_safety::{Adjudication, KernelConfig, SafetyKernel};
@@ -26,7 +25,7 @@ use std::sync::Arc;
 async fn reviewer_http_approved_action_reaches_kernel_and_original_journal_once() {
     for approved in [true, false] {
         let clock = Arc::new(ManualClock::new(
-            Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            Timestamp::from_ymd_hms(2026, 1, 1, 0, 0, 0).unwrap(),
         ));
         let e = common::env_with(ApiConfig::default(), Settings::default(), clock.clone());
         let mut run = crawl_run(e.tenant, create_crawl("https://example.test/", &[], 1));
@@ -54,7 +53,7 @@ async fn reviewer_http_approved_action_reaches_kernel_and_original_journal_once(
             clock.clone(),
         )
         .unwrap()
-        .with_run_deadline(clock.now() + chrono::Duration::minutes(5));
+        .with_run_deadline(clock.now() + Duration::minutes(5));
         let mut p = proposal("role0", StateClusterId(uuid::Uuid::nil()), 1);
         p.action = BrowserAction::Click {
             target: RuntimeLocator {
@@ -87,7 +86,7 @@ async fn reviewer_http_approved_action_reaches_kernel_and_original_journal_once(
         let Adjudication::ApprovalRequired(verdict, request) = kernel.adjudicate(p.clone(), &context) else {
             panic!("destructive action must require approval");
         };
-        assert_eq!(request.expires_at, clock.now() + chrono::Duration::minutes(5));
+        assert_eq!(request.expires_at, clock.now() + Duration::minutes(5));
         let action = e
             .store
             .propose(run.id, lease.session.id, &p, &verdict)

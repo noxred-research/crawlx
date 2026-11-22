@@ -4,9 +4,9 @@
 //! `durable_approvals.rs`.
 
 use crate::rig::Rig;
-use chrono::Duration;
 use crawlx_core::repo::{ActionJournal, RunRepo};
 use crawlx_core::safety::{SafetyDecision, SafetyVerdict};
+use crawlx_core::time::Duration;
 use crawlx_core::{ApprovalId, CrawlRunId, StateClusterId, TenantId, WorkerId};
 use crawlx_storage::approvals::{
     ApprovalBindingV1, ApprovalRepository, ApprovalRequestV1, DurableApprovalV1,

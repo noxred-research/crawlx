@@ -8,7 +8,7 @@ use crawlx_api::{ApiConfig, AppState, Scope, Settings};
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::RunRepo;
 use crawlx_core::session_binding::{SessionBindingV1, SessionIdentityV1};
-use crawlx_core::time::{Clock, ManualClock};
+use crawlx_core::time::{Clock, Duration, ManualClock};
 use crawlx_core::Timestamp;
 use crawlx_storage::testkit::{crawl_run, create_crawl, sessions};
 use crawlx_worker::interactive_profiles::{
@@ -53,7 +53,7 @@ async fn fixture() -> (common::Env, InteractiveControl, String, Arc<ManualClock>
         .unwrap();
     let digest = Digest::of("test/profile-api", b"local");
     let identity = SessionIdentityV1::new(env.tenant, &session, digest, digest, digest, digest, None);
-    let binding = SessionBindingV1::new(identity, 7, clock.now() + chrono::Duration::minutes(5));
+    let binding = SessionBindingV1::new(identity, 7, clock.now() + Duration::minutes(5));
     let control = registry.register(binding, CancellationToken::new()).unwrap();
     let path = format!("/v1/crawls/{}/interactive-profiles/{}", run.id, session.id);
     (env, control, path, clock)

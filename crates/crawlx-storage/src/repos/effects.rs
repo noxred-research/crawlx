@@ -17,6 +17,7 @@
 use crate::backend::strategy::{Conn, Timestamp};
 use crate::backend::{Backend, BackendKind, Dialect};
 use crate::sql::{db_clock, stmt, Sql, SqlRow, Stmt};
+use crawlx_core::time::SecondsFormat;
 use crawlx_core::CrawlRunId;
 use crawlx_core::StoreError;
 use uuid::Uuid;
@@ -98,7 +99,7 @@ async fn expire_credentials<B: Sql>(conn: &mut Conn<B>, run: Uuid, now: Timestam
     .ts(now)
     .execute(conn)
     .await?;
-    let stamp = now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+    let stamp = now.to_rfc3339_opts(SecondsFormat::Micros, true);
     let binding = <B::Dialect as Dialect>::json_set(
         &<B::Dialect as Dialect>::json_set("binding", "state", "'retired'"),
         "expires_at",

@@ -9,8 +9,8 @@
 
 use crate::inspect::connect;
 use anyhow::{anyhow, bail, Context as _};
-use chrono::{DateTime, Utc};
 use clap::{Args, Subcommand, ValueEnum};
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::{ActionId, CrawlRunId, SystemClock, TenantId, WorkerId};
 use crawlx_storage::sql::Sql;
 use crawlx_storage::tenant::Tenancy;
@@ -213,7 +213,7 @@ fn s3_config(bucket: &str) -> anyhow::Result<S3Config> {
 pub struct VerifyArtifactsArgs {
     /// Only rows created at or after this RFC 3339 timestamp (the outage start).
     #[arg(long, value_name = "RFC3339")]
-    pub since: Option<DateTime<Utc>>,
+    pub since: Option<Timestamp>,
     #[command(flatten)]
     /// Store.
     pub store: StoreArgs,
@@ -265,7 +265,7 @@ pub struct SweepRetentionArgs {
 pub struct DurabilityAuditArgs {
     /// Only accept-log rows at or after this RFC 3339 timestamp (the outage start).
     #[arg(long, value_name = "RFC3339")]
-    pub since: Option<DateTime<Utc>>,
+    pub since: Option<Timestamp>,
     /// Print one JSON object (`checked`, `missing`, `since`) instead of text.
     #[arg(long)]
     pub json: bool,
@@ -731,7 +731,7 @@ async fn sweep_retention_on<B: Sql>(
     };
     let mut sweeper = RetentionSweeper::new(pg.clone()).with_artifacts(reaper);
     if let Some(secs) = a.orphan_grace_s {
-        sweeper = sweeper.with_orphan_grace(chrono::Duration::seconds(i64::try_from(secs)?));
+        sweeper = sweeper.with_orphan_grace(Duration::seconds(i64::try_from(secs)?));
     }
     if let Some(every) = a.every {
         let cancel = CancellationToken::new();

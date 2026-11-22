@@ -10,7 +10,6 @@ description = "crawlx: input classification, deterministic value partitions, for
 
 [dependencies]
 crawlx-core = { path = "../crawlx-core" }
-chrono.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true
 serde.workspace = true

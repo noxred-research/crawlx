@@ -7,12 +7,12 @@ use crate::codec::{from_json, to_json};
 use crate::sql::{stmt, Sql, SqlRow};
 use crate::store::Store;
 use async_trait::async_trait;
-use chrono::Duration;
 use crawlx_core::cache::{AdaptiveSelectorRecordV1, AdaptiveSelectorRepo};
 use crawlx_core::config::RetentionMode;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::RunRepo;
 use crawlx_core::selectors::SelectorScopeV1;
+use crawlx_core::time::Duration;
 use crawlx_core::{CrawlRunId, StoreError, TenantId, Timestamp};
 
 #[derive(Clone)]
@@ -233,7 +233,7 @@ impl<B: Sql> AdaptiveSelectorRepo for Store<B> {
                 "selector source run belongs to another tenant".into(),
             ));
         }
-        let now = chrono::Utc::now();
+        let now = Timestamp::now();
         let expires_at = expiry(
             record,
             run.created_at,

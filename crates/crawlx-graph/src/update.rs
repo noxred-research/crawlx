@@ -296,7 +296,7 @@ mod tests {
     use super::*;
     use crate::edge::CostParams;
     use crate::testutil::{act, cluster, graph, hash, obs, t0};
-    use chrono::Duration;
+    use crawlx_core::time::Duration;
     use crawlx_core::RouteTemplate;
 
     fn identity_edge(g: &EnablementGraph, c: u128, a: u8, h: u8) -> crate::EnablementEdge {

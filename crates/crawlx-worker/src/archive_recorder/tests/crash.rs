@@ -2,6 +2,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;
+use crawlx_core::time::{Duration as SpanDuration, FixedDateTime, Timestamp};
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt as _, BufReader};
@@ -25,9 +26,9 @@ async fn archive_boundary_child() {
     let run = crawlx_core::CrawlRunId(
         uuid::Uuid::parse_str(&std::env::var("CRAWLX_ARCHIVE_CRASH_RUN").unwrap()).unwrap(),
     );
-    let now = chrono::DateTime::parse_from_rfc3339(&std::env::var("CRAWLX_ARCHIVE_CRASH_CLOCK").unwrap())
+    let now = FixedDateTime::parse_rfc3339(&std::env::var("CRAWLX_ARCHIVE_CRASH_CLOCK").unwrap())
         .unwrap()
-        .with_timezone(&chrono::Utc);
+        .to_utc();
     let clock = Arc::new(ManualClock::new(now));
     let pg = Pg::connect(
         &url,
@@ -84,7 +85,7 @@ async fn sigkill_at_each_archive_boundary_recovers_one_package_without_lost_or_d
     ] {
         let staging = tempfile::tempdir().unwrap();
         let clock = Arc::new(ManualClock::new(
-            chrono::DateTime::from_timestamp_millis(chrono::Utc::now().timestamp_millis()).unwrap(),
+            Timestamp::from_timestamp_millis(Timestamp::now().timestamp_millis()).unwrap(),
         ));
         let artifacts = Arc::new(
             FsArtifactStore::open(root.path(), Arc::new(pg.clone()), clock.clone())
@@ -225,9 +226,9 @@ async fn anonymous_stage_child() {
         .unwrap();
     let durable = std::env::var("CRAWLX_ARCHIVE_CRASH_ROOT").unwrap();
     let clock = Arc::new(ManualClock::new(
-        chrono::DateTime::parse_from_rfc3339("2026-11-06T00:00:00Z")
+        FixedDateTime::parse_rfc3339("2026-11-06T00:00:00Z")
             .unwrap()
-            .with_timezone(&chrono::Utc),
+            .to_utc(),
     ));
     let memory = Arc::new(MemoryStore::with_clock(clock.clone()));
     let stores = Stores::over_memory(memory, Path::new(&durable)).await.unwrap();
@@ -270,7 +271,7 @@ async fn anonymous_stage_child() {
         run.id,
         run.config.output.archive.as_ref().unwrap().clone(),
         run.created_at,
-        Some(run.created_at + chrono::Duration::days(1)),
+        Some(run.created_at + SpanDuration::days(1)),
         TerminalReason::FrontierExhausted,
     );
     stores.archives.begin(&pending).await.unwrap();

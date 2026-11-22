@@ -15,7 +15,7 @@ chaos = ["crawlx-storage/chaos"]
 runtime-diagnostics = ["dep:tokio-metrics", "tokio/tracing"]
 
 [dependencies]
-crawlx-core = { path = "../crawlx-core" }
+crawlx-core = { path = "../crawlx-core", features = ["sqlx"] }
 crawlx-scheduler = { path = "../crawlx-scheduler" }
 crawlx-storage = { path = "../crawlx-storage" }
 crawlx-telemetry = { path = "../crawlx-telemetry" }
@@ -41,7 +41,6 @@ base64.workspace = true
 blake3.workspace = true
 bytes.workspace = true
 bzip2 = "0.6"
-chrono.workspace = true
 flate2.workspace = true
 futures.workspace = true
 http.workspace = true

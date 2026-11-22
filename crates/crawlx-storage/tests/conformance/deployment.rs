@@ -2,6 +2,7 @@
 //! by every handle and every concurrent first user, on every engine.
 
 use crate::rig::Rig;
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_storage::deployment::{deployment_id_of, DeploymentIdentity};
 use futures::future::join_all;
 
@@ -81,9 +82,9 @@ async fn orphan_sweep_is_refused_for_another_deployment_but_runs_for_the_owner(r
                 .with_index(Arc::new(store.clone()));
             RetentionSweeper::new(store.clone())
                 .with_artifacts(Arc::new(reaper))
-                .with_orphan_grace(chrono::Duration::zero())
+                .with_orphan_grace(Duration::zero())
         };
-        let now = chrono::Utc::now() + chrono::Duration::seconds(5);
+        let now = Timestamp::now() + Duration::seconds(5);
         // the other deployment's sweep is refused and removes nothing
         let error = sweep(Arc::new("another-deployment".to_owned()))
             .sweep(now)

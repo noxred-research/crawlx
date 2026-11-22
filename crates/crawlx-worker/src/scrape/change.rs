@@ -20,6 +20,7 @@ use crate::scrape::llm::{charge, failure};
 use crate::scrape::{rfc3339, ScrapeFailure};
 use crawlx_core::repo::{ArtifactStore, PageRepo, RunRepo};
 use crawlx_core::scrape::{ChangeMode, ChangeStatus, ChangeTrackingResult, ScrapeDocument};
+use crawlx_core::time::Duration;
 use crawlx_core::{CanonicalUrl, StoreError, TenantId, Timestamp};
 use crawlx_extract::diff::{json_diff, markdown_diff};
 use crawlx_model::llm::{LlmExtractor, TokenUsage};
@@ -77,7 +78,7 @@ pub(crate) async fn baseline(
         if owner.tenant != tenant
             || owner.config.retention.mode == crawlx_core::config::RetentionMode::Zdr
             || owner.config.retention.days == 0
-            || owner.created_at + chrono::Duration::days(i64::from(owner.config.retention.days)) <= now
+            || owner.created_at + Duration::days(i64::from(owner.config.retention.days)) <= now
         {
             continue;
         }
@@ -272,7 +273,7 @@ mod tests {
     fn baseline_of(markdown: &str) -> Baseline {
         Baseline {
             markdown: markdown.to_owned(),
-            at: chrono::Utc::now(),
+            at: Timestamp::now(),
         }
     }
 

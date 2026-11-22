@@ -5,10 +5,10 @@
 
 use super::support::{epoch, lease_all, new_run, tenant, Raw, V};
 use crate::rig::Rig;
-use chrono::Duration;
 use crawlx_core::counters::ActionStatus;
 use crawlx_core::observation::BrowserBuildInfo;
 use crawlx_core::repo::{ActionJournal, RunRepo, SessionKind, SessionStatus};
+use crawlx_core::time::Duration;
 use crawlx_core::{CrawlRunId, SessionId, StateClusterId, StoreError, WorkerId};
 use crawlx_storage::testkit::{allow_verdict, crawl_run, create_crawl, proposal, sessions};
 use crawlx_storage::{LeaseRepo, SessionLease};

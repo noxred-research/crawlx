@@ -9,6 +9,7 @@ use crawlx_core::archive::{
 use crawlx_core::config::{Retention, RetentionMode};
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{PageRecord, PageRepo, RunRepo};
+use crawlx_core::time::Duration;
 use crawlx_core::{CrawlRunId, TenantId, Timestamp};
 use crawlx_storage::archive::collection::{ApprovedLocalDependency, ArchiveCollection};
 use crawlx_storage::archive::resolver::RecordLocation;
@@ -268,7 +269,7 @@ fn retention_gate(retention: &Retention, created: Timestamp, now: Timestamp) -> 
         _ => retention.days.clamp(1, 30),
     };
     let expiry = created
-        .checked_add_signed(chrono::Duration::days(i64::from(days)))
+        .checked_add_signed(Duration::days(i64::from(days)))
         .ok_or_else(|| anyhow!("retention expiry overflow"))?;
     if expiry <= now {
         bail!("retention_denied: source run has expired");

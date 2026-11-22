@@ -8,6 +8,7 @@ use crawlx_core::browser::{BrowserContext, BrowserError, ContextConfig, Navigati
 use crawlx_core::observation::{BrowserBuildInfo, QuiescencePolicy};
 use crawlx_core::page_op::{PageOp, PageOpResult, ShotSpec};
 use crawlx_core::seed::CrawlSeed;
+use crawlx_core::time::Timestamp;
 use crawlx_core::{SessionId, TenantId};
 use crawlx_policy::egress::EgressPolicy;
 use crawlx_policy::fixture_evaluation::{FixtureEvaluationLease, FixtureEvaluationScope};
@@ -183,7 +184,7 @@ struct Asset {
     target: String,
     mime: String,
     status: Option<u16>,
-    captured_at: chrono::DateTime<chrono::Utc>,
+    captured_at: Timestamp,
     body: Vec<u8>,
 }
 

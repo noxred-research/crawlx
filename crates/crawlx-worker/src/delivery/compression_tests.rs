@@ -14,7 +14,7 @@ use crawlx_core::config::RetentionMode;
 use crawlx_core::dataset::{DatasetConfigV1, DeliveryBatchV1};
 use crawlx_core::repo::{ArtifactStore, CrawlRun, RunRepo};
 use crawlx_core::secret::ArtifactSink;
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::Clock;
 use crawlx_storage::artifacts::{ArtifactBlobs, FsArtifactStore, MemBlobs};
 use crawlx_storage::MemoryStore;
@@ -165,7 +165,7 @@ fn serde_defaults_to_none_and_rejects_unknown_codecs_or_executable_postprocessor
 #[tokio::test]
 async fn actual_article_manifests_reference_compressed_approved_serializer_bytes() {
     let clock = Arc::new(ManualClock::new(
-        chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap(),
+        Timestamp::from_timestamp(1_800_000_000, 0).unwrap(),
     ));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     let directory = tempfile::tempdir().unwrap();
@@ -207,14 +207,14 @@ async fn actual_article_manifests_reference_compressed_approved_serializer_bytes
         let encoded = artifacts.get(batch.content.artifact()).await.unwrap();
         assert_eq!(batch.size_bytes, u64::try_from(encoded.len()).unwrap());
         assert_eq!(decode(codec, &encoded), plain.as_slice());
-        assert!(batch.expires_at <= run.created_at + chrono::Duration::days(1));
+        assert!(batch.expires_at <= run.created_at + Duration::days(1));
     }
 }
 
 #[tokio::test]
 async fn actual_generic_json_jsonl_csv_xml_feeds_frame_before_compression() {
     let clock = Arc::new(ManualClock::new(
-        chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap(),
+        Timestamp::from_timestamp(1_800_000_000, 0).unwrap(),
     ));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     let directory = tempfile::tempdir().unwrap();
@@ -278,14 +278,14 @@ async fn actual_generic_json_jsonl_csv_xml_feeds_frame_before_compression() {
         if declaration.serializer == "jsonl" {
             assert_eq!(decoded.last(), Some(&b'\n'));
         }
-        assert_eq!(batch.expires_at, run.created_at + chrono::Duration::days(1));
+        assert_eq!(batch.expires_at, run.created_at + Duration::days(1));
     }
 }
 
 #[tokio::test]
 async fn actual_article_compression_refuses_unapproved_plaintext_before_artifact_write() {
     let clock = Arc::new(ManualClock::new(
-        chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap(),
+        Timestamp::from_timestamp(1_800_000_000, 0).unwrap(),
     ));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     let directory = tempfile::tempdir().unwrap();
@@ -321,7 +321,7 @@ async fn actual_article_compression_refuses_unapproved_plaintext_before_artifact
 #[tokio::test]
 async fn actual_generic_preparation_refuses_encoded_framing_over_batch_cap() {
     let clock = Arc::new(ManualClock::new(
-        chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap(),
+        Timestamp::from_timestamp(1_800_000_000, 0).unwrap(),
     ));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     let directory = tempfile::tempdir().unwrap();
@@ -369,7 +369,7 @@ async fn structured_sink_compression_is_refused_at_admission_before_loopback_req
         .mount(&collector)
         .await;
     let endpoint: url::Url = collector.uri().parse().unwrap();
-    let now = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let now = Timestamp::from_timestamp(1_800_000_000, 0).unwrap();
     let mut run = run(RetentionMode::Standard, now, &["json"]);
     for protocol in [
         HttpDeliveryProtocol::SearchUpdate,
@@ -416,7 +416,7 @@ struct RawFeedFixture {
 
 async fn raw_feed_fixture(endpoint: url::Url) -> RawFeedFixture {
     let clock = Arc::new(ManualClock::new(
-        chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap(),
+        Timestamp::from_timestamp(1_800_000_000, 0).unwrap(),
     ));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     let directory = tempfile::tempdir().unwrap();

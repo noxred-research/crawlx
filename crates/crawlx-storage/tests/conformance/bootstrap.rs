@@ -9,9 +9,9 @@
 
 use crate::rig::Rig;
 use async_trait::async_trait;
-use chrono::{DateTime, Duration as TimeDelta, Utc};
 use crawlx_core::counters::RunStatus;
 use crawlx_core::custody::{CustodyLease, CustodySource, RunSecretAuthority};
+use crawlx_core::time::{Duration as TimeDelta, Timestamp};
 use crawlx_core::{CrawlRunId, SecretOr, StoreError, SystemClock, TenantId, WorkerId};
 use crawlx_storage::custody::bootstrap::{
     BootstrapAuthority, BootstrapAuthorization, BootstrapClaim, BootstrapLease, BootstrapProducerAuthorizer,
@@ -167,7 +167,7 @@ impl<B: Sql> Fixture<B> {
     }
 
     /// The database's own clock: lease arithmetic never uses the test's.
-    async fn now(&self) -> DateTime<Utc> {
+    async fn now(&self) -> Timestamp {
         self.database.db_now().await.unwrap()
     }
 

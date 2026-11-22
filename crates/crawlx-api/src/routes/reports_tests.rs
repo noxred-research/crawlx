@@ -18,7 +18,7 @@ use crawlx_core::report_history::{
     AlertCodeV1, AlertContextV1, AlertSeverityV1, DnsOutcomeV1, PipelineStageV1, PipelineStateV1,
     ProcessorIdentityV1, ProcessorStageV1, ReportFactV1, ReportHistoryRepo,
 };
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{Duration, ManualClock, SecondsFormat};
 use crawlx_core::url::CanonicalUrl;
 use crawlx_core::{Clock, TenantId, WorkerId};
 use crawlx_storage::{testkit, MemoryArtifactStore, MemoryStore, WorkerRegistry};
@@ -77,9 +77,9 @@ impl Env {
         let mut run = testkit::crawl_run(self.tenant, config);
         run.created_at = self.clock.now();
         if expired {
-            run.created_at -= chrono::Duration::days(3);
+            run.created_at -= Duration::days(3);
             run.started_at = Some(run.created_at);
-            run.finished_at = Some(run.created_at + chrono::Duration::hours(1));
+            run.finished_at = Some(run.created_at + Duration::hours(1));
             run.status = RunStatus::Completed;
             run.terminal_reason = Some(TerminalReason::FrontierExhausted);
         }
@@ -114,7 +114,7 @@ impl Env {
             config.retention.mode = RetentionMode::Zdr;
         }
         let mut run = testkit::crawl_run(tenant, config);
-        run.created_at = self.clock.now() - chrono::Duration::hours(age_hours);
+        run.created_at = self.clock.now() - Duration::hours(age_hours);
         RunRepo::create(self.store.as_ref(), &run, None).await.unwrap();
         run
     }
@@ -151,7 +151,7 @@ impl Env {
     }
 
     fn at(&self, seconds: i64) -> Timestamp {
-        self.clock.now() + chrono::Duration::seconds(seconds)
+        self.clock.now() + Duration::seconds(seconds)
     }
 
     /// Deterministic fact whose observation time is `ordinal` seconds after the injected clock.
@@ -521,7 +521,7 @@ fn dns(duration_us: u64, recheck_at: Option<Timestamp>) -> ReportDataV1 {
 }
 
 fn stamp(at: Timestamp) -> String {
-    at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    at.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 fn unrecorded(page: &Value, field: &str) -> bool {

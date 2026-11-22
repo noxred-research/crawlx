@@ -53,6 +53,7 @@ use crawlx_core::custody::{
     ArtifactReadState, CustodyLease, CustodySource, RunSecretAuthority, RunSecretSnapshot, SecretEpoch,
 };
 use crawlx_core::hash::Digest;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{ArtifactId, CrawlRunId, SecretOr, StoreError, TenantId, Timestamp, WorkerId};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::{Deserialize, Serialize};
@@ -1623,7 +1624,7 @@ async fn insert_producer<B: Sql>(
         .uuid(tenant.0).uuid(run.0).uuid(key).fetch_one(conn).await?;
     let now = database_now::<B>(conn).await?;
     let mut expires_at = now
-        .checked_add_signed(chrono::Duration::milliseconds(ttl_ms))
+        .checked_add_signed(SpanDuration::milliseconds(ttl_ms))
         .ok_or_else(|| denied("producer deadline overflow"))?;
     for bound in [bounds.opt_ts("key_expires")?, bounds.opt_ts("run_expires")?]
         .into_iter()

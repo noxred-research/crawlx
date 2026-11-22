@@ -14,7 +14,7 @@ use super::strategy::{
 };
 use crate::error::db;
 use crate::worker_eligibility::{claim_eligible, WorkerFacts};
-use chrono::NaiveDateTime;
+use crawlx_core::time::NaiveDateTime;
 use crawlx_core::StoreError;
 use serde_json::Value;
 use sqlx::mysql::MySqlRow;

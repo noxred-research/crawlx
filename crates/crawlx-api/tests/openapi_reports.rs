@@ -18,7 +18,7 @@ use crawlx_core::report_history::{
     AlertCodeV1, AlertContextV1, AlertSeverityV1, DnsOutcomeV1, PipelineStageV1, PipelineStateV1,
     ProcessorIdentityV1, ProcessorStageV1, ReportDataV1, ReportFactV1, ReportHistoryRepo, StageOutcomeV1,
 };
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{Duration, ManualClock};
 use crawlx_core::{Clock, CrawlRunId, TenantId, Timestamp, WorkerId};
 use crawlx_storage::{testkit, MemoryArtifactStore, MemoryStore, WorkerRegistry};
 use serde_json::{json, Value};
@@ -174,7 +174,7 @@ impl Fixture {
             .unwrap();
         assert_eq!(Some(entry.id), id);
         let lease = CustodyLease::for_url(self.tenant, run, entry.id, worker, fence);
-        let recheck = self.clock.now() + chrono::Duration::hours(1);
+        let recheck = self.clock.now() + Duration::hours(1);
         let facts = [
             ReportDataV1::Dns {
                 outcome: DnsOutcomeV1::Resolved,
@@ -225,7 +225,7 @@ impl Fixture {
             let mut fact = ReportFactV1::new(
                 &lease,
                 Digest::of("crawlx/report-schema-fixture", &ordinal.to_le_bytes()),
-                self.clock.now() + chrono::Duration::seconds(ordinal),
+                self.clock.now() + Duration::seconds(ordinal),
                 data,
             );
             fact.request_id = Some(entry.id);

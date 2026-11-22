@@ -25,8 +25,8 @@ use crate::artifacts::ArtifactBlobs;
 use crate::backend::PgBackend;
 use crate::sql::{stmt, Sql, SqlRow};
 use crate::store::Store;
-use chrono::{NaiveDate, TimeZone, Utc};
 use crawlx_core::hash::Digest;
+use crawlx_core::time::NaiveDate;
 use crawlx_core::{StoreError, TenantId, Timestamp};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -42,7 +42,7 @@ pub const EXPORT_PREFIX: &str = "audit/";
 /// Object key of a tenant's export for `day`.
 #[must_use]
 pub fn export_key(tenant: TenantId, day: NaiveDate) -> String {
-    format!("{EXPORT_PREFIX}{tenant}/{}.json", day.format("%Y-%m-%d"))
+    format!("{EXPORT_PREFIX}{tenant}/{}.json", day)
 }
 
 /// BLAKE3 Merkle root of `leaves` (see the module docs for the tree shape);
@@ -126,12 +126,12 @@ impl<B: Sql> std::fmt::Debug for MerkleExport<B> {
 fn day_bounds(day: NaiveDate) -> Result<(Timestamp, Timestamp), StoreError> {
     let start = day
         .and_hms_opt(0, 0, 0)
-        .map(|t| Utc.from_utc_datetime(&t))
+        .map(|t| t.and_utc())
         .ok_or_else(|| StoreError::Backend(format!("day {day} has no midnight")))?;
     let end = day
         .succ_opt()
         .and_then(|d| d.and_hms_opt(0, 0, 0))
-        .map(|t| Utc.from_utc_datetime(&t))
+        .map(|t| t.and_utc())
         .ok_or_else(|| StoreError::Backend(format!("day after {day} is out of range")))?;
     Ok((start, end))
 }

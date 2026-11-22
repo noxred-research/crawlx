@@ -8,6 +8,7 @@ use crawlx_core::parser_memory::{global, AdmittedBytes};
 use crawlx_core::repo::{CrawlRun, RunRepo, Sensitivity};
 use crawlx_core::secret::ArtifactSink;
 use crawlx_core::seed::CrawlSeed;
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::{ArtifactRef, CrawlRunId, TenantId};
 use crawlx_storage::artifacts::{BoundedArtifactError, FsArtifactStore};
 use crawlx_storage::memory::MemoryStore;
@@ -80,7 +81,7 @@ struct Bundle {
     schema_version: u8,
     tenant: TenantId,
     run: CrawlRunId,
-    expires_at: chrono::DateTime<chrono::Utc>,
+    expires_at: Timestamp,
     report: ArtifactRef,
 }
 #[derive(Serialize, Deserialize)]
@@ -217,9 +218,9 @@ async fn save_capture(
     store: &FsArtifactStore,
     run: CrawlRunId,
     capture: &ReplayCapture,
-    now: chrono::DateTime<chrono::Utc>,
+    now: Timestamp,
     retention_days: u8,
-) -> anyhow::Result<(ArtifactRef, Option<chrono::DateTime<chrono::Utc>>)> {
+) -> anyhow::Result<(ArtifactRef, Option<Timestamp>)> {
     // Input text passed the archive privacy gate. Runtime text was redacted
     // before reaching this queue; screenshots contain no inherited live jar.
     let class = if capture.media_type == "image/png" {
@@ -251,9 +252,9 @@ async fn save_inner(
     report: ReplayReport,
     differences: Vec<crawlx_worker::archive_qa::QaDiff>,
 ) -> anyhow::Result<Bundle> {
-    let now = chrono::Utc::now();
+    let now = Timestamp::now();
     let mut expires_at = now
-        .checked_add_signed(chrono::Duration::days(i64::from(args.retention_days)))
+        .checked_add_signed(Duration::days(i64::from(args.retention_days)))
         .ok_or_else(|| anyhow!("replay retention overflow"))?;
     let target = report
         .pages
@@ -379,7 +380,7 @@ async fn load(path: &Path, tenant: TenantId) -> anyhow::Result<Option<ReplayRepo
     )
     .await?
     .with_read_scope(tenant, bundle.run);
-    if bundle.expires_at <= chrono::Utc::now() {
+    if bundle.expires_at <= Timestamp::now() {
         return Ok(None);
     }
     let Some(bytes) =

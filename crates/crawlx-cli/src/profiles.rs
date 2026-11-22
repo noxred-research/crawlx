@@ -6,6 +6,7 @@ use clap::{Args, Subcommand};
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::RunRepo;
 use crawlx_core::secret::{CredentialRef, SecretResolver};
+use crawlx_core::time::Timestamp;
 use crawlx_core::{CrawlRunId, SessionId, TenantId, WorkerId};
 use crawlx_storage::leases::SessionLease;
 use crawlx_storage::profiles::{BrowserProfileRepo, ProfileCipher, ProfileScopeV1, MAX_BUNDLE_BYTES};
@@ -147,7 +148,7 @@ async fn run_on<B: Sql>(
         session,
         worker: args.worker,
         fencing_token: args.fence,
-        expires_at: chrono::Utc::now(),
+        expires_at: Timestamp::now(),
     };
     let resolver = crawlx_worker::ChainResolver::from_env(Arc::new(crawlx_core::SystemClock)).await;
     let secret = resolver

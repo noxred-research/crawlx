@@ -9,6 +9,7 @@ use crate::store::Store;
 use async_trait::async_trait;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::custody::CustodyLease;
+use crawlx_core::time::Duration;
 use crawlx_core::url_graph::{
     UrlGraphBatchV1, UrlGraphEdgeV1, UrlGraphPolicyV1, UrlGraphRankStateV1, UrlGraphRanksV1, UrlGraphRepo,
     UrlGraphSnapshotV1, UrlHandleV1,
@@ -54,7 +55,7 @@ pub(crate) fn retained_deadline(
     if mode == RetentionMode::Zdr || !(1..=365).contains(&days) {
         return Err(denied());
     }
-    let duration = chrono::Duration::try_days(days).ok_or_else(denied)?;
+    let duration = Duration::try_days(days).ok_or_else(denied)?;
     let end = created.checked_add_signed(duration).ok_or_else(denied)?;
     let end = expires.map_or(end, |expiry| expiry.min(end));
     if end <= now {

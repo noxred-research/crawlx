@@ -51,7 +51,7 @@ use crate::intel::usage::{self, Cost};
 use crate::intel::webhook::{JobEvent, JobWebhook};
 use crate::state::AppState;
 use crate::util::ts_opt;
-use chrono::Duration as ChronoDuration;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{TenantId, Timestamp};
 use crawlx_model::llm::extractor::fence;
 use crawlx_model::llm::{Completion, LlmError, LlmExtractor, TokenUsage};
@@ -113,7 +113,7 @@ pub async fn begin(state: &AppState, monitor: &MonitorRecord, trigger: &str) -> 
     // a skipped-overlap row can sit between a long-dead running check and now, so look past the newest
     let recent = repo.check_list(monitor.tenant, monitor.id, None, 10, 0).await?;
     for previous in recent.iter().filter(|c| c.state == CheckState::Running) {
-        if now - previous.started_at < ChronoDuration::minutes(STALE_CHECK_MINUTES) {
+        if now - previous.started_at < SpanDuration::minutes(STALE_CHECK_MINUTES) {
             overlapping = true;
         } else {
             let mut dead = previous.clone();
@@ -147,7 +147,7 @@ pub async fn begin(state: &AppState, monitor: &MonitorRecord, trigger: &str) -> 
         error: None,
         started_at: now,
         finished_at: None,
-        expires_at: now + ChronoDuration::days(i64::from(monitor.retention_days)),
+        expires_at: now + SpanDuration::days(i64::from(monitor.retention_days)),
     };
     if !overlapping {
         repo.check_insert(&check).await?;

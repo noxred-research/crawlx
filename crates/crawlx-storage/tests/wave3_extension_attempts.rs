@@ -2,7 +2,6 @@
 //! PostgreSQL. PostgreSQL cases require `CRAWLX_TEST_DATABASE_URL`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::{Duration, Utc};
 use crawlx_core::acquisition::BackendCapabilitiesV1;
 use crawlx_core::custody::CustodyLease;
 use crawlx_core::data_capabilities::WorkerDataCapabilitiesV1;
@@ -21,7 +20,7 @@ use crawlx_core::report_history::{
 };
 use crawlx_core::request::RequestEnvelopeV1;
 use crawlx_core::secret::{ArtifactSink, Redactor};
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::{Clock, CrawlRunId, StoreError, TenantId, WorkerId};
 use crawlx_storage::artifacts::{ArtifactIndex, FsArtifactStore};
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};
@@ -304,7 +303,7 @@ where
     assert_eq!(trails(repo.as_ref(), run).await.len(), 1);
     // The trail is recorded first; only then is the lease handed back for another attempt.
     assert!(repo
-        .retry_fenced(one, fence_one, Utc::now() - Duration::seconds(1))
+        .retry_fenced(one, fence_one, Timestamp::now() - Duration::seconds(1))
         .await
         .unwrap());
     assert!(matches!(
@@ -476,7 +475,7 @@ where
 
 #[tokio::test]
 async fn memory_extension_attempts_are_ordered_idempotent_and_atomic() {
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     contract(repo, clock, None, TenantId::new()).await;
 }
@@ -498,7 +497,7 @@ async fn postgres_extension_attempts_are_ordered_idempotent_and_atomic() {
     pg.migrate().await.unwrap();
     let tenant = TenantId::new();
     pg.ensure_tenant(tenant, "extension-attempts").await.unwrap();
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     contract(Arc::new(pg.clone()), clock, Some(&pg), tenant).await;
     pg.drop_schema().await.unwrap();
 }
@@ -569,7 +568,7 @@ where
 
 #[tokio::test]
 async fn memory_failed_result_schedules_adaptive_revisit() {
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     failed_recrawl(
         Arc::new(MemoryStore::with_clock(clock.clone())),
         clock,
@@ -595,7 +594,7 @@ async fn postgres_failed_result_schedules_adaptive_revisit() {
     pg.migrate().await.unwrap();
     let tenant = TenantId::new();
     pg.ensure_tenant(tenant, "extension-recrawl").await.unwrap();
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     failed_recrawl(Arc::new(pg.clone()), clock, tenant).await;
     pg.drop_schema().await.unwrap();
 }

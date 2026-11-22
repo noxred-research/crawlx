@@ -11,6 +11,7 @@ use crawlx_bench::gym::{GymHandle, GymServer};
 use crawlx_bench::worker_exec::{authorize_fixture, crawl_request, worker_config};
 use crawlx_browser::launch::find_executable;
 use crawlx_core::config::{CrawlMode, JavascriptMode, KnownFile, SafetyProfile};
+use crawlx_core::time::Timestamp;
 use crawlx_extract::endpoints::{discover, discover_with, DiscoveryInput, DiscoveryOptions};
 use crawlx_storage::MemoryStore;
 use crawlx_worker::{run_local_with, LocalRun, Stores};
@@ -565,7 +566,7 @@ async fn static_plane_reaches_the_crawl_maze_floor() {
 
     let mut baseline = load_baseline();
     if record_baselines() {
-        baseline.recorded = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        baseline.recorded = Timestamp::now().date_naive().to_string();
         baseline.request["static"] = serde_json::json!({
             "mode": "static",
             "seedUrl": "/g32/",

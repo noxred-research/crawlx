@@ -1,10 +1,9 @@
 //! Artifact store behavior without a database (runs come from the in-memory store).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::Utc;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::repo::{ArtifactStore, RunRepo, Sensitivity};
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{Duration as SpanDuration, ManualClock, Timestamp};
 use crawlx_core::{ArtifactRef, Clock as _, StoreError, TenantId};
 use crawlx_storage::artifacts::{ArtifactReaper as _, FsArtifactStore, MemoryArtifactStore};
 use crawlx_storage::testkit::{crawl_run, create_crawl};
@@ -19,7 +18,7 @@ struct World {
 }
 
 async fn world() -> World {
-    let clock = ManualClock::new(Utc::now());
+    let clock = ManualClock::new(Timestamp::now());
     World {
         runs: Arc::new(MemoryStore::with_clock(Arc::new(clock.clone()))),
         clock,
@@ -475,7 +474,7 @@ async fn bounded_fs_reads_enforce_scope_class_size_fixity_and_index_ceiling() {
         Err(Bound::Store(StoreError::Backend(_)))
     ));
     let mut expired = row;
-    expired.expires_at = Some(w.clock.now() - chrono::Duration::seconds(1));
+    expired.expires_at = Some(w.clock.now() - SpanDuration::seconds(1));
     let index = dir.path().join(format!("_index/{}.json", artifact.id));
     std::fs::write(&index, serde_json::to_vec(&expired).unwrap()).unwrap();
     assert!(matches!(
@@ -593,7 +592,7 @@ async fn terminal_runs_revoke_and_erase_encrypted_recovery_without_erasing_conte
                     Sensitivity::CredentialBearing,
                     "application/vnd.crawlx.checkpoint-encrypted",
                     encrypted.as_ref(),
-                    w.clock.now() + chrono::Duration::minutes(1),
+                    w.clock.now() + SpanDuration::minutes(1),
                 )
                 .await
                 .unwrap();
@@ -633,7 +632,7 @@ async fn terminal_runs_revoke_and_erase_encrypted_recovery_without_erasing_conte
                         Sensitivity::CredentialBearing,
                         "application/vnd.crawlx.checkpoint-encrypted",
                         encrypted.as_ref(),
-                        w.clock.now() + chrono::Duration::minutes(1),
+                        w.clock.now() + SpanDuration::minutes(1),
                     )
                     .await,
                 Err(StoreError::RetentionDenied(_))
@@ -656,7 +655,7 @@ async fn explicit_checkpoint_deadline_expires_the_object_and_memory_recovery_at_
     let sessions = crawlx_storage::testkit::sessions(run, 1, 1);
     w.runs.create_sessions(&sessions).await.unwrap();
     let store = MemoryArtifactStore::in_memory(w.runs.clone(), Arc::new(w.clock.clone()));
-    let deadline = w.clock.now() + chrono::Duration::seconds(1);
+    let deadline = w.clock.now() + SpanDuration::seconds(1);
     let artifact = store
         .put_until(
             run,

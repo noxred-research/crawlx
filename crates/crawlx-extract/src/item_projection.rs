@@ -8,6 +8,7 @@ use crawlx_core::selectors::{
     bounded_json_len, FieldCardinalityV1, FieldExtractionV1, FieldOutcomeV1, FieldQualityV1,
     FieldTransformV1, ItemFieldV1, ItemLoaderV1, ItemOutcomeV1, MAX_OPERATIONS,
 };
+use crawlx_core::time::{FixedDateTime, NaiveDate};
 use serde_json::{Map, Value};
 
 /// Project retained item content and recompute field/type/schema quality from finalized values.
@@ -284,9 +285,8 @@ fn valid_selected_type(value: &Value, rule: &ItemFieldV1) -> bool {
         Kind::Object => value.is_object(),
         Kind::Json => true,
         Kind::Date => value.as_str().is_some_and(|s| {
-            chrono::DateTime::parse_from_rfc3339(s).is_ok()
-                || chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                    .is_ok_and(|d| d.format("%Y-%m-%d").to_string() == s)
+            FixedDateTime::parse_rfc3339(s).is_ok()
+                || NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok_and(|d| d.to_string() == s)
         }),
         Kind::Url => value.as_str().is_some_and(|s| url::Url::parse(s).is_ok()),
     };

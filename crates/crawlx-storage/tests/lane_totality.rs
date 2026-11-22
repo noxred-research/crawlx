@@ -6,12 +6,12 @@
 //! `lane_matches_fidelity` CHECK is also probed with a raw row that violates it.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::Utc;
 use crawlx_core::counters::ActionStatus;
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::observation::{ActionReceipt, RuntimeLocator};
 use crawlx_core::proposal::ActionProposal;
 use crawlx_core::repo::{ActionJournal, ActionRecord, OutcomeRecord, RunRepo};
+use crawlx_core::time::Timestamp;
 use crawlx_core::traffic::{Fidelity, TrustLane};
 use crawlx_core::{
     ActionId, AxNodeId, BackendNodeId, CrawlRunId, FrameId, NetworkEpochId, SessionId, StateClusterId,
@@ -101,7 +101,7 @@ fn step() -> impl Strategy<Value = Step> {
 }
 
 fn outcome(s: &Step) -> OutcomeRecord {
-    let now = Utc::now();
+    let now = Timestamp::now();
     OutcomeRecord {
         status: if s.ok {
             ActionStatus::Succeeded

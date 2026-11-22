@@ -1,11 +1,11 @@
 //! JSON resource builders: wire names are camelCase.
 
 use crate::util::{ts, ts_opt};
-use chrono::Duration as ChronoDuration;
 use crawlx_core::config::{QueryPolicy, RetentionMode, TargetIsolation};
 use crawlx_core::counters::{Counters, PlaneCounters};
 use crawlx_core::identity::CoverageStatus;
 use crawlx_core::repo::{CrawlRun, CrawlSession, RunMetadata};
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{CrawlRunId, StoreError, TrustLane};
 use crawlx_storage::CoverageRow;
 use serde::{Deserialize, Serialize};
@@ -228,7 +228,7 @@ pub fn expires_at(run: &CrawlRun) -> Option<crawlx_core::Timestamp> {
     } else {
         i64::from(run.config.retention.days)
     };
-    Some(finished + ChronoDuration::days(days))
+    Some(finished + SpanDuration::days(days))
 }
 
 /// Content retention deadline without access to transient operational configuration.
@@ -238,7 +238,7 @@ pub(crate) fn metadata_expires_at(run: &RunMetadata) -> Option<crawlx_core::Time
     } else {
         i64::from(run.retention.days)
     };
-    Some(run.finished_at? + ChronoDuration::days(days))
+    Some(run.finished_at? + SpanDuration::days(days))
 }
 
 /// The compat status `expiresAt`: [`metadata_expires_at`] once the run finished, until then the
@@ -251,7 +251,7 @@ pub(crate) fn status_expires_at(run: &RunMetadata) -> crawlx_core::Timestamp {
         } else {
             i64::from(run.retention.days)
         };
-        run.created_at + ChronoDuration::days(days)
+        run.created_at + SpanDuration::days(days)
     })
 }
 
@@ -285,7 +285,7 @@ pub fn run_metadata_json(
     let id = run.id;
     let deadline = run
         .started_at
-        .map(|s| s + ChronoDuration::seconds(i64::from(run.duration_seconds)));
+        .map(|s| s + SpanDuration::seconds(i64::from(run.duration_seconds)));
     let mut v = json!({
         "id": id,
         "status": run.status,

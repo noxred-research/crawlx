@@ -2,6 +2,7 @@
 use super::*;
 use crawlx_core::dataset::memo::{CategoryCacheEntryV1, MemoScopeV1, MAX_CATEGORY_CACHE_BYTES};
 use crawlx_core::dataset::DatasetContentV1;
+use crawlx_core::time::Duration;
 
 fn memo_digest<T: serde::Serialize>(domain: &str, value: &T) -> Result<Digest, WorkerError> {
     Digest::of_value(domain, value)
@@ -192,18 +193,16 @@ impl UrlPlaneRunner {
         };
         let run = self.deps.runs.get(self.run).await?;
         let retention = if run.config.retention.mode == crawlx_core::config::RetentionMode::Zdr {
-            chrono::Duration::hours(1)
+            Duration::hours(1)
         } else {
-            chrono::Duration::days(i64::from(run.config.retention.days))
+            Duration::days(i64::from(run.config.retention.days))
         };
         let horizon = run
             .created_at
             .checked_add_signed(retention)
             .ok_or_else(|| StoreError::RetentionDenied("category retention overflow".into()))?;
         let deadline = now
-            .checked_add_signed(chrono::Duration::seconds(i64::from(
-                policy.category_cache.ttl_seconds,
-            )))
+            .checked_add_signed(Duration::seconds(i64::from(policy.category_cache.ttl_seconds)))
             .ok_or_else(|| StoreError::RetentionDenied("category expiry overflow".into()))?
             .min(horizon);
         if deadline <= now {

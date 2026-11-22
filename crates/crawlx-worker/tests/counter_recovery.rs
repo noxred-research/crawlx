@@ -23,6 +23,7 @@ use crawlx_core::custody::CustodyLease;
 use crawlx_core::orchestration::{ObservedAppendV1, ObservedCommitV1, ObservedRequestV1, RequestCommitV1};
 use crawlx_core::repo::{CrawlRun, OutcomeRecord, SessionStatus};
 use crawlx_core::request::RequestEnvelopeV1;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{
     Clock, CrawlRunId, CreateCrawl, ObservationEpoch, SessionId, StateClusterId, SystemClock, TenantId,
     WorkerId,
@@ -133,7 +134,7 @@ impl Backing {
         match self {
             Self::Memory(store) => {
                 for s in sessions {
-                    store.expire_session_lease(*s, SystemClock.now() - chrono::Duration::hours(1));
+                    store.expire_session_lease(*s, SystemClock.now() - SpanDuration::hours(1));
                 }
             }
             Self::Pg { admin, .. } => {

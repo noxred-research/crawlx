@@ -7,6 +7,7 @@ use crawlx_core::archive::{ArchiveCapture, ArchiveConfigV1};
 use crawlx_core::archive_catalog::{ArchiveExportState, ArchiveReadV1};
 use crawlx_core::config::{CrawlMode, RetentionMode};
 use crawlx_core::counters::RunStatus;
+use crawlx_core::time::Duration;
 use crawlx_core::{Clock, CreateCrawl, SystemClock, TenantId};
 use crawlx_fetch::StaticResolver;
 use crawlx_storage::archive::{wacz, Limits};
@@ -253,7 +254,7 @@ async fn recrawl_uses_only_published_compatible_body_and_keeps_actual_304_status
     orchestration.recrawl = Some(
         serde_json::from_value(serde_json::json!({
             "version":1,"minIntervalMs":50,"maxIntervalMs":50,"maxVisits":2,
-            "endAt":SystemClock.now() + chrono::Duration::minutes(1),"validatorMode":"require_history"
+            "endAt":SystemClock.now() + Duration::minutes(1),"validatorMode":"require_history"
         }))
         .unwrap(),
     );

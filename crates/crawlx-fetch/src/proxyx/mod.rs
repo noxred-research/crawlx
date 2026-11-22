@@ -40,6 +40,7 @@ use crate::upstream::UpstreamProxy;
 use crawlx_core::hash::Digest;
 use crawlx_core::secret::SecretOr;
 use crawlx_core::session_binding::{BindingState, SessionBindingV1, SessionIdentityV1};
+use crawlx_core::time::Timestamp;
 use crawlx_policy::egress::EgressPolicy;
 use http::{HeaderMap, StatusCode};
 use parking_lot::Mutex;
@@ -552,7 +553,7 @@ impl PoolBinding {
             exit_ip: tunnel.exit_ip,
             target,
             kind,
-            time: chrono::Utc::now().timestamp(),
+            time: Timestamp::now().timestamp(),
         });
     }
 }
@@ -591,11 +592,7 @@ mod tests {
             "profile": null,
         }))
         .unwrap();
-        SessionBindingV1::new(
-            identity,
-            7,
-            chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap(),
-        )
+        SessionBindingV1::new(identity, 7, Timestamp::from_timestamp(2_000_000_000, 0).unwrap())
     }
 
     #[test]

@@ -6,8 +6,7 @@
 //! section numbers are those of RFC 9309 (Robots Exclusion Protocol, September 2022).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::TimeZone;
-use crawlx_core::time::{Clock, ManualClock};
+use crawlx_core::time::{Clock, ManualClock, Timestamp};
 use crawlx_policy::robots::{
     product_token, DisallowedBy, FetchStatus, Match, RobotsCache, RobotsConfig, RobotsTxt, RobotsVerdict,
     MAX_ROBOTS_BYTES,
@@ -918,7 +917,7 @@ fn s2_2_1_product_token_extraction() {
 const ORIGIN: &str = "https://example.test";
 
 fn cache() -> (RobotsCache, ManualClock) {
-    let clock = ManualClock::new(chrono::Utc.with_ymd_and_hms(2026, 11, 21, 12, 0, 0).unwrap());
+    let clock = ManualClock::new(Timestamp::from_ymd_hms(2026, 11, 21, 12, 0, 0).unwrap());
     (
         RobotsCache::with_config(
             Arc::new(clock.clone()),
@@ -1123,7 +1122,7 @@ User-agent: *\nSitemap: https://example.test/a.xml\nDisallow:\n",
 
 #[test]
 fn a_cache_answers_for_the_configured_agent_and_its_aliases() {
-    let clock = ManualClock::new(chrono::Utc.with_ymd_and_hms(2026, 11, 21, 12, 0, 0).unwrap());
+    let clock = ManualClock::new(Timestamp::from_ymd_hms(2026, 11, 21, 12, 0, 0).unwrap());
     let body = b"User-agent: legacybot\nDisallow: /legacy\n\nUser-agent: crawlx\nDisallow: /own\n\nUser-agent: *\nDisallow: /star\n".to_vec();
     let mut plain = RobotsCache::with_config(
         Arc::new(clock.clone()),

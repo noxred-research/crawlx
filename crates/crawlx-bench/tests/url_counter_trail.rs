@@ -20,6 +20,7 @@ use crawlx_bench::worker_exec::{authorize_fixture, crawl_request, worker_config}
 use crawlx_core::config::{CrawlMode, SafetyProfile};
 use crawlx_core::counters::PlaneCounters;
 use crawlx_core::repo::{FrontierStatus, RunRepo};
+use crawlx_core::time::Duration;
 use crawlx_core::{Clock, CrawlRunId, SystemClock, TenantId};
 use crawlx_policy::testkit::sample_record;
 use crawlx_policy::AuthorizationRecord;
@@ -38,8 +39,8 @@ fn loopback_record(tenant: TenantId) -> AuthorizationRecord {
         verified_at: Some(now),
         url_prefixes: vec!["http://127.0.0.1".to_owned()],
         authorized_networks: vec!["127.0.0.0/8".parse().unwrap()],
-        valid_from: now - chrono::Duration::days(1),
-        valid_to: now + chrono::Duration::days(1),
+        valid_from: now - Duration::days(1),
+        valid_to: now + Duration::days(1),
         ..sample_record(tenant, now, &[])
     }
 }

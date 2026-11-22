@@ -8,10 +8,14 @@ publish.workspace = true
 repository.workspace = true
 description = "crawlx shared IDs, value types, configuration, typed errors and repository traits"
 
+[features]
+# Database column codecs for `Timestamp` (PostgreSQL TIMESTAMPTZ, MySQL/MariaDB TIMESTAMP); on for
+# the crates that bind timestamps to sqlx queries.
+sqlx = ["dep:sqlx"]
+
 [dependencies]
 async-trait.workspace = true
 blake3.workspace = true
-chrono.workspace = true
 ciborium.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
@@ -22,7 +26,9 @@ ring = { workspace = true, features = ["std"] }
 rustix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sqlx = { workspace = true, optional = true }
 thiserror.workspace = true
+time.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 unicode-segmentation.workspace = true

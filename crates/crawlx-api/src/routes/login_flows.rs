@@ -12,6 +12,7 @@ use axum::response::Response;
 use axum::Extension;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::secret::Redactor;
+use crawlx_core::time::Duration;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -56,7 +57,7 @@ pub async fn create(
     }
     let deadline = source
         .created_at
-        .checked_add_signed(chrono::Duration::days(i64::from(source.retention.days)))
+        .checked_add_signed(Duration::days(i64::from(source.retention.days)))
         .ok_or_else(HttpError::internal)?;
     if deadline <= state.clock.now() {
         return Err(HttpError::expired("source run expired"));
@@ -137,7 +138,7 @@ pub(crate) async fn validate_references(
         }
         let deadline = source
             .created_at
-            .checked_add_signed(chrono::Duration::days(i64::from(source.retention.days)))
+            .checked_add_signed(Duration::days(i64::from(source.retention.days)))
             .ok_or_else(HttpError::internal)?;
         if deadline <= state.clock.now() {
             return Err(HttpError::expired("source run expired"));

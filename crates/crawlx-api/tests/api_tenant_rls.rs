@@ -1,7 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! Real HTTP and PostgreSQL role isolation. No owner role executes request SQL.
 
-use chrono::{Duration, Utc};
 use crawlx_api::auth::{generate_key, key_record};
 use crawlx_api::database::DatabaseApiStore;
 use crawlx_api::store::ApiStore;
@@ -10,6 +9,7 @@ use crawlx_core::counters::{RunStatus, TerminalReason};
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{EventRepo, FrontierRepo, PageRecord, PageRepo, RunRepo, StateRepo};
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::traffic::TrustLane;
 use crawlx_core::{CrawlRunId, StateClusterId, SystemClock, TenantId};
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl, new_state, sessions};
@@ -91,7 +91,7 @@ async fn non_owner_http_requests_isolate_tenants_and_clear_transaction_settings(
     );
     let request_pg = owner.with_api_role(api_url.as_str()).await.unwrap();
     let api = DatabaseApiStore::new(owner.clone());
-    let now = Utc::now();
+    let now = Timestamp::now();
     let mut keys = Vec::new();
     let mut tenants = Vec::new();
     let mut runs = Vec::new();

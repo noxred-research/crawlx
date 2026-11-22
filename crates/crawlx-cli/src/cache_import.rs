@@ -10,6 +10,7 @@
 use anyhow::{bail, Context};
 use clap::{Args, Subcommand};
 use crawlx_core::cache::{CacheExportV1, MAX_CACHE_EXPORT_BYTES};
+use crawlx_core::time::Timestamp;
 use crawlx_core::TenantId;
 use serde_json::json;
 use std::io::Write;
@@ -72,7 +73,7 @@ pub async fn run(args: CacheImportArgs, out: &mut dyn Write) -> anyhow::Result<E
     let CacheImportCommand::Inspect(args) = args.command;
     let bytes = read_export(&args.input).await?;
     let export = CacheExportV1::parse(&bytes).context("reading the cache export")?;
-    let screened = export.screen(args.tenant, chrono::Utc::now());
+    let screened = export.screen(args.tenant, Timestamp::now());
     let refused: Vec<_> = screened
         .refused
         .iter()

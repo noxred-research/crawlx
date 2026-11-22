@@ -10,6 +10,7 @@ use crate::testkit::{crawl_run, create_crawl, sessions};
 use crate::{Pg, StoreConfig};
 use crawlx_core::counters::RunStatus;
 use crawlx_core::repo::RunRepo as _;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{PrincipalId, TenantId, WorkerId};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -423,7 +424,7 @@ async fn postgres_profile_policy_loss_corruption_and_legacy_directory_paths_fail
             &f.custody,
             &f.scope,
             0,
-            f.expiry + chrono::Duration::hours(2),
+            f.expiry + SpanDuration::hours(2),
             true,
             &bytes
         )
@@ -435,7 +436,7 @@ async fn postgres_profile_policy_loss_corruption_and_legacy_directory_paths_fail
             &f.custody,
             &f.scope,
             0,
-            f.expiry - chrono::Duration::hours(2),
+            f.expiry - SpanDuration::hours(2),
             true,
             &bytes
         )

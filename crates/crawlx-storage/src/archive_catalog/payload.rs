@@ -5,6 +5,7 @@ use crawlx_core::archive::{ArchiveDedupe, ArchiveRepresentation};
 use crawlx_core::archive_catalog::{
     ArchiveExportState, ArchiveExportV1, ArchivePayloadKeyV1, ArchiveRecordV1,
 };
+use crawlx_core::time::Duration;
 use crawlx_core::Timestamp;
 
 pub(super) fn key_matches(record: &ArchiveRecordV1, key: &ArchivePayloadKeyV1) -> bool {
@@ -138,7 +139,7 @@ pub(super) fn candidate(
     digest: &str,
     now: Timestamp,
 ) -> Option<(uuid::Uuid, u64)> {
-    let active = now.checked_add_signed(chrono::Duration::nanoseconds(1))?;
+    let active = now.checked_add_signed(Duration::nanoseconds(1))?;
     let floor = export.expires_at.unwrap_or(Timestamp::MAX_UTC).max(active);
     let (_, _, source, ordinal) = rows
         .get(digest)?

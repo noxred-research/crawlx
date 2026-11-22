@@ -8,6 +8,7 @@
 use crate::backend::postgres::{set_pool_in_use, TenantPool, MIGRATOR};
 use crate::backend::{Backend, PgBackend};
 use crate::error::db;
+use crawlx_core::time::Timestamp;
 use crawlx_core::StoreError;
 use crawlx_telemetry::metrics::names;
 use crawlx_telemetry::Metrics;
@@ -84,9 +85,9 @@ pub struct AuthorizationRow<'a> {
     /// Digest of the body as computed by `crawlx-policy`.
     pub body_digest: &'a [u8],
     /// Start of the validity window.
-    pub valid_from: chrono::DateTime<chrono::Utc>,
+    pub valid_from: Timestamp,
     /// End of the validity window.
-    pub valid_to: chrono::DateTime<chrono::Utc>,
+    pub valid_to: Timestamp,
 }
 
 /// Pooled database handle of backend `B`; cheap to clone.
@@ -319,7 +320,7 @@ impl Store<PgBackend> {
     ///
     /// # Errors
     /// Returns [`StoreError`] if the query fails.
-    pub async fn db_now(&self) -> Result<chrono::DateTime<chrono::Utc>, StoreError> {
+    pub async fn db_now(&self) -> Result<Timestamp, StoreError> {
         sqlx::query_scalar("SELECT now()")
             .fetch_one(&self.pool)
             .await

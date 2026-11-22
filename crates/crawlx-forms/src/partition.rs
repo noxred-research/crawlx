@@ -517,11 +517,11 @@ fn valid_e164(s: &str) -> bool {
 }
 
 fn valid_date_like(s: &str) -> bool {
-    use chrono::{NaiveDate, NaiveTime};
+    use crawlx_core::time::{NaiveDate, NaiveDateTime, NaiveTime, Weekday};
     if NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok() {
         return true;
     }
-    if chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M").is_ok() {
+    if NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M").is_ok() {
         return true;
     }
     if NaiveTime::parse_from_str(s, "%H:%M").is_ok() {
@@ -538,7 +538,7 @@ fn valid_date_like(s: &str) -> bool {
             if let (Ok(year), Ok(week)) = (y.parse::<i32>(), w.parse::<u32>()) {
                 return y.len() == 4
                     && w.len() == 2
-                    && NaiveDate::from_isoywd_opt(year, week, chrono::Weekday::Mon).is_some();
+                    && NaiveDate::from_isoywd_opt(year, week, Weekday::Monday).is_some();
             }
         }
     }

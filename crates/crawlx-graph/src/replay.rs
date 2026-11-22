@@ -117,7 +117,7 @@ mod tests {
     use super::*;
     use crate::search::{best_path, PathGoal, SearchParams};
     use crate::testutil::{act, cluster, graph, obs, t0};
-    use chrono::Duration;
+    use crawlx_core::time::Duration;
     use crawlx_core::ActionContextId;
 
     fn plan_and_graph() -> (EnablementGraph, PathPlan) {

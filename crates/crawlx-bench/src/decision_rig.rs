@@ -634,6 +634,7 @@ mod tests {
     use crate::decision_dataset::{Hindsight, SCHEMA};
     use crawlx_core::hash::Digest;
     use crawlx_core::ids::{CrawlRunId, ModelDecisionId, SessionId};
+    use crawlx_core::time::Timestamp;
     use serde_json::json;
 
     fn row(session: SessionId, decision: u64, ids: &[&str], chosen: Option<usize>) -> DatasetRow {
@@ -693,7 +694,7 @@ mod tests {
             prompt_digest: Digest::of("test", b"x"),
             latency_ms: Some(7),
             breaker_state: None,
-            created_at: chrono::Utc::now(),
+            created_at: Timestamp::now(),
         }
     }
 

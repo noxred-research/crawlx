@@ -2,8 +2,8 @@
 
 use crate::inspect::connect;
 use anyhow::{anyhow, bail, Context as _};
-use chrono::{Days, NaiveDate, Utc};
 use clap::{Args, Subcommand};
+use crawlx_core::time::{Days, NaiveDate, Timestamp};
 use crawlx_core::TenantId;
 use crawlx_storage::audit::export_key;
 use crawlx_storage::sql::Sql;
@@ -122,7 +122,7 @@ async fn export_records<B: Sql>(
 async fn audit_export(args: AuditExportArgs, out: &mut dyn Write) -> anyhow::Result<ExitCode> {
     let day = match args.day {
         Some(d) => d,
-        None => previous_day(Utc::now().date_naive())?,
+        None => previous_day(Timestamp::now().date_naive())?,
     };
     let store = connect(args.database_url.as_deref()).await?;
     let blobs = audit_blobs(&args).await?;

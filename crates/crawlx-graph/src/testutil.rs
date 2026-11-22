@@ -3,14 +3,13 @@
 
 use crate::update::{Confounders, TransitionObservation};
 use crate::EnablementGraph;
-use chrono::{TimeZone, Utc};
 use crawlx_core::hash::Digest;
 use crawlx_core::identity::ElementIdentityHash;
 use crawlx_core::{ActionContextId, CrawlRunId, StateClusterId, Timestamp, TrustLane};
 use uuid::Uuid;
 
 pub fn t0() -> Timestamp {
-    Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
+    Timestamp::from_ymd_hms(2026, 1, 1, 0, 0, 0).unwrap()
 }
 
 pub fn act(n: u8) -> ActionContextId {

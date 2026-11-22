@@ -3,6 +3,7 @@
 use crate::hash::Digest;
 use crate::repo::{FrontierEntry, FrontierStatus};
 use crate::request::{RequestEnvelopeV1, RequestIdentityV1, MAX_REQUEST_BATCH, MAX_REQUEST_BATCH_BYTES};
+use crate::time::Duration;
 use crate::{CrawlRunId, StoreError, TenantId, Timestamp};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -460,7 +461,7 @@ impl RecrawlPolicyV1 {
         if generation >= self.max_visits {
             return Ok(None);
         }
-        let delay = chrono::Duration::milliseconds(
+        let delay = Duration::milliseconds(
             i64::try_from(self.min_interval_ms)
                 .map_err(|_| StoreError::Conflict("revisit interval overflow".into()))?,
         );
@@ -2015,7 +2016,7 @@ mod adaptive_schedule_tests {
             min_interval_ms: 100,
             max_interval_ms: 10_000,
             max_visits: 10,
-            end_at: now() + chrono::Duration::hours(1),
+            end_at: now() + Duration::hours(1),
             validator_mode: RecrawlValidatorModeV1::Disabled,
             adaptive: Some(AdaptiveRecrawlV1::default()),
         }
@@ -2090,7 +2091,7 @@ mod adaptive_schedule_tests {
             assert_eq!(decision.request.parent, Some(9));
             assert_eq!(
                 decision.request.not_before,
-                Some(now() + chrono::Duration::milliseconds(i64::try_from(interval).unwrap()))
+                Some(now() + Duration::milliseconds(i64::try_from(interval).unwrap()))
             );
         }
     }
@@ -2110,7 +2111,7 @@ mod adaptive_schedule_tests {
                 &request(),
                 &failed,
                 now(),
-                now() + chrono::Duration::seconds(10),
+                now() + Duration::seconds(10),
                 Some(&baseline),
             )
             .unwrap()
@@ -2149,7 +2150,7 @@ mod adaptive_schedule_tests {
                 .interval_ms,
             100
         );
-        let future = RecrawlBaselineV1::new(Some(old), now() + chrono::Duration::seconds(1), 1000);
+        let future = RecrawlBaselineV1::new(Some(old), now() + Duration::seconds(1), 1000);
         assert!(policy()
             .next_visit_after_commit(&request(), &failed, now(), policy().end_at, Some(&future),)
             .is_err());
@@ -2201,7 +2202,7 @@ mod adaptive_schedule_tests {
             .unwrap();
         let restored: RequestEnvelopeV1 =
             serde_json::from_slice(&serde_json::to_vec(&first.request).unwrap()).unwrap();
-        let at = now() + chrono::Duration::seconds(2);
+        let at = now() + Duration::seconds(2);
         let second = policy()
             .next_visit_after_commit(
                 &restored,

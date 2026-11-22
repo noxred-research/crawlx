@@ -5,14 +5,13 @@
 //! There is no plaintext terminal archive path and no registration or empty snapshot.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::Utc;
 use crawlx_core::archive::ArchiveConfigV1;
 use crawlx_core::archive_catalog::{ArchiveCustodyV1, ArchiveExportV1};
 use crawlx_core::config::RetentionMode;
 use crawlx_core::counters::{RunStatus, TerminalReason};
 use crawlx_core::custody::{current_frozen_archive, with_producer, CustodyLease, FrozenArchiveSource};
 use crawlx_core::repo::{ArtifactStore, RunRepo, Sensitivity};
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{ManualClock, Timestamp};
 use crawlx_core::{ArtifactRef, CrawlRunId, SessionId, StoreError, TenantId, WorkerId};
 use crawlx_storage::artifact_custody::{ArtifactCustody, CustodyWrites, LocalArtifactCustody};
 use crawlx_storage::artifact_key_crypto::MemoryArtifactKeys;
@@ -39,7 +38,7 @@ struct World {
 }
 
 async fn world(sensitivity: Sensitivity, terminal: bool) -> World {
-    let clock = ManualClock::new(Utc::now());
+    let clock = ManualClock::new(Timestamp::now());
     let runs = Arc::new(MemoryStore::with_clock(Arc::new(clock.clone())));
     let tenant = TenantId::new();
     let mut config = create_crawl("https://example.test/", &[], 1);

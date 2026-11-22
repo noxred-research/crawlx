@@ -565,7 +565,7 @@ mod tests {
     }
 
     fn deadline() -> Timestamp {
-        chrono::DateTime::from_timestamp(1_900_000_000, 0).unwrap()
+        Timestamp::from_timestamp(1_900_000_000, 0).unwrap()
     }
 
     fn config() -> DatasetConfigV1 {
