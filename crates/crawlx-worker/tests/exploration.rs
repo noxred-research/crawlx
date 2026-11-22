@@ -538,6 +538,9 @@ async fn destructive_controls_are_parked_for_approval_not_executed() {
         dynamic_crawl(|c| {
             c.safety.profile = SafetyProfile::TestEnvironment;
             c.safety.destructive_actions = crawlx_core::config::DestructiveActions::Approval;
+            // a parked approval is waited for until it expires or the run deadline passes (the
+            // default is four hours), so the test bounds the run
+            c.limits.duration_seconds = 3;
         }),
     )
     .await;
