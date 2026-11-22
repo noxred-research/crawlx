@@ -15,6 +15,8 @@ mod adaptive_plane;
 #[path = "discovery.rs"]
 mod discovery;
 mod dispatch_plane;
+#[path = "host_checks.rs"]
+mod host_checks;
 mod known_files_plane;
 mod lifecycle_plane;
 pub(crate) mod memory_plane;
@@ -2403,6 +2405,7 @@ impl UrlPlaneRunner {
         if self.crawl.cache_only() || seed_excluded {
             return self.persist_counters().await;
         }
+        self.run_host_checks().await?;
         if seed_outcome == DiscoveryOutcome::Admitted {
             // The seed page's links come before the files' entries: they are discovered when the
             // seed row is settled (`known_files_plane`).

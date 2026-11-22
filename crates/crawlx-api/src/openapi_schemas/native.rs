@@ -550,7 +550,12 @@ fn create(schemas: &mut Schemas) -> Value {
             "maxKnownUrls":{"type":"integer","minimum":1,"default":100000},
             "hops":{"anyOf":[{"type":"null"},hop_policy()],"default":null},
             "queueCost":{"anyOf":[{"type":"null"},queue_cost()],"default":null},
-            "seeding":{"anyOf":[{"type":"null"},seed_sources()],"default":null}
+            "seeding":{"anyOf":[{"type":"null"},seed_sources()],"default":null},
+            "hostChecks":{
+                "type":"array","uniqueItems":true,"default":[],
+                "items":{"type":"string","enum":["soft_404"]},
+                "description":"Opt-in single-request probes of the seed origin. soft_404 requests one random path no page links to and records whether the origin answered it with a 2xx status. Each request passes authorization, scope, robots.txt, the egress policy and the origin governor; a refused request is not sent and the check is inconclusive."
+            }
         }
     }));
     properties.insert(

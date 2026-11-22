@@ -35,6 +35,7 @@ pub mod extraction;
 pub mod extraction_import;
 pub mod gates;
 pub mod hash;
+pub mod host_checks;
 pub mod identity;
 pub mod identity_profile;
 pub mod ids;

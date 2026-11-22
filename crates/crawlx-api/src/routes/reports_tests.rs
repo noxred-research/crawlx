@@ -407,6 +407,30 @@ async fn finite_jsonl_events_withhold_payloads_context_and_unknown_names() {
 }
 
 #[tokio::test]
+async fn host_check_events_are_a_named_class_without_their_payload() {
+    let env = Env::new().await;
+    let run = env.run(false, false).await;
+    env.store
+        .append(
+            run.id,
+            "host_check",
+            json!({"check":"soft_404","url":"https://private.example.test/crawlx-absent-secret"}),
+        )
+        .await
+        .unwrap();
+    let path = format!(
+        "/v1/crawls/{}/reports/events?event=host_check&format=jsonl",
+        run.id
+    );
+    let (status, _, text) = env.get(&path, Some(KEY)).await;
+    assert_eq!(status, StatusCode::OK);
+    let first: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+    assert_eq!(first["event"], "host_check");
+    assert!(!text.contains("private.example.test"));
+    assert!(!text.contains("crawlx-absent-secret"));
+}
+
+#[tokio::test]
 async fn committed_page_reports_preserve_known_and_missing_facts() {
     let env = Env::new().await;
     let run = env.run(false, false).await;

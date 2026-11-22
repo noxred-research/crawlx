@@ -1436,3 +1436,33 @@ that static read-only crawling must not submit. Score server requests, not page
 counts: plain-text `.found` responses can be requested without yielding HTML pages.
 The scorer returns exit 1 when any of the 91 targets remain missing; that does not
 mean the static plane missed an expected static target.
+
+## Host checks
+
+`scope.hostChecks` (native request JSON; default empty) lists opt-in probes of the seed origin. With the
+default nothing is sent. Each check sends one request, records neutral facts about the answer and never a
+finding, a score or a severity. The facts are stored as one `host_check` event per check, listed in the
+`host_checks` array of the run report (`report.json` of `crawlx crawl`), and counted under the `host_check`
+class of the `events` operational report (the payload stays withheld there, as for every event).
+
+Every probe request is admitted like any other fetch of the run: the run's authorization must still hold,
+scope (`includePaths`, `excludePaths`, the extension filters and the host rules) must admit the URL,
+`robots.txt` must allow it, the egress policy of the fetcher must allow the destination, and the shared origin
+governor spaces it (so `Crawl-delay` and `politeness.delayMs` apply). A refused probe sends nothing; its record
+has `requested: false`, the verdict `inconclusive` and a `reason` of `scope`, `robots`, `robots_unavailable`,
+`egress`, `authorization` or `budget`. A probe never follows a redirect, reads at most 1 KiB of the body, is not a crawled
+page and is not counted against the page limits. It is exactly one request: the run's `fetch.preflight` and
+`fetch.oversize` do not apply to it, so only the status of that one answer is classified. Two further reasons
+accompany an `inconclusive` verdict after a request: `request_failed` (the request was sent and did not complete,
+with `errorCode` naming the stable fetch error) and `unclassified_status` (the origin answered with a status the check
+does not classify, such as a redirect, 401, 403, another 4xx or a 5xx). Runs that do not fetch (`cache.mode: read_only`, a `HEAD`-only
+seed), resumed runs and runs whose seed is excluded send no host check.
+
+| Value | Request | Verdicts |
+| --- | --- | --- |
+| `soft_404` | one `GET` of `/crawlx-absent-` plus 32 lowercase hex digits derived from the run seed and the origin, so a run repeated under the same seed requests the same path | `soft_404` for a 2xx status; `not_soft_404` for 404 and 410; `inconclusive` for a redirect, 401, 403, any other 4xx, a 5xx, a failed request or a refused one |
+
+A record carries `check`, `origin`, `url`, `requested`, `status` (when an answer arrived), `verdict`, `reason`
+(when `inconclusive`) and `errorCode` (the stable fetch error code of a failed request). The `soft_404` check
+asks about the answer's status only; a page that answers 200 and says "not found" in its body is still
+`soft_404`, and the body is not interpreted. `--compat-defaults` leaves the key empty.
