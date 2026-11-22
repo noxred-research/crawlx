@@ -322,6 +322,9 @@ jobs:
           mkdir -p bench/out
           cp "$(find target -path '*/nextest/ci/junit.xml' | head -n1)" bench/out/junit-unit.xml
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        # Retention only: an exhausted artifact storage quota must not fail the job or skip the
+        # test steps after it. Missing evidence is caught by the release-checklist job.
+        continue-on-error: true
         if: github.event_name != 'pull_request'
         with:
           name: coverage-lcov
@@ -352,6 +355,7 @@ jobs:
       - name: Retain unit flake evidence for the release checklist
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true # artifact quota must not fail or skip the later test steps
         with:
           name: release-evidence-unit
           path: bench/out/flake-history.json
@@ -550,6 +554,7 @@ jobs:
       - name: Retain browser flake evidence for the release checklist
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true # artifact quota must not fail or skip the later test steps
         with:
           name: release-evidence-browser
           path: bench/out/flake-history.json
@@ -561,6 +566,7 @@ jobs:
       - name: Retain the golden trace diff (which step and signature field differ)
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true # artifact quota must not fail or skip the later test steps
         with:
           name: golden-trace-diff-browser
           path: bench/out/golden-trace-diff.*.json
@@ -610,6 +616,7 @@ jobs:
       - name: AX-recall differential and capability parity (crawlx_bench::oracle::discovery)
         run: cargo test -p crawlx-bench --test oracle_differential -- --nocapture
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true # artifact quota must not fail the job
         if: always()
         with:
           name: oracle-discovery-${{ matrix.driver }}
@@ -649,6 +656,7 @@ jobs:
         run: ci/shingle-scan.sh
       - run: bench/differential/run.sh all bench/differential/out
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true # artifact quota must not fail the job
         if: always()
         with:
           name: differential
@@ -677,6 +685,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: ci/bench-gate.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true # artifact quota must not fail the job
         if: always()
         with:
           name: criterion-nightly
@@ -727,11 +736,13 @@ jobs:
             cargo +nightly fuzz cmin "$target" "corpus/$target"
           done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true # artifact quota must not fail the job
         if: github.event_name == 'schedule'
         with:
           name: fuzz-corpus-minimized
           path: fuzz/corpus/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true # artifact quota must not fail the job
         if: failure()
         with:
           name: fuzz-artifacts
@@ -813,6 +824,7 @@ jobs:
       - name: Retain upgrade report and its underlying evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true # artifact quota must not fail the job
         with:
           name: chromium-upgrade-report
           path: |
@@ -821,6 +833,7 @@ jobs:
             bench/out/golden-trace-diff.*.json
           if-no-files-found: warn
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true # artifact quota must not fail the job
         if: always()
         with:
           name: chromium-next-golden-trace-diff
@@ -1025,11 +1038,13 @@ jobs:
       - name: Retain actual safety mutation outcomes for the release checklist
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true # artifact quota must not fail the job
         with:
           name: release-evidence-mutants
           path: mutants-safety/mutants.out/outcomes.json
           if-no-files-found: warn
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true # artifact quota must not fail the job
         if: always()
         with:
           name: mutants-out
@@ -1112,11 +1127,13 @@ jobs:
       - name: Retain actual G1 measurements for the release checklist
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true # artifact quota must not fail the job
         with:
           name: release-evidence-g1
           path: bench/out/g1-report.json
           if-no-files-found: warn
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true # artifact quota must not fail the job
         if: always()
         with:
           name: gate-g1
@@ -1199,6 +1216,7 @@ jobs:
               image --severity CRITICAL --exit-code 1 --ignore-unfixed "$img"
           done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true # artifact quota must not fail the job
         if: always()
         with:
           name: images-sbom-and-scan
@@ -1241,6 +1259,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: ci/release-gate.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true # artifact quota must not fail the job
         if: always()
         with:
           name: release-checklist
