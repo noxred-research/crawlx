@@ -92,10 +92,21 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ### Changed
 
-- `deny.toml` records a reviewed exception for RUSTSEC-2026-0543 (`chrono`) and RUSTSEC-2026-0555
-  (`chrono-tz`), published after 0.2.0: both only mark the crates unmaintained, report no vulnerability and
-  have no upgrade, so `cargo deny check advisories` failed on every build. The exception comment names the
-  condition for removing it.
+- `chrono` and `chrono-tz` are no longer dependencies of any CrawlX crate (#69; RUSTSEC-2026-0543 and
+  RUSTSEC-2026-0555 mark them unmaintained). Timestamps, durations and calendar dates go through one
+  facade, `crawlx_core::time` (`Timestamp`, `Duration`, `NaiveDate`, `FixedDateTime`, built on `time`, which
+  sqlx 0.9 supports natively for PostgreSQL `TIMESTAMPTZ` and MariaDB `TIMESTAMP`/`DATETIME(6)`); IANA zones
+  (monitor schedules, `extract.content.dateTimezone`) and the five-field cron evaluation run on `jiff` with
+  its bundled zone database, and `croner` 5 with its `jiff` backend. Wire formats are unchanged: JSON and
+  RFC 3339 text, `Display`, the SQLite microsecond columns and the MariaDB `DATETIME(6)` binds are
+  byte-identical, pinned by `crates/crawlx-core/tests/time_golden.rs` (tables generated from chrono before it
+  was removed), and the RFC 3339, RFC 2822 and strptime-style readers accept and reject the same texts as
+  before (checked against chrono on several hundred thousand mutated inputs). Two behaviour notes: a
+  leap-second `:60` reads as the first instant of the next minute (chrono kept it as a second of
+  `1_000_000_000+` nanoseconds), and zone names must be spelled as the IANA database spells them (as
+  with `chrono-tz`). `deny.toml` drops the RUSTSEC-2026-0555 exception; RUSTSEC-2026-0543 stays, now only
+  for the third-party crate that still exposes `chrono` (`rskafka`), and the comment
+  says when to remove it.
 - Politeness: back-off after `429`/`503` no longer turns one throttling answer into minutes of slow
   crawling (#76). With the new default profile, `politeness.backoffProfile = "balanced"`, the first
   throttling answer after a success sets the origin's spacing to `max(Retry-After, 2 × floor)` (floor =
