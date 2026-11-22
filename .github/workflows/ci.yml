@@ -301,8 +301,7 @@ jobs:
       # instrumentation. The instrumented build wrote about 50 GiB per run to the shared
       # runner host disk, which is the bottleneck of the three self-hosted instances;
       # the lcov artifact is informational (no job or ruleset reads it), so it is produced
-      # only for push, schedule and manual runs: at most one push run and one scheduled
-      # run at a time, per the concurrency group above.
+      # only for push, schedule and manual runs: one run per concurrency group (see above).
       - name: Unit and integration tests (nextest, pull requests)
         if: github.event_name == 'pull_request'
         env:
@@ -317,7 +316,7 @@ jobs:
         run: |
           cargo llvm-cov nextest --profile ci --no-fail-fast --workspace --exclude crawlx-bench \
             -E "$(ci/flake-gate.sh filter)" --lcov --output-path lcov.info
-      - name: Keep the unit junit (the coverage build is deleted next)
+      - name: Keep the unit junit (the bench run overwrites it; on push the coverage build is deleted next)
         if: always()
         run: |
           mkdir -p bench/out
