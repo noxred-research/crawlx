@@ -150,6 +150,11 @@ project is pre-1.0; minor versions may contain breaking changes.
   - `wreq` 0.15.3 (synthetic ClientHello profiles) needs `lru` 0.13, and the `vendor/lru` backport of the
     `IterMut` fix kept that version (RUSTSEC-2026-0002, RUSTSEC-2026-0253 still matched). `vendor/wreq` is that
     release with `lru` 0.18, and `vendor/lru` is removed. wreq 0.16 would use `lru` 0.19 but needs Rust 1.98.
+- Dependencies: `ort` is pinned back to 2.0.0-rc.13 (with `ort-sys`). The dependabot bump to rc.15 replaced
+  `ort::init_from(..).commit()` and `Session::builder()` with an explicit `Environment`, which `crawlx-model` does
+  not use, so `cargo build --features onnx` (the `docs/ops` binary and the article-language image) failed with
+  E0599 and E0061. The `lint` job now runs `cargo check -p crawlx-model --features onnx --all-targets`; move both
+  call sites to one shared `Environment` before raising the pin.
 - Politeness: back-off after `429`/`503` no longer turns one throttling answer into minutes of slow
   crawling (#76). With the new default profile, `politeness.backoffProfile = "balanced"`, the first
   throttling answer after a success sets the origin's spacing to `max(Retry-After, 2 × floor)` (floor =
