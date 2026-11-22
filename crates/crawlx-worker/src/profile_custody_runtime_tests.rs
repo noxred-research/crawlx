@@ -269,7 +269,7 @@ impl NavigationGuard for Refuse {
     fn intercepts_subresources(&self) -> bool {
         true
     }
-    async fn check_subresource(&self, _: &url::Url) -> NavigationVerdict {
+    async fn check_subresource(&self, _: &url::Url, _: ResourceKind) -> NavigationVerdict {
         NavigationVerdict::EgressDenied
     }
 }
@@ -287,11 +287,17 @@ async fn origin_guard_confines_documents_requests_and_subresources() {
         assert!(guard.intercepts_subresources());
         assert_eq!(guard.check(&inside).await.refusal(), None);
         assert_eq!(guard.check_request(&inside).await.refusal(), None);
-        assert_eq!(guard.check_subresource(&inside).await.refusal(), None);
+        assert_eq!(
+            guard
+                .check_subresource(&inside, ResourceKind::Script)
+                .await
+                .refusal(),
+            None
+        );
         for verdict in [
             guard.check(&outside).await,
             guard.check_request(&outside).await,
-            guard.check_subresource(&outside).await,
+            guard.check_subresource(&outside, ResourceKind::Script).await,
         ] {
             assert_eq!(verdict.refusal(), Some("profile_origin_binding"), "{outside}");
         }
@@ -299,7 +305,10 @@ async fn origin_guard_confines_documents_requests_and_subresources() {
     let wrapped = origin_guard(BTreeSet::from([ORIGIN.to_owned()]), Some(Arc::new(Refuse)));
     assert_eq!(wrapped.check(&inside).await.refusal(), Some("egress_denied"));
     assert_eq!(
-        wrapped.check_subresource(&inside).await.refusal(),
+        wrapped
+            .check_subresource(&inside, ResourceKind::Script)
+            .await
+            .refusal(),
         Some("egress_denied")
     );
 }

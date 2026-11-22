@@ -18,15 +18,15 @@ use axum::routing::get;
 use axum::Router;
 use crawlx_browser::fake::{FakeAxSpec, FakeEffect, FakePage, FakeScript};
 use crawlx_browser::FakeBackend;
-use crawlx_core::config::CrawlMode;
+use crawlx_core::config::{CrawlMode, RobotsScope};
 use crawlx_core::counters::ActionStatus;
 use crawlx_core::identity::ActionKind;
 use crawlx_core::repo::{EventRepo, FrontierStatus};
-use crawlx_core::{AuthorizationRecordId, Clock, CreateCrawl, SystemClock};
+use crawlx_core::{AuthorizationRecordId, Clock, CreateCrawl, ResourceKind, SystemClock};
 use crawlx_fetch::StaticResolver;
 use crawlx_storage::MemoryStore;
 use crawlx_worker::{EgressConfig, LocalRun, RunReport, Stores, WorkerConfig, WorkerError};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 /// What the site answers for `/robots.txt`.
@@ -565,4 +565,196 @@ async fn a_backend_without_a_guard_runs_unchecked() {
     assert!(states.contains("/private/x"), "{states:?}");
     assert_eq!(report.counters.urls.robots_blocked, 0);
     assert_eq!(site.count("/robots.txt"), 0);
+}
+
+// --- safety.robotsScope ----------------------------------------------------------------------
+
+/// An allowed page that embeds disallowed resources of every kind next to allowed ones.
+fn embedding_script(base: &str) -> FakeScript {
+    let home = FakePage::new(&format!("{base}/"))
+        .title("Home")
+        .node(FakeAxSpec::link("lnk-public", "Public", "/public"))
+        .subresource(ResourceKind::Script, "/private/widget.js")
+        .subresource(ResourceKind::Stylesheet, "/private/theme.css")
+        .subresource(ResourceKind::Image, "/private/pixel.png")
+        .subresource(ResourceKind::Xhr, "/private/api")
+        .subresource(ResourceKind::Frame, "/private/frame.html")
+        .subresource(ResourceKind::Script, "/static/app.js")
+        .subresource(ResourceKind::Frame, "/embed/frame.html");
+    FakeScript::new()
+        .page(home)
+        .page(FakePage::new(&format!("{base}/public")).title("Public"))
+}
+
+/// Everything the page asked for, and what the guard let through, as paths.
+struct Embedded {
+    run: Browsed,
+    requested: BTreeSet<String>,
+    blocked: BTreeMap<String, &'static str>,
+}
+
+async fn browse_embedding(site: &Site, scope: RobotsScope) -> Embedded {
+    let mut c = crawl(&site.base, CrawlMode::Dynamic);
+    c.dynamic.observe_only = true;
+    c.safety.robots_scope = scope;
+    let dir = tempfile::tempdir().unwrap();
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(embedding_script(&site.base))
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .honour_navigation_guard()
+            .build(),
+    );
+    let store = Arc::new(MemoryStore::new());
+    let stores = Stores::over_memory(store.clone(), dir.path()).await.unwrap();
+    let report = run_local_with(
+        LocalRun::new(c, config(dir.path()))
+            .with_backend(backend.clone())
+            .with_stores(stores),
+    )
+    .await
+    .unwrap();
+    let handles = backend.context_handles();
+    let path = |raw: &str| url::Url::parse(raw).unwrap().path().to_owned();
+    let requested = handles
+        .iter()
+        .flat_map(|h| h.subresource_requests())
+        .map(|r| path(&r.url))
+        .collect();
+    let blocked = handles
+        .iter()
+        .flat_map(|h| h.blocked_subresources())
+        .map(|b| (path(&b.url), b.kind.as_str()))
+        .collect();
+    Embedded {
+        run: Browsed {
+            report,
+            backend,
+            store,
+        },
+        requested,
+        blocked,
+    }
+}
+
+/// Process-global counter of `crawlx.robots.blocked` for one resource type.
+fn robots_blocked_counter(resource_type: &str) -> u64 {
+    crawlx_telemetry::Metrics::global()
+        .counter(crawlx_telemetry::metrics::names::ROBOTS_BLOCKED)
+        .get(&[("resource_type", resource_type)])
+}
+
+/// The default scope is the document: disallowed subresources and frames are still requested,
+/// and the observation is not marked partial.
+#[tokio::test]
+async fn the_default_scope_leaves_subresources_and_frames_alone() {
+    let site = site(FIXTURES[0].1).await;
+    let run = browse_embedding(&site, RobotsScope::Document).await;
+    assert!(run.blocked.is_empty(), "{:?}", run.blocked);
+    for path in [
+        "/private/widget.js",
+        "/private/theme.css",
+        "/private/pixel.png",
+        "/private/api",
+        "/private/frame.html",
+    ] {
+        assert!(run.requested.contains(path), "{path} in {:?}", run.requested);
+    }
+    assert!(run.run.report.observation_partial.is_none());
+}
+
+/// `frames` refuses the disallowed iframe document and nothing else.
+#[tokio::test]
+async fn the_frames_scope_refuses_disallowed_frame_documents_only() {
+    let site = site(FIXTURES[0].1).await;
+    let before = robots_blocked_counter("frame");
+    let run = browse_embedding(&site, RobotsScope::Frames).await;
+    assert_eq!(
+        run.blocked,
+        BTreeMap::from([("/private/frame.html".to_owned(), "frame")])
+    );
+    assert!(!run.requested.contains("/private/frame.html"));
+    for path in [
+        "/private/widget.js",
+        "/private/api",
+        "/embed/frame.html",
+        "/static/app.js",
+    ] {
+        assert!(run.requested.contains(path), "{path} in {:?}", run.requested);
+    }
+    assert!(robots_blocked_counter("frame") > before, "frame counter");
+    let partial = run.run.report.observation_partial.as_ref().expect("partial");
+    assert_eq!(partial.robots_scope, RobotsScope::Frames);
+    assert_eq!(partial.blocked, BTreeMap::from([("frame".to_owned(), 1)]));
+    assert_eq!(site.count("/private/frame.html"), 0);
+}
+
+/// `all` refuses every disallowed resource type, requests nothing under `/private/`, still
+/// renders the page and its allowed resources, and says the observation is partial.
+#[tokio::test]
+async fn the_all_scope_refuses_every_disallowed_resource_and_the_page_still_renders() {
+    let site = site(FIXTURES[0].1).await;
+    let before: Vec<u64> = ["frame", "script", "stylesheet", "image", "xhr"]
+        .map(robots_blocked_counter)
+        .to_vec();
+    let run = browse_embedding(&site, RobotsScope::All).await;
+    assert_eq!(
+        run.blocked,
+        BTreeMap::from([
+            ("/private/api".to_owned(), "xhr"),
+            ("/private/frame.html".to_owned(), "frame"),
+            ("/private/pixel.png".to_owned(), "image"),
+            ("/private/theme.css".to_owned(), "stylesheet"),
+            ("/private/widget.js".to_owned(), "script"),
+        ])
+    );
+    assert!(
+        run.requested.iter().all(|p| !p.starts_with("/private/")),
+        "{:?}",
+        run.requested
+    );
+    assert_eq!(
+        run.requested,
+        set(["/static/app.js", "/embed/frame.html"]),
+        "allowed resources still load"
+    );
+    assert!(
+        run.run.states().contains("/"),
+        "the page still renders: {:?}",
+        run.run.states()
+    );
+    assert_eq!(
+        site.requested()
+            .iter()
+            .filter(|p| p.starts_with("/private/"))
+            .count(),
+        0,
+        "{:?}",
+        site.requested()
+    );
+    for (before, kind) in before
+        .iter()
+        .zip(["frame", "script", "stylesheet", "image", "xhr"])
+    {
+        assert!(robots_blocked_counter(kind) > *before, "{kind} counter");
+    }
+    let partial = run.run.report.observation_partial.as_ref().expect("partial");
+    assert_eq!(partial.reason, "robots_scope");
+    assert_eq!(partial.robots_scope, RobotsScope::All);
+    assert_eq!(
+        partial.blocked,
+        BTreeMap::from([
+            ("frame".to_owned(), 1),
+            ("image".to_owned(), 1),
+            ("script".to_owned(), 1),
+            ("stylesheet".to_owned(), 1),
+            ("xhr".to_owned(), 1),
+        ])
+    );
+    // robots.txt of the origin is read once for the document and every resource
+    assert_eq!(site.count("/robots.txt"), 1);
+    let events = EventRepo::list_after(run.run.store.as_ref(), run.run.report.run_id, 0, 5000)
+        .await
+        .unwrap();
+    assert!(events.iter().any(|e| e.kind == "browser.observation_partial"));
 }

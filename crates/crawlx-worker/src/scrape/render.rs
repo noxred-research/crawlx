@@ -284,10 +284,15 @@ impl crawlx_core::browser::NavigationGuard for BudgetNavigationGuard {
         if verdict.refusal().is_some() {
             return verdict;
         }
-        self.check_subresource(url).await
+        self.check_subresource(url, crawlx_core::browser::ResourceKind::Other)
+            .await
     }
 
-    async fn check_subresource(&self, _url: &Url) -> crawlx_core::browser::NavigationVerdict {
+    async fn check_subresource(
+        &self,
+        _url: &Url,
+        _kind: crawlx_core::browser::ResourceKind,
+    ) -> crawlx_core::browser::NavigationVerdict {
         use crawlx_core::browser::NavigationVerdict;
         if self.allowance.cancel.is_cancelled() || tokio::time::Instant::now() >= self.allowance.deadline {
             return NavigationVerdict::RobotsBlocked {

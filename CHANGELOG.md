@@ -10,6 +10,19 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ### Added
 
+- `safety.robotsScope` (`document` | `frames` | `all`, default `document`) extends `robots.txt` in the browser
+  plane beyond main-frame documents (#73). The default is the previous behaviour: only the pages the
+  browser visits are checked, so an allowed page that embeds a disallowed script or iframe still makes the
+  browser fetch it. `frames` also refuses the documents of embedded frames that `robots.txt` disallows;
+  `all` also refuses disallowed scripts, stylesheets, XHR/`fetch()` calls, images, fonts and media in the
+  paused-request hook that `ScopedNetworkGuard` already uses, including requests of out-of-process frames.
+  A refused request is aborted before it leaves the browser and the page keeps loading, so blocking
+  scripts can change what the page does; the decision uses the per-origin `robots.txt` cache shared with
+  the document checks (one fetch per origin). Each refusal increments `crawlx.robots.blocked{resource_type}`,
+  and a run that refused anything reports `observationPartial` (reason, scope, refused count per resource
+  type) and a `browser.observation_partial` run event. Embedders implementing `NavigationGuard` see
+  `check_subresource` gain a `ResourceKind` argument and a new `vets_frame_sessions` method. To get the
+  old behaviour, leave the option unset or set it to `document`.
 - Technology catalog: five `security` entries for bot-defence and device-intelligence products, written from
   each vendor's own public documentation (script host, cookie name or global; the source URL of every entry
   is in the `crates/crawlx-extract/src/technologies.rs` module docs): DataDome, HUMAN Security, Akamai Bot

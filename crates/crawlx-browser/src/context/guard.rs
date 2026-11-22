@@ -10,9 +10,13 @@
 //!   `Aborted`. `Aborted` cancels the navigation without an error page, so the current
 //!   document stays and the next observation still sees the page the action started from.
 //!
-//! Subresources and the documents of embedded frames are never paused for a verdict: the guard
-//! is about what the crawler *visits*, and the URL plane does not apply `robots.txt` to them
-//! either. Frame sessions therefore do not enable `Fetch` at all.
+//! Subresources and the documents of embedded frames are not paused for a verdict unless the
+//! guard opts in (`NavigationGuard::intercepts_subresources`): the guard is about what the
+//! crawler *visits*, and the URL plane does not apply `robots.txt` to them either. A guard that
+//! opts in (the run's signed network scope, `safety.robotsScope = frames | all`) is asked
+//! `check_subresource` with the `ResourceKind` of every such request, and a refused one fails
+//! with `Aborted` while the page keeps loading. Out-of-process frame sessions do not enable
+//! `Fetch` at all unless the guard also asks for them (`vets_frame_sessions`).
 //!
 //! Popups attach after their first request may have left (the same ordering limit as the
 //! request controls, see `apply_request_controls`): a popup whose URL the guard refuses is
@@ -22,7 +26,7 @@
 use super::{Ctl, State};
 use crate::cdp::{CdpEvent, CdpSession};
 use crawlx_core::block_rules::{BlockedResourceV1, RequestFacts};
-use crawlx_core::browser::{BlockedNavigation, BrowserError, NavigationGuard};
+use crawlx_core::browser::{BlockedNavigation, BrowserError, NavigationGuard, ResourceKind};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -65,6 +69,19 @@ pub(crate) fn loggable(url: &Url) -> String {
 /// A guard that takes longer than [`GUARD_TIMEOUT`] refuses.
 pub(crate) async fn refusal(guard: &dyn NavigationGuard, url: &Url) -> Option<&'static str> {
     match tokio::time::timeout(GUARD_TIMEOUT, guard.check(url)).await {
+        Ok(verdict) => verdict.refusal(),
+        Err(_) => Some(TIMEOUT_REASON),
+    }
+}
+
+/// The reason code when `guard` refuses a subresource or embedded-frame document of `kind`,
+/// `None` when it may load. A guard that takes longer than [`GUARD_TIMEOUT`] refuses.
+pub(crate) async fn subresource_refusal(
+    guard: &dyn NavigationGuard,
+    url: &Url,
+    kind: ResourceKind,
+) -> Option<&'static str> {
+    match tokio::time::timeout(GUARD_TIMEOUT, guard.check_subresource(url, kind)).await {
         Ok(verdict) => verdict.refusal(),
         Err(_) => Some(TIMEOUT_REASON),
     }
@@ -155,40 +172,34 @@ pub(crate) async fn answer_paused(ctl: Arc<Ctl>, state: Arc<Mutex<State>>, ev: A
             return;
         }
     }
-    let Some(target_id) = target_id else {
+    let guard = ctl.config.navigation_guard.as_ref();
+    // An out-of-process frame session reaches the guard only when the guard asks for it.
+    if target_id.is_none() && !guard.is_some_and(|guard| guard.vets_frame_sessions()) {
         let _ = sess
             .send("Fetch.continueRequest", json!({ "requestId": request_id }))
             .await;
         return;
-    };
+    }
+    let resource_type = text(&ev.params, "resourceType");
     let main_document =
-        text(&ev.params, "resourceType") == "Document" && text(&ev.params, "frameId") == main_frame;
+        target_id.is_some() && resource_type == "Document" && text(&ev.params, "frameId") == main_frame;
     let url = ev
         .params
         .get("request")
         .map(|request| text(request, "url"))
         .and_then(guarded)
-        .filter(|_| {
-            main_document
-                || ctl
-                    .config
-                    .navigation_guard
-                    .as_ref()
-                    .is_some_and(|guard| guard.intercepts_subresources())
-        });
-    let refused = match (ctl.config.navigation_guard.as_ref(), url.as_ref()) {
-        (Some(guard), Some(url)) => match tokio::time::timeout(GUARD_TIMEOUT, async {
+        .filter(|_| main_document || guard.is_some_and(|guard| guard.intercepts_subresources()));
+    let refused = match (guard, url.as_ref()) {
+        (Some(guard), Some(url)) => {
             if main_document {
-                guard.check_request(url).await
+                match tokio::time::timeout(GUARD_TIMEOUT, guard.check_request(url)).await {
+                    Ok(verdict) => verdict.refusal(),
+                    Err(_) => Some(TIMEOUT_REASON),
+                }
             } else {
-                guard.check_subresource(url).await
+                subresource_refusal(guard.as_ref(), url, ResourceKind::from_cdp(resource_type)).await
             }
-        })
-        .await
-        {
-            Ok(verdict) => verdict.refusal(),
-            Err(_) => Some(TIMEOUT_REASON),
-        },
+        }
         _ => None,
     };
     let Some(reason) = refused else {
@@ -198,11 +209,11 @@ pub(crate) async fn answer_paused(ctl: Arc<Ctl>, state: Arc<Mutex<State>>, ev: A
             .await;
         return;
     };
-    if let Some(url) = url.as_ref().filter(|_| main_document) {
+    if let (Some(url), Some(target_id)) = (url.as_ref().filter(|_| main_document), target_id.as_ref()) {
         // recorded before the request fails, so the navigation that waits on it sees the refusal
         state
             .lock()
-            .record_blocked_navigation(&target_id, BlockedNavigation::new(loggable(url), reason));
+            .record_blocked_navigation(target_id, BlockedNavigation::new(loggable(url), reason));
         ctl.notify.send_modify(|v| *v = v.wrapping_add(1));
     }
     let _ = sess

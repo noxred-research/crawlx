@@ -17,7 +17,7 @@ use crate::actor::SessionHandle;
 use crate::error::WorkerError;
 use crate::run::RunContext;
 use async_trait::async_trait;
-use crawlx_core::browser::{BrowserContext, NavigationGuard, NavigationVerdict};
+use crawlx_core::browser::{BrowserContext, NavigationGuard, NavigationVerdict, ResourceKind};
 use crawlx_core::captcha::CaptchaSecrets;
 use crawlx_core::custody::CustodyLease;
 use crawlx_core::hash::Digest;
@@ -105,12 +105,18 @@ impl NavigationGuard for OriginGuard {
         true
     }
 
-    async fn check_subresource(&self, url: &url::Url) -> NavigationVerdict {
+    fn vets_frame_sessions(&self) -> bool {
+        self.inner
+            .as_ref()
+            .is_some_and(|inner| inner.vets_frame_sessions())
+    }
+
+    async fn check_subresource(&self, url: &url::Url, kind: ResourceKind) -> NavigationVerdict {
         if !self.admits(url) {
             return ORIGIN_BLOCKED;
         }
         match &self.inner {
-            Some(inner) => inner.check_subresource(url).await,
+            Some(inner) => inner.check_subresource(url, kind).await,
             None => NavigationVerdict::Allow,
         }
     }

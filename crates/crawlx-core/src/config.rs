@@ -1234,6 +1234,32 @@ impl Default for Dynamic {
     }
 }
 
+/// `safety.robotsScope`: which requests of the browser plane `robots.txt` is applied to.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum RobotsScope {
+    /// Top-level documents the browser visits (navigations, link clicks, redirect hops, popups).
+    /// Subresources and the documents of embedded frames are fetched whatever `robots.txt` says
+    /// (the default).
+    #[default]
+    Document,
+    /// [`Self::Document`] plus the documents of embedded frames (`<iframe>`, `<frame>`).
+    Frames,
+    /// [`Self::Frames`] plus every subresource the page loads: scripts, stylesheets, XHR/`fetch()`,
+    /// images, fonts and media.
+    All,
+}
+
+impl RobotsScope {
+    /// Whether this is the default scope ([`Self::Document`]).
+    #[must_use]
+    #[allow(clippy::trivially_copy_pass_by_ref, reason = "serde passes `&T`")]
+    pub const fn is_default(&self) -> bool {
+        matches!(self, Self::Document)
+    }
+}
+
 /// `safety`: guard rails on what the crawl may touch and do.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -1244,6 +1270,11 @@ pub struct Safety {
     /// Honor robots.txt; `false` requires an authorization record (default true).
     #[serde(default = "t")]
     pub respect_robots_txt: bool,
+    /// Which requests of the browser plane honored `robots.txt` applies to (`document`, `frames`
+    /// or `all`; default `document`). Ignored when `respectRobotsTxt` is `false`; the URL plane
+    /// only ever fetches documents.
+    #[serde(default, skip_serializing_if = "RobotsScope::is_default")]
+    pub robots_scope: RobotsScope,
     /// Allow private-network targets; requires an authorization record (default false).
     #[serde(default)]
     pub allow_private_networks: bool,
@@ -1263,6 +1294,7 @@ impl Default for Safety {
         Self {
             profile: SafetyProfile::ReadOnly,
             respect_robots_txt: true,
+            robots_scope: RobotsScope::Document,
             allow_private_networks: false,
             external_communication: ExternalCommunication::Deny,
             destructive_actions: DestructiveActions::Deny,
@@ -3610,6 +3642,33 @@ mod tests {
         .is_err());
         assert!(serde_json::from_str::<CreateCrawl>(
             r#"{"seedUrl":"https://a.test/","scope":{"hostScope":"regex"}}"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn robots_scope_defaults_to_document_parses_and_stays_off_the_wire_by_default() {
+        let r = req(r#"{"seedUrl":"https://a.test/"}"#);
+        assert_eq!(r.safety.robots_scope, RobotsScope::Document);
+        assert!(serde_json::to_value(&r.safety)
+            .unwrap()
+            .get("robotsScope")
+            .is_none());
+        for (text, want) in [
+            ("document", RobotsScope::Document),
+            ("frames", RobotsScope::Frames),
+            ("all", RobotsScope::All),
+        ] {
+            let r = req(&format!(
+                r#"{{"seedUrl":"https://a.test/","safety":{{"robotsScope":"{text}"}}}}"#
+            ));
+            assert_eq!(r.safety.robots_scope, want);
+            if want != RobotsScope::Document {
+                assert_eq!(serde_json::to_value(&r.safety).unwrap()["robotsScope"], text);
+            }
+        }
+        assert!(serde_json::from_str::<CreateCrawl>(
+            r#"{"seedUrl":"https://a.test/","safety":{"robotsScope":"everything"}}"#
         )
         .is_err());
     }

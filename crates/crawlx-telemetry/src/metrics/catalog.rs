@@ -32,6 +32,7 @@ pub const ALLOWED_LABELS: &[&str] = &[
     "event",
     "profile",
     "partition",
+    "resource_type",
 ];
 
 /// Metric type.
@@ -197,6 +198,7 @@ catalog! {
     LEASE_STALE_UNRECONCILED = Gauge "crawlx.lease.stale_unreconciled" None [] &[], "Expired leases not yet reconciled";
     SAFETY_INVARIANT_VIOLATIONS = Counter "crawlx.safety.invariant_violations" None ["reason"] &[], "Safety invariant violations (SEV-1)";
     EGRESS_DENIALS = Counter "crawlx.egress.denials" None ["plane", "reason"] &[], "Egress guard denials";
+    ROBOTS_BLOCKED = Counter "crawlx.robots.blocked" None ["resource_type"] &[], "Browser requests refused by robots.txt under safety.robotsScope frames or all, by resource type (frame, script, stylesheet, xhr, fetch, image, font, media, other)";
     RETENTION_OVERDUE_ARTIFACTS = Gauge "crawlx.retention.overdue_artifacts" None ["kind"] &[], "Artifacts past retention";
     RETENTION_SWEEP_FAILURES = Counter "crawlx.retention.sweep.failures" None [] &[], "Retention sweep failures";
     ZDR_VIOLATIONS = Counter "crawlx.zdr.violations" None [] &[], "Zero-data-retention violations";

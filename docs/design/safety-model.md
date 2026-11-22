@@ -216,8 +216,23 @@ a 24-hour give-up, but the worker never refetches within a run, so such an origi
 the rest of the run. The default product token is `crawlx`.
 
 The browser plane checks robots for its own navigations and for page-initiated **main-frame**
-document requests (paused through the CDP `Fetch` domain, with a 30-second guard timeout). It does
-not check subresources or embedded frames.
+document requests (paused through the CDP `Fetch` domain, with a 30-second guard timeout). By
+default it does not check subresources or embedded frames. `safety.robotsScope` widens that, for
+runs that honour robots:
+
+- `document` (default): unchanged.
+- `frames`: also refuses the documents of disallowed `<iframe>`/`<frame>` elements.
+- `all`: also refuses disallowed scripts, stylesheets, XHR/`fetch()` calls, images, fonts and
+  media. Out-of-process frames are paused for this too.
+
+A refused request fails with `Aborted` before it leaves the browser while the page keeps loading,
+so it can change what the page does. The decision uses the origin's cached `robots.txt` (one
+fetch per origin, shared with the document checks) and the same codes as documents
+(`robots_disallow`, and `robots_unavailable` when the file cannot be read). Resources outside the
+signed network scope are refused by the egress guard before robots is asked. Every refusal is
+counted in `crawlx.robots.blocked{resource_type}`, and the run report carries
+`observationPartial` (`reason`, `robotsScope` and the refused count per resource type) plus a
+`browser.observation_partial` run event, so a consumer knows the observation lacks those requests.
 
 Overriding robots requires an authorization record with `robotsOverrideAcknowledged`.
 `Crawl-delay` (capped at 10 seconds) raises the origin's minimum spacing for a run that obeys robots,
@@ -306,7 +321,7 @@ isolation is enforced by PostgreSQL row-level security and a restricted API data
   an immediate decision before it executes any other action.
 - The kernel does not run without an audit sink attached; the in-process worker attaches an
   in-memory log, and the durable record is the `safety_decisions` row.
-- Robots is not consulted for browser subresources and frames.
+- Robots is not consulted for browser subresources and frames unless `safety.robotsScope` says so.
 - `Crawl-delay`: the URL plane processes a leased batch sequentially, so a row on an origin with a
   `Crawl-delay` floor waits for it in process (up to the 10 s cap) and the rows behind it in the
   batch wait too. A `429` behaves differently: it publishes a cooldown, and later rows of that
@@ -336,8 +351,8 @@ clearing and process cleanup checks. Missing prerequisites fail closed. The sour
 implementation and negative fixtures do not constitute privileged host/CNI deployment
 evidence; operators must supply that proof.
 
-Robots intentionally covers main-frame document navigation and redirects, not every
-subresource or embedded frame. Independent authorization, scope and address checks
+Robots covers main-frame document navigation and redirects by default; `safety.robotsScope`
+opts in to embedded frames and subresources. Independent authorization, scope and address checks
 still govern mediated traffic. CONNECT cannot inspect encrypted URL paths and is
 not universal robots enforcement.
 

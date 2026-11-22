@@ -68,9 +68,9 @@ pub mod url_graph;
 pub use action::{BrowserAction, KeyChord, Modifiers, OptionKey, PointerButton, ScrollDelta};
 pub use browser::{
     BlockedNavigation, BrowserBackend, BrowserContext, BrowserError, ContextConfig, NavigationGuard,
-    NavigationVerdict,
+    NavigationVerdict, ResourceKind,
 };
-pub use config::{CrawlMode, CreateCrawl, LaunchProfile, SafetyProfile};
+pub use config::{CrawlMode, CreateCrawl, LaunchProfile, RobotsScope, SafetyProfile};
 pub use digest_registry::{
     ContentDedupeClaimV1, DigestDispositionV1, DigestOutcomeV1, DigestRegistryRepo, DigestStageV1,
 };
