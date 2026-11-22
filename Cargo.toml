@@ -38,7 +38,7 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 # web / http
-url = { version = "2", features = ["serde"] }
+url = { version = "2.5.9", features = ["serde"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "brotli", "json", "stream", "socks"] }
 # Synthetic seeded ClientHello profiles only; default fetch transport stays rustls.
 # 0.16 requires Rust 1.98. 0.15.3 is Apache-2.0, MSRV 1.85, uses BoringSSL (not openssl-sys).

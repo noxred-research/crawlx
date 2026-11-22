@@ -175,6 +175,7 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ### Security
 
+- `url` 2.5.8 to 2.5.9 (RUSTSEC-2026-0592, GHSA-hrj5-67jp-wqp9); the workspace requirement is now `2.5.9`. `Url::origin()` on a `blob:` URL recursed once per `blob:` prefix, so a URL such as `blob:blob:...https://example.com/` with 10 000 prefixes (it parses) overflowed the stack and aborted the process; CrawlX calls `origin()` on URLs taken from fetched pages. 2.5.9 returns an opaque origin for any inner scheme other than `http`, `https` and `file`. `crates/crawlx-url/tests/url_origin_blob.rs` calls `origin()` on such a URL in a 256 KiB thread and fails (SIGABRT) with 2.5.8. A `cargo deny` or `cargo audit` run with an advisory database from 2026-11-22 or later reports the older release. 2.5.9 also percent-encodes `^` in paths (`https://h/a^b` serialises as `https://h/a%5Eb`), so a canonical URL or frontier key that contains `^` changes; no URL in this repository's tests has one.
 - `tests/sdk` pins `zod` 4.6.7 through an npm `overrides` entry. The official Node SDK under test asks
   for `zod` 3.x, and every 3.x release is affected by GHSA-mrhx-c7xc-m3w5 (memory exhaustion on oversized
   constrained collections; fixed in 4.6.6). The package is test-only and never ships; `npm audit` is clean.
