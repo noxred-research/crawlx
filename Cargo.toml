@@ -2,7 +2,7 @@
 resolver = "2"
 members = ["crates/*"]
 # `fuzz/` is its own cargo-fuzz workspace; it must not inherit the lints or profiles.
-exclude = ["fuzz", "vendor/pdf-loader/lopdf-0.46.0", "vendor/hickory-resolver", "vendor/ego-tree", "vendor/lru"]
+exclude = ["fuzz", "vendor/pdf-loader/lopdf-0.46.0", "vendor/hickory-resolver", "vendor/ego-tree", "vendor/lru", "vendor/rskafka"]
 
 [workspace.package]
 version = "0.2.0"
@@ -104,8 +104,9 @@ time = { version = "0.3.55", default-features = false, features = ["std", "large
 # the bundled database so results do not depend on the host's tzdata
 jiff = { version = "1", default-features = false, features = ["std", "tz-fat", "tzdb-bundle-always"] }
 icu_segmenter = { version = "=2.4.0", default-features = false, features = ["compiled_data"] }
-# DST-aware five-field cron evaluation on jiff (no chrono backend)
-croner = { version = "5", default-features = false, features = ["std", "jiff"] }
+# DST-aware five-field cron evaluation on jiff (no chrono backend). Not the `std` feature: it only turns on
+# `std` in croner itself and, through `chrono?/std`, makes Cargo.lock list the unused optional `chrono`.
+croner = { version = "5", default-features = false, features = ["jiff"] }
 # S3-compatible object store; TLS through rustls+ring like the rest of the workspace, not aws-lc
 aws-config = { version = "1.13", default-features = false, features = ["rt-tokio"] }
 aws-sdk-s3 = { version = "1.145", default-features = false, features = ["rt-tokio", "http-1x", "behavior-version-latest"] }
@@ -223,3 +224,6 @@ hickory-resolver = { path = "vendor/hickory-resolver" }
 lru = { path = "vendor/lru" }
 # Reserve HTML tree node storage fallibly (`Tree::try_reserve`) so the parse can refuse memory instead of aborting.
 ego-tree = { path = "vendor/ego-tree" }
+# `rskafka` 0.6.0 (the newest release) depends on `chrono` (RUSTSEC-2026-0543, unmaintained). The copy takes a
+# `std::time::SystemTime` for record and offset timestamps instead, so `chrono` leaves `Cargo.lock`.
+rskafka = { path = "vendor/rskafka" }

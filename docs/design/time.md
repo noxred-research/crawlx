@@ -9,7 +9,7 @@ both unmaintained; issue #69).
 | Need | Library | Why |
 | --- | --- | --- |
 | Instants, durations, calendar dates, database codecs | [`time`](https://crates.io/crates/time) behind the facade | sqlx 0.9 has native `time` codecs for PostgreSQL `TIMESTAMPTZ` and MySQL/MariaDB `TIMESTAMP`/`DATETIME`; it has no `jiff` codecs. The `large-dates` feature keeps the range chrono had (years -262143 to 262142), so the SQLite and MariaDB infinity sentinels (`9999-12-31`) still decode. |
-| IANA zones, DST rules, cron evaluation | [`jiff`](https://crates.io/crates/jiff) with the bundled zone database | `time` has no zone database. `jiff` is maintained, and `croner` 5 evaluates five-field cron expressions on it directly (`default-features = false, features = ["std", "jiff"]`), so no chrono-typed API is left in the scheduler. The database is bundled (`tzdb-bundle-always`), so results do not depend on the host's tzdata. |
+| IANA zones, DST rules, cron evaluation | [`jiff`](https://crates.io/crates/jiff) with the bundled zone database | `time` has no zone database. `jiff` is maintained, and `croner` 5 evaluates five-field cron expressions on it directly (`default-features = false, features = ["jiff"]`), so no chrono-typed API is left in the scheduler. The database is bundled (`tzdb-bundle-always`), so results do not depend on the host's tzdata. |
 
 `jiff` is used only by `crawlx-scheduler` (`Schedule`) and `crawlx-extract` (`article_dates`,
 `extract.content.dateTimezone`); every other crate sees only the facade types.
@@ -35,12 +35,16 @@ puts these impls in the crate that owns the types, so `ci/lint-static.sh` exempt
 dependency and file (`src/time/database.rs`) from the rule that only `crawlx-storage` names `sqlx`; the file
 runs no SQL.
 
-## What still depends on chrono
+## Where chrono used to remain
 
-`chrono` remains in the dependency tree only through one third-party crate: `rskafka` (the record timestamp
-is a `chrono::DateTime<Utc>`; the Kafka sink builds it from epoch milliseconds with `rskafka::chrono`). No
-CrawlX crate names `chrono` in its manifest. `deny.toml` carries no exception for RUSTSEC-2026-0543:
-`unmaintained = "workspace"` limits that advisory class to workspace dependencies, and the
-"advisory was not encountered" warning showed the former ignore had become dead. Remove the `rskafka`
-edge when rskafka releases a version without `chrono`.
-`cargo tree -i chrono` lists the edge.
+`Cargo.lock` has no `chrono`. Two third-party edges had kept it there, and both are cut:
+
+- `rskafka` 0.6.0, the newest release, takes a `chrono::DateTime<Utc>` for the record timestamp. `vendor/rskafka`
+  is that release with one change: `Record::timestamp` and `OffsetAt::Timestamp` take a `std::time::SystemTime`
+  (Kafka keeps milliseconds). The Kafka sink passes `SystemTime::from(Timestamp::now())`.
+- `croner` 5 lists its optional `chrono` dependency in its `std` feature (`chrono?/std`), which makes Cargo
+  write `chrono` into `Cargo.lock` even though no build uses it. The workspace enables only the `jiff`
+  feature of `croner`; `jiff` itself keeps `std` through the workspace's own `jiff` dependency.
+
+`deny.toml` carries no exception for RUSTSEC-2026-0543 or RUSTSEC-2026-0555. Drop the `rskafka` patch in
+`Cargo.toml` once rskafka releases a version without `chrono`; `cargo tree -i chrono` must print nothing.

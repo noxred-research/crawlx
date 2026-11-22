@@ -17,6 +17,7 @@ summarized below.
 | --- | --- | --- | --- | --- | --- |
 | `vendor/hickory-resolver/` | `hickory-resolver` | 0.26.3 | `MIT OR Apache-2.0` | <https://github.com/hickory-dns/hickory-dns> | `LICENSE-MIT` (Copyright (c) 2015 The Hickory DNS Developers; Copyright (c) 2017 Google LLC.) and `LICENSE-APACHE` |
 | `vendor/pdf-loader/lopdf-0.46.0/` | `lopdf` | 0.46.0 | `MIT` | <https://github.com/J-F-Liu/lopdf> | `LICENSE` (Copyright (c) 2016 Junfeng Liu) |
+| `vendor/rskafka/` | `rskafka` | 0.6.0 | `MIT OR Apache-2.0` | <https://github.com/influxdata/rskafka> | `LICENSE-MIT` and `LICENSE-APACHE` |
 
 Notes:
 
@@ -28,6 +29,15 @@ Notes:
 - Local changes to `lopdf` add loader and content budgets. Only the patched crate is
   vendored; its upstream integration tests that need omitted assets are not part of
   the tree.
+- The local changes to `rskafka` remove its `chrono` dependency (the crate is reported
+  as unmaintained, RUSTSEC-2026-0543): record and offset timestamps are
+  `std::time::SystemTime`, with public millisecond conversion helpers; a record's
+  `timestamp_delta` in a produce request is floor(ms) minus floor(first ms), which differs
+  from upstream's truncated difference by at most 1 ms for sub-millisecond inputs;
+  `dead_code` is allowed; the crate documentation replaces the README include; four
+  comments are reworded. The header of `vendor/rskafka/Cargo.toml` lists every change.
+  The upstream manifest is kept as `Cargo.toml.upstream`; the upstream tests, benchmarks
+  and CI files are not vendored, and no `Cargo.lock` is kept. Copyright (c) 2020 InfluxData.
 - The `lopdf` tree ships no `Cargo.lock`. The upstream package carried one, but cargo
   never reads the lockfile of a path or `[patch]` dependency, so it pinned nothing the
   crawlx build uses while OSV scanners reported its stale pins (RUSTSEC-2026-0204,
