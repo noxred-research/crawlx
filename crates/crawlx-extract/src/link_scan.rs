@@ -399,12 +399,10 @@ fn finish(state: State, page: &Url) -> LinkScan {
             internal,
         });
     }
-    let tokens = |wanted: &str| state.robots.iter().any(|token| token == wanted);
-    let robots = RobotsMeta {
-        noindex: tokens("noindex") || tokens("none"),
-        nofollow: tokens("nofollow") || tokens("none"),
-        noarchive: tokens("noarchive"),
-    };
+    let mut robots = RobotsMeta::default();
+    for token in &state.robots {
+        robots.apply(token);
+    }
     let meta_text = |value: Option<String>| {
         value
             .map(|value| collapse_ws(&value))

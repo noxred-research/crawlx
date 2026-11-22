@@ -115,7 +115,8 @@ pub fn try_meta_refresh_target(
     Ok(refresh_target(&html, observed))
 }
 
-/// `<meta name=robots>` directives.
+/// Robots directives: `<meta name=robots>` and, merged by [`RobotsMeta::union`], the
+/// `X-Robots-Tag` response header ([`crate::robots_header`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RobotsMeta {
     /// `noindex` or `none`.
@@ -124,6 +125,12 @@ pub struct RobotsMeta {
     pub nofollow: bool,
     /// `noarchive`.
     pub noarchive: bool,
+    /// `nosnippet`.
+    #[serde(default)]
+    pub nosnippet: bool,
+    /// `noimageindex`.
+    #[serde(default)]
+    pub noimageindex: bool,
 }
 
 /// `<link rel=alternate hreflang=...>`.
@@ -401,12 +408,10 @@ pub fn extract(html: &Html, base: &Url) -> HeadInfo {
     };
     let mut tokens = robots_tokens("robots");
     tokens.extend(robots_tokens("crawlx"));
-    let has = |t: &str| tokens.iter().any(|x| x == t);
-    md.robots = RobotsMeta {
-        noindex: has("noindex") || has("none"),
-        nofollow: has("nofollow") || has("none"),
-        noarchive: has("noarchive"),
-    };
+    md.robots = RobotsMeta::default();
+    for token in &tokens {
+        md.robots.apply(token);
+    }
 
     let (og, tw, meta) = (&md.open_graph, &md.twitter, &md.meta);
     let published = first_of(
