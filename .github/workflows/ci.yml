@@ -297,22 +297,37 @@ jobs:
           path: bench/out/flake-history.json
           key: flake-history-${{ github.run_id }}
           restore-keys: flake-history-
+      # Pull requests run the same suite with the same filter, without the coverage
+      # instrumentation. The instrumented build wrote about 50 GiB per run to the shared
+      # runner host disk, which is the bottleneck of the three self-hosted instances;
+      # the lcov artifact is informational (no job or ruleset reads it), so it is produced
+      # only for push, schedule and manual runs: one run per concurrency group (see above).
+      - name: Unit and integration tests (nextest, pull requests)
+        if: github.event_name == 'pull_request'
+        env:
+          FLAKE_REPORT: target/debug/flake-report
+        run: |
+          cargo nextest run --profile ci --no-fail-fast --workspace --exclude crawlx-bench \
+            -E "$(ci/flake-gate.sh filter)"
       - name: Unit and integration tests with coverage (nextest under cargo-llvm-cov)
+        if: github.event_name != 'pull_request'
         env:
           FLAKE_REPORT: target/debug/flake-report
         run: |
           cargo llvm-cov nextest --profile ci --no-fail-fast --workspace --exclude crawlx-bench \
             -E "$(ci/flake-gate.sh filter)" --lcov --output-path lcov.info
-      - name: Keep the unit junit (the coverage build is deleted next)
+      - name: Keep the unit junit (the bench run overwrites it; on push the coverage build is deleted next)
         if: always()
         run: |
           mkdir -p bench/out
           cp "$(find target -path '*/nextest/ci/junit.xml' | head -n1)" bench/out/junit-unit.xml
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: github.event_name != 'pull_request'
         with:
           name: coverage-lcov
           path: lcov.info
       - name: Free the coverage build before the bench tests
+        if: github.event_name != 'pull_request'
         # The instrumented build fills most of the runner disk; the bench crate builds
         # in the normal target directory.
         run: |
