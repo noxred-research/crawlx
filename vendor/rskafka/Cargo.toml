@@ -7,9 +7,10 @@
 #    truncated the nanosecond difference, which differs by 1 ms only for sub-millisecond inputs.
 #  - Tests, doc examples and the crate documentation follow the type change (the upstream README is
 #    not vendored, so `lib.rs` carries a short crate doc instead); four comments in
-#    `protocol/primitives.rs` are reworded for the repository's provenance lint.
+#    `protocol/primitives.rs` are reworded so the tree names no third-party product (the copies in the
+#    sibling repositories are identical).
 #  - `[lints.rust] dead_code = "allow"`: a path dependency is not subject to Cargo's lint cap, and
-#    CI builds with `-D warnings`; the dropped chrono paths and unused protocol code would fail it.
+#    CI builds with `-D warnings`; upstream's unused protocol code would fail it.
 # RUSTSEC-2026-0543 reports chrono as unmaintained and rskafka 0.6.0 (the newest release) cannot drop
 # it. The upstream manifest is kept as `Cargo.toml.upstream`; upstream tests, benches and CI files are
 # not vendored (the vendored crate is not a workspace member). Remove this directory and the

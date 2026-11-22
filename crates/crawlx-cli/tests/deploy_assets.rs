@@ -16,6 +16,28 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+/// YAML reads with the scalar typing of the former `serde_yaml_ng`: `yes`/`no`/`on`/`off` and numbers with a
+/// leading zero or an underscore (`0440`) stay strings.
+mod yaml {
+    fn options() -> serde_saphyr::Options {
+        serde_saphyr::options! {
+            strict_booleans: true,
+            leading_zero_numbers_as_strings: true,
+            underscored_numbers_as_strings: true,
+        }
+    }
+
+    pub fn from_str<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, serde_saphyr::Error> {
+        serde_saphyr::from_str_with_options(text, options())
+    }
+
+    pub fn from_slice_multiple<T: serde::de::DeserializeOwned>(
+        bytes: &[u8],
+    ) -> Result<Vec<T>, serde_saphyr::Error> {
+        serde_saphyr::from_slice_multiple_with_options(bytes, options())
+    }
+}
+
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -58,7 +80,7 @@ fn crawlx_metrics(expr: &str) -> BTreeSet<String> {
 
 #[test]
 fn alert_rules_parse_and_reference_only_catalogued_metrics() {
-    let doc: Value = serde_yaml_ng::from_str(&read("deploy/alerts/crawlx-rules.yaml")).unwrap();
+    let doc: Value = yaml::from_str(&read("deploy/alerts/crawlx-rules.yaml")).unwrap();
     let groups = doc["groups"].as_array().expect("groups");
     assert!(groups.len() >= 7, "one group per SLO plus supporting alerts");
     let known = exported_names();
@@ -126,8 +148,8 @@ fn browser_crash_loop_alerts_have_promtool_test_cases() {
         root().join("deploy/alerts/crawlx-rules.test.yaml").is_file(),
         "deploy/alerts/crawlx-rules.test.yaml must exist"
     );
-    let rules: Value = serde_yaml_ng::from_str(&read("deploy/alerts/crawlx-rules.yaml")).unwrap();
-    let tests: Value = serde_yaml_ng::from_str(&read("deploy/alerts/crawlx-rules.test.yaml")).unwrap();
+    let rules: Value = yaml::from_str(&read("deploy/alerts/crawlx-rules.yaml")).unwrap();
+    let tests: Value = yaml::from_str(&read("deploy/alerts/crawlx-rules.test.yaml")).unwrap();
     let mut tested = BTreeSet::new();
     for case in tests["tests"].as_array().expect("tests") {
         for check in case["alert_rule_test"].as_array().into_iter().flatten() {
@@ -284,7 +306,7 @@ fn kubernetes_manifests_carry_the_plan_security_posture() {
         "deploy/k8s/worker-deployment.yaml",
     ] {
         for doc in read(f).split("\n---\n") {
-            let v: Value = serde_yaml_ng::from_str(doc).unwrap_or_else(|e| panic!("{f}: {e}"));
+            let v: Value = yaml::from_str(doc).unwrap_or_else(|e| panic!("{f}: {e}"));
             assert!(v["kind"].is_string(), "{f}: every document has a kind");
         }
     }
@@ -340,8 +362,9 @@ fn helm_configuration_passes_the_real_config_parser_and_validation() {
         "{}",
         String::from_utf8_lossy(&rendered.stderr)
     );
-    let toml_text = serde_yaml_ng::Deserializer::from_slice(&rendered.stdout)
-        .map(|document| <Value as serde::Deserialize>::deserialize(document).unwrap())
+    let toml_text = yaml::from_slice_multiple::<Value>(&rendered.stdout)
+        .unwrap()
+        .into_iter()
         .find_map(|document| document["data"]["crawlx.toml"].as_str().map(str::to_owned))
         .expect("rendered configuration");
     let dir = tempfile::tempdir().unwrap();
@@ -387,8 +410,9 @@ fn rendered_documents(output: &std::process::Output) -> Vec<Value> {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    serde_yaml_ng::Deserializer::from_slice(&output.stdout)
-        .map(|document| <Value as serde::Deserialize>::deserialize(document).unwrap())
+    yaml::from_slice_multiple::<Value>(&output.stdout)
+        .unwrap()
+        .into_iter()
         .filter(|document| !document.is_null())
         .collect()
 }
@@ -630,7 +654,7 @@ fn ci_images_job_builds_tests_scans_and_pins_actions() {
 const COMPOSE: &str = "docker/docker-compose.yml";
 
 fn compose() -> Value {
-    serde_yaml_ng::from_str(&read(COMPOSE)).unwrap()
+    yaml::from_str(&read(COMPOSE)).unwrap()
 }
 
 fn service<'a>(stack: &'a Value, name: &str) -> &'a Value {
@@ -801,7 +825,7 @@ fn compose_images_are_pinned_and_match_the_chart_and_the_chromium_pin() {
             );
         }
     }
-    let values: Value = serde_yaml_ng::from_str(&read("deploy/helm/crawlx/values.yaml")).unwrap();
+    let values: Value = yaml::from_str(&read("deploy/helm/crawlx/values.yaml")).unwrap();
     let chart_tag = values["image"]["tag"].as_str().unwrap();
     let workspace = read("Cargo.toml");
     let version = workspace
@@ -833,7 +857,7 @@ fn compose_images_are_pinned_and_match_the_chart_and_the_chromium_pin() {
         "worker tag is <tag>-chromium<pin version>"
     );
     // the same PostgreSQL major as the development stack, the same MinIO image as CI
-    let dev: Value = serde_yaml_ng::from_str(&read("docker/docker-compose.dev.yaml")).unwrap();
+    let dev: Value = yaml::from_str(&read("docker/docker-compose.dev.yaml")).unwrap();
     assert_eq!(
         image_of(&stack, "postgres"),
         dev["services"]["postgres"]["image"].as_str().unwrap()
@@ -991,7 +1015,7 @@ fn compose_commands_are_valid_crawlx_command_lines_matching_the_kubernetes_manif
         "the bootstrap key comes from CRAWLX_API_KEY_SPEC"
     );
     // worker: the same limits as the chart
-    let values: Value = serde_yaml_ng::from_str(&read("deploy/helm/crawlx/values.yaml")).unwrap();
+    let values: Value = yaml::from_str(&read("deploy/helm/crawlx/values.yaml")).unwrap();
     let Command::Worker(worker) = cli_of(&stack, "worker").command else {
         panic!("worker runs `crawlx worker`")
     };
@@ -1134,7 +1158,7 @@ fn compose_worker_and_services_carry_the_plan_security_posture() {
         "/dev/shm is sized, not disabled"
     );
     let limits = &worker["deploy"]["resources"]["limits"];
-    let values: Value = serde_yaml_ng::from_str(&read("deploy/helm/crawlx/values.yaml")).unwrap();
+    let values: Value = yaml::from_str(&read("deploy/helm/crawlx/values.yaml")).unwrap();
     assert_eq!(
         limits["pids"], values["worker"]["pids"],
         "pid cap follows the chart"
@@ -1493,7 +1517,7 @@ fn checkpoint_kms_deployment_setting_is_opt_in_without_a_default_key() {
         "Compose must pass through only an explicitly set host value"
     );
     assert!(!raw_env(service(&stack, "api")).contains_key(setting));
-    let values: Value = serde_yaml_ng::from_str(&read("deploy/helm/crawlx/values.yaml")).unwrap();
+    let values: Value = yaml::from_str(&read("deploy/helm/crawlx/values.yaml")).unwrap();
     assert_eq!(values["capabilities"]["checkpointEncryption"]["kmsKeyId"], "");
     let helpers = read("deploy/helm/crawlx/templates/_helpers.tpl");
     assert!(helpers.contains("{{- if $c.checkpointEncryption.kmsKeyId }}"));
@@ -1527,7 +1551,7 @@ fn checkpoint_kms_deployment_setting_is_opt_in_without_a_default_key() {
 #[test]
 fn checkpoint_kek_file_is_an_optional_secret_mount_exclusive_with_the_cloud_key() {
     const KEK_SET: &str = "capabilities.checkpointEncryption.kekFileSecret=crawlx-checkpoint-kek";
-    let values: Value = serde_yaml_ng::from_str(&read("deploy/helm/crawlx/values.yaml")).unwrap();
+    let values: Value = yaml::from_str(&read("deploy/helm/crawlx/values.yaml")).unwrap();
     assert_eq!(
         values["capabilities"]["checkpointEncryption"]["kekFileSecret"],
         ""
@@ -2201,7 +2225,7 @@ fn plain_audit_export_manifest_matches_the_chart_contract() {
     let text = read("deploy/k8s/audit-export-cronjob.yaml");
     let documents: Vec<Value> = text
         .split("\n---\n")
-        .map(|doc| serde_yaml_ng::from_str(doc).unwrap())
+        .map(|doc| yaml::from_str(doc).unwrap())
         .collect();
     let cron = documents
         .iter()
@@ -2312,7 +2336,7 @@ fn object_store_lifecycle_expires_each_artifact_prefix_and_never_audit() {
 #[test]
 fn plain_manifests_carry_the_checkpoint_kek_as_an_optional_patch() {
     let patch = read("deploy/k8s/checkpoint-kek-patch.yaml");
-    let doc: Value = serde_yaml_ng::from_str(&patch).unwrap();
+    let doc: Value = yaml::from_str(&patch).unwrap();
     let pod = &doc["spec"]["template"]["spec"];
     let container = &pod["containers"][0];
     assert_eq!(container["name"], "worker");

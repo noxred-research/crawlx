@@ -9,7 +9,7 @@ is not legal advice.
 
 ## Vendored Rust crates
 
-Both crates replace their crates.io counterparts through `[patch.crates-io]` in `Cargo.toml`
+These crates replace their crates.io counterparts through `[patch.crates-io]` in `Cargo.toml`
 and are excluded from the workspace member list. Each carries local modifications,
 summarized below.
 
@@ -18,6 +18,9 @@ summarized below.
 | `vendor/hickory-resolver/` | `hickory-resolver` | 0.26.3 | `MIT OR Apache-2.0` | <https://github.com/hickory-dns/hickory-dns> | `LICENSE-MIT` (Copyright (c) 2015 The Hickory DNS Developers; Copyright (c) 2017 Google LLC.) and `LICENSE-APACHE` |
 | `vendor/pdf-loader/lopdf-0.46.0/` | `lopdf` | 0.46.0 | `MIT` | <https://github.com/J-F-Liu/lopdf> | `LICENSE` (Copyright (c) 2016 Junfeng Liu) |
 | `vendor/rskafka/` | `rskafka` | 0.6.0 | `MIT OR Apache-2.0` | <https://github.com/influxdata/rskafka> | `LICENSE-MIT` and `LICENSE-APACHE` |
+| `vendor/wreq/` | `wreq` | 0.15.3 | `Apache-2.0` | <https://github.com/0x676e67/wreq> | `LICENSE` (Apache License 2.0 text) |
+| `vendor/tokenizers/` | `tokenizers` | 0.23.2 | `Apache-2.0` | <https://github.com/huggingface/tokenizers> | `LICENSE` (Apache License 2.0 text) |
+| `vendor/console-subscriber/` | `console-subscriber` | 0.5.0 | `MIT` | <https://github.com/tokio-rs/console> | `LICENSE` (Copyright (c) 2021 Tokio Contributors) |
 
 Notes:
 
@@ -38,6 +41,14 @@ Notes:
   comments are reworded. The header of `vendor/rskafka/Cargo.toml` lists every change.
   The upstream manifest is kept as `Cargo.toml.upstream`; the upstream tests, benchmarks
   and CI files are not vendored, and no `Cargo.lock` is kept. Copyright (c) 2020 InfluxData.
+- The only local changes to `wreq` are its `lru` dependency, 0.13 to 0.18 (`src/util/client/pool.rs` is the only user),
+  so that no `lru` release reported as vulnerable is in `Cargo.lock`, and `dead_code` allowed for three unused items
+  (CI builds with `-D warnings`). The only local change to `tokenizers`
+  replaces its `paste` dependency (archived, RUSTSEC-2024-0436) with the drop-in fork `pastey`. The only
+  local change to `console-subscriber` replaces its `humantime` dependency (RUSTSEC-2026-0542) with `jiff`.
+  Each header in `vendor/<crate>/Cargo.toml` says so; the upstream manifests are kept as `Cargo.toml.upstream`;
+  examples, tests and benchmarks are not vendored, and no `Cargo.lock` is kept. `wreq` and `tokenizers` are
+  Apache-2.0; their `LICENSE` is the full license text and the upstream packages carry no `NOTICE` file.
 - The `lopdf` tree ships no `Cargo.lock`. The upstream package carried one, but cargo
   never reads the lockfile of a path or `[patch]` dependency, so it pinned nothing the
   crawlx build uses while OSV scanners reported its stale pins (RUSTSEC-2026-0204,

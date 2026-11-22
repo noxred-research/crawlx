@@ -2,7 +2,7 @@
 resolver = "2"
 members = ["crates/*"]
 # `fuzz/` is its own cargo-fuzz workspace; it must not inherit the lints or profiles.
-exclude = ["fuzz", "vendor/pdf-loader/lopdf-0.46.0", "vendor/hickory-resolver", "vendor/ego-tree", "vendor/lru", "vendor/rskafka"]
+exclude = ["fuzz", "vendor/pdf-loader/lopdf-0.46.0", "vendor/hickory-resolver", "vendor/ego-tree", "vendor/rskafka", "vendor/wreq", "vendor/tokenizers", "vendor/console-subscriber"]
 
 [workspace.package]
 version = "0.2.0"
@@ -24,8 +24,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ciborium = "0.2"
 toml = "1.1"
-# YAML custom-field config files (`crawlx crawl --custom-field-config`; compatibility-flag `-flc` shape)
-serde_yaml_ng = "0.10"
+# YAML config files (`crawlx crawl --config`, `--custom-field-config`, `-fc`; compatibility-flag `-flc` shape). A
+# safe-Rust parser: `serde_yaml_ng` sat on `unsafe-libyaml`, archived and reported unmaintained (RUSTSEC-2024-0449).
+serde-saphyr = { version = "2", default-features = false, features = ["deserialize"] }
 bytes = "1"
 # hashing / ids / rng
 blake3 = "1"
@@ -220,10 +221,15 @@ strip = false
 lopdf = { path = "vendor/pdf-loader/lopdf-0.46.0" }
 # Keep baseline DNS failover and configured TCP retry on the security-patched release.
 hickory-resolver = { path = "vendor/hickory-resolver" }
-# Backport the aliasing fix for `IterMut` to the release the pinned TLS-profile client requires.
-lru = { path = "vendor/lru" }
 # Reserve HTML tree node storage fallibly (`Tree::try_reserve`) so the parse can refuse memory instead of aborting.
 ego-tree = { path = "vendor/ego-tree" }
 # `rskafka` 0.6.0 (the newest release) depends on `chrono` (RUSTSEC-2026-0543, unmaintained). The copy takes a
 # `std::time::SystemTime` for record and offset timestamps instead, so `chrono` leaves `Cargo.lock`.
 rskafka = { path = "vendor/rskafka" }
+# `wreq` 0.15.3 needs `lru` 0.13, which scanners that match crates by version report as vulnerable
+# (RUSTSEC-2026-0002, RUSTSEC-2026-0253; the former `vendor/lru` backport kept the version). The copy uses `lru` 0.18.
+wreq = { path = "vendor/wreq" }
+# `tokenizers` uses `paste` (RUSTSEC-2024-0436, archived); the copy uses its drop-in fork `pastey`.
+tokenizers = { path = "vendor/tokenizers" }
+# `console-subscriber` uses `humantime` (RUSTSEC-2026-0542, unmaintained); the copy parses durations with `jiff`.
+console-subscriber = { path = "vendor/console-subscriber" }

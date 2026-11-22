@@ -40,8 +40,9 @@ runs no SQL.
 `Cargo.lock` has no `chrono`. Two third-party edges had kept it there, and both are cut:
 
 - `rskafka` 0.6.0, the newest release, takes a `chrono::DateTime<Utc>` for the record timestamp. `vendor/rskafka`
-  is that release with one change: `Record::timestamp` and `OffsetAt::Timestamp` take a `std::time::SystemTime`
-  (Kafka keeps milliseconds). The Kafka sink passes `SystemTime::from(Timestamp::now())`.
+  is that release with `Record::timestamp` and `OffsetAt::Timestamp` taking a `std::time::SystemTime` (Kafka
+  keeps milliseconds), plus the other changes listed in the header of `vendor/rskafka/Cargo.toml`. The Kafka sink
+  passes `SystemTime::from(Timestamp::now())`.
 - `croner` 5 lists its optional `chrono` dependency in its `std` feature (`chrono?/std`), which makes Cargo
   write `chrono` into `Cargo.lock` even though no build uses it. The workspace enables only the `jiff`
   feature of `croner`; `jiff` itself keeps `std` through the workspace's own `jiff` dependency.
