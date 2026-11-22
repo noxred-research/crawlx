@@ -36,6 +36,20 @@ project is pre-1.0; minor versions may contain breaking changes.
   detection as `TechInput::js_globals` (`ExtractOptions::js_globals`), so catalog `js_globals` patterns now
   match (crawlx#75). The page record states the source: `browser.jsGlobals.source = "browser_plane"`.
   This replaces the matcher-only note of crawlx#68 in `docs/reference.md` and the `technologies` docs.
+- Static plane: a page the parser refuses for resources (a helper limit, or the shared parse-memory budget) no
+  longer costs the crawl its subtree (issue #71, third point). `crawlx_extract::link_scan` tokenizes the body
+  with `html5ever`'s tokenizer alone (no tree), in 32 KiB decoded chunks, and recovers every `a[href]` and
+  `area[href]` link (resolved against `<base href>`, `http(s)` only, fragments removed, duplicates merged, with
+  anchor text and `rel`), the title, description, canonical URL, language and `robots` meta. The links are
+  discovered through the same scope, robots and dedupe gates as the links of a parsed page. The page itself
+  still fails as `parser_limit_exceeded` (no content was extracted); its `page.failed` event gains
+  `metadataOnly` with the recovered metadata, the link count, `linksFollowed` and `linksTruncated`, or
+  `{"status":"unavailable"}` when the shared byte budget refuses the scan's reservation. The scan keeps at
+  most 100000 links and 16 MiB of link text and reserves `64 x input + 33 MiB` from the shared budget first.
+- Docs and tests: a static crawl requests a page's `<base href>` URL once, as a structural endpoint like every
+  other URL-bearing attribute (the unexplained lone `GET /p/` 404 of the benchmark fixture came from
+  `<base href="/p/">`). The behaviour is unchanged, now documented in `docs/reference.md` and pinned by
+  `crates/crawlx-cli/tests/base_href_request.rs`.
 
 ### Fixed
 
@@ -48,9 +62,8 @@ project is pre-1.0; minor versions may contain breaking changes.
   2 GiB (at most two concurrent helpers on the default 4 GiB parse budget) and every helper run adds
   64 bytes of address space per input byte and one CPU second and one wall-clock second per MiB of input.
   The `rlimit` isolation is unchanged. A page that still exceeds a helper limit fails as
-  `parser_limit_exceeded` with `inputBytes` in the failure event, the same way every time. There is no
-  metadata-only link fallback: the extractor builds its tree with `scraper` and has no streaming link
-  tokenizer to run in the parent safely.
+  `parser_limit_exceeded` with `inputBytes` in the failure event, the same way every time. The page's links and
+  metadata are still recovered (see the metadata-only link scan under Added).
 - Browser plane (`dynamic` and `hybrid`): one failed page no longer ends the run with `fatal_error`
   (issue #70). An egress denial on a navigation or redirect target, a network error page
   (`chrome-error://`), a navigation timeout and an extraction failure of a page's output now fail only that

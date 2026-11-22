@@ -97,6 +97,46 @@ pub(crate) enum IsolatedOutcome {
     Cancelled,
 }
 
+/// Why a refused page's metadata-only link scan did not run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScanUnavailable {
+    /// The shared byte budget refused the scan's reservation.
+    MemoryAdmission,
+    /// The blocking task failed.
+    Task,
+}
+
+impl ScanUnavailable {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::MemoryAdmission => "memory_admission",
+            Self::Task => "scan_task_failed",
+        }
+    }
+}
+
+/// Recover links and metadata from a body the isolated parser refused, through the bounded
+/// streaming scan of [`crawlx_extract::link_scan`]: no DOM, and the working set is reserved from
+/// the shared budget first. The reservation and the bytes move into the blocking job together,
+/// so a cancelled await never releases it while the job still reads the body.
+pub(crate) async fn scan_links(
+    cpu: &crate::runtime::CpuPool,
+    body: bytes::Bytes,
+    page: Url,
+) -> Result<crawlx_extract::link_scan::LinkScan, ScanUnavailable> {
+    let wanted =
+        crawlx_extract::link_scan::charge_bytes(body.len()).ok_or(ScanUnavailable::MemoryAdmission)?;
+    let permit = reserve_derived(wanted).map_err(|_| ScanUnavailable::MemoryAdmission)?;
+    cpu.run(move || {
+        let scanned = crawlx_extract::link_scan::scan(&body, &page);
+        drop(body);
+        drop(permit);
+        scanned
+    })
+    .await
+    .map_err(|_| ScanUnavailable::Task)
+}
+
 /// Largest dynamic-secret snapshot the isolated parser transport can carry: its byte limit
 /// plus one `String` header per value.
 pub(crate) const DYNAMIC_SECRET_SNAPSHOT_BYTES: usize = crawlx_extract::isolated::MAX_SECRET_BYTES
