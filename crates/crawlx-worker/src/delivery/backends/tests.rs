@@ -498,6 +498,46 @@ async fn clickhouse_keeps_the_batches_of_runs_and_deployments_sharing_a_table() 
 
 // ---- Kafka -------------------------------------------------------------------------------------
 
+/// The conversions behind the vendored Kafka client: Kafka's epoch milliseconds (not seconds or
+/// microseconds), truncating sub-millisecond parts, rounding toward negative infinity before the
+/// epoch. Runs without a broker.
+#[test]
+fn kafka_timestamp_conversions_are_epoch_milliseconds_and_round_toward_negative_infinity() {
+    use rskafka::record::{from_unix_millis, unix_millis};
+    use std::time::{Duration, UNIX_EPOCH};
+    let at = |millis: u64| UNIX_EPOCH + Duration::from_millis(millis);
+    assert_eq!(
+        unix_millis(UNIX_EPOCH + Duration::from_secs(1_700_000_000)),
+        1_700_000_000_000
+    );
+    assert_eq!(unix_millis(at(1_700_000_000_123)), 1_700_000_000_123);
+    assert_eq!(
+        from_unix_millis(1_700_000_000_123),
+        Some(UNIX_EPOCH + Duration::from_micros(1_700_000_000_123_000))
+    );
+    assert_eq!(unix_millis(UNIX_EPOCH + Duration::from_micros(1_999)), 1);
+    assert_eq!(unix_millis(UNIX_EPOCH - Duration::from_micros(1)), -1);
+    assert_eq!(unix_millis(UNIX_EPOCH - Duration::from_micros(1_000)), -1);
+    assert_eq!(unix_millis(UNIX_EPOCH - Duration::from_micros(1_001)), -2);
+    assert_eq!(unix_millis(UNIX_EPOCH - Duration::from_secs(86_400)), -86_400_000);
+    for millis in [
+        0,
+        1,
+        999,
+        1_000,
+        1_337,
+        -1,
+        -999,
+        -1_000,
+        -1_337,
+        -86_400_000,
+        1_700_000_000_123,
+    ] {
+        let time = from_unix_millis(millis).expect("representable");
+        assert_eq!(unix_millis(time), millis, "round trip of {millis}");
+    }
+}
+
 #[tokio::test]
 async fn kafka_produces_to_prefixed_topics_and_keeps_deployments_apart() {
     use rskafka::client::partition::{OffsetAt, UnknownTopicHandling};
@@ -567,6 +607,14 @@ async fn kafka_produces_to_prefixed_topics_and_keeps_deployments_apart() {
     assert_eq!(record.value.as_deref(), Some(&b"payload-a"[..]));
     assert_eq!(record.headers["crawlx-feed"], b"feed");
     assert_eq!(record.headers["crawlx-run"], run.id.0.to_string().into_bytes());
+    // The record time is the send time (the vendored client takes a `SystemTime`, no chrono).
+    let age = std::time::SystemTime::now()
+        .duration_since(record.timestamp)
+        .expect("the record time is not in the future");
+    assert!(
+        age < std::time::Duration::from_secs(300),
+        "record time is {age:?} old"
+    );
     // B's record never appears in A's topic, and a retry of the same batch is a second record
     a.send(
         &authority,

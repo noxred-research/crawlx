@@ -117,9 +117,22 @@ project is pre-1.0; minor versions may contain breaking changes.
   before (checked against chrono on several hundred thousand mutated inputs). Two behaviour notes: a
   leap-second `:60` reads as the first instant of the next minute (chrono kept it as a second of
   `1_000_000_000+` nanoseconds), and zone names must be spelled as the IANA database spells them (as
-  with `chrono-tz`). `deny.toml` drops both exceptions: chrono stays in the lockfile only
-  through `rskafka` (the Kafka record timestamp type), and cargo-deny checks unmaintained advisories for
-  workspace dependencies only (`unmaintained = "workspace"`).
+  with `chrono-tz`). `deny.toml` drops both exceptions (cargo-deny checks unmaintained advisories for
+  workspace dependencies only, `unmaintained = "workspace"`).
+- Dependencies: `chrono` is gone from `Cargo.lock` as well (RUSTSEC-2026-0543; OpenSSF Scorecard and OSV read
+  the lockfile, not the dependency graph of a build). `rskafka` 0.6.0, the newest release, takes a
+  `chrono::DateTime<Utc>` for record and offset timestamps; `vendor/rskafka` is that release with
+  `Record::timestamp` and `OffsetAt::Timestamp` taking a `std::time::SystemTime` (Kafka keeps milliseconds; the
+  `chrono` re-export is removed), public `unix_millis` and `from_unix_millis` helpers (floor toward negative
+  infinity), a per-record `timestamp_delta` of floor(ms) minus floor(first ms) (upstream truncated the difference;
+  at most 1 ms apart for sub-millisecond inputs), `dead_code` allowed (CI builds with `-D warnings`) and four
+  reworded comments; the header of `vendor/rskafka/Cargo.toml` lists every change. `Cargo.toml` patches
+  `rskafka` to it. The `croner` dependency enables only its
+  `jiff` feature, because its `std` feature lists the unused optional `chrono` and made Cargo write it into the
+  lockfile. Drop the `rskafka` patch once a release without `chrono` exists.
+- Dependencies: `sqlx` 0.9.0 to 0.9.1 (it accepts `libsqlite3-sys` up to 0.40) and `libsqlite3-sys` 0.30.1 to
+  0.40.0, which bundles the SQLite release that fixes RUSTSEC-2026-0459 (a crafted database plus WAL file). The
+  `deny.toml` ignore for it is removed; `cargo deny` and `cargo audit` report no vulnerability.
 - Politeness: back-off after `429`/`503` no longer turns one throttling answer into minutes of slow
   crawling (#76). With the new default profile, `politeness.backoffProfile = "balanced"`, the first
   throttling answer after a success sets the origin's spacing to `max(Retry-After, 2 × floor)` (floor =

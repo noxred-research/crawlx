@@ -243,12 +243,8 @@ impl DeliveryDestination for KafkaDestination {
             key: Some(record_key.into_bytes()),
             value: Some(bytes.to_vec()),
             headers,
-            // rskafka types the record time as a `chrono::DateTime<Utc>` (the only chrono type left in
-            // the tree); it is built from epoch milliseconds, which needs no chrono feature.
-            timestamp: rskafka::chrono::DateTime::from_timestamp_millis(
-                crawlx_core::time::Timestamp::now().timestamp_millis(),
-            )
-            .unwrap_or_default(),
+            // Kafka keeps milliseconds; the vendored client takes a `SystemTime` (no chrono).
+            timestamp: std::time::SystemTime::from(crawlx_core::time::Timestamp::now()),
         };
         let offsets = partition_client
             .produce(vec![record], Compression::NoCompression)
