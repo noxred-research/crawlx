@@ -1613,7 +1613,8 @@ pub fn load_custom_fields(path: &Path) -> anyhow::Result<Vec<CustomField>> {
     let entries: Vec<CustomFieldFile> = if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("json")) {
         serde_json::from_slice(&bytes).with_context(|| format!("parsing {}", path.display()))?
     } else {
-        serde_yaml_ng::from_slice(&bytes).with_context(|| format!("parsing {}", path.display()))?
+        serde_saphyr::from_slice_with_options(&bytes, crate::config_file::yaml_options())
+            .with_context(|| format!("parsing {}", path.display()))?
     };
     entries
         .into_iter()

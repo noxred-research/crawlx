@@ -58,7 +58,7 @@ sha2.workspace = true
 scraper.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml_ng.workspace = true
+serde-saphyr.workspace = true
 # `multipart` is the one feature the workspace reqwest lacks: `crawlx mcp` uploads files to `/parse`.
 reqwest = { workspace = true, features = ["multipart"] }
 thiserror.workspace = true

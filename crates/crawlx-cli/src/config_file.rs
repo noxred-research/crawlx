@@ -83,20 +83,32 @@ pub(crate) fn load(path: &Path) -> anyhow::Result<ConfigLayer> {
     }
 }
 
+/// Reader options that keep the scalar typing of the former `serde_yaml_ng`: only `true`/`false` are booleans
+/// (`yes`, `no`, `on` and `off` stay strings, so `page-content-similar-mode: off` is the mode, not a flag
+/// that vanishes), and numbers with a leading zero or an underscore (`0440`, `0612345678`, `1_000`) stay
+/// strings. Errors carry no source snippet: a config file can hold URLs with credentials and cookies.
+pub(crate) fn yaml_options() -> serde_saphyr::Options {
+    serde_saphyr::options! {
+        strict_booleans: true,
+        leading_zero_numbers_as_strings: true,
+        underscored_numbers_as_strings: true,
+        with_snippet: false,
+    }
+}
+
 fn flags_from_yaml(text: &str, path: &Path) -> anyhow::Result<ConfigLayer> {
     let at = |what: &str| format!("config file {}: {what}", path.display());
-    let doc: serde_yaml_ng::Value = serde_yaml_ng::from_str(text).map_err(|e| anyhow!(at(&e.to_string())))?;
+    let doc: Value =
+        serde_saphyr::from_str_with_options(text, yaml_options()).map_err(|e| anyhow!(at(&e.to_string())))?;
     let map = match doc {
-        serde_yaml_ng::Value::Null => serde_yaml_ng::Mapping::new(),
-        serde_yaml_ng::Value::Mapping(m) => m,
+        Value::Null => serde_json::Map::new(),
+        Value::Object(m) => m,
         _ => bail!(at("expected a mapping of flag names to values")),
     };
     let command = CrawlArgs::augment_args(clap::Command::new("crawl"));
     let mut argv = vec!["crawl".to_owned()];
     for (key, value) in &map {
-        let key = key
-            .as_str()
-            .ok_or_else(|| anyhow!(at("keys must be flag names")))?;
+        let key = key.as_str();
         if key == "config" {
             bail!(at("`config` cannot name another configuration file"));
         }
@@ -124,11 +136,11 @@ fn flags_from_yaml(text: &str, path: &Path) -> anyhow::Result<ConfigLayer> {
 fn scalar_tokens(
     long: &str,
     key: &str,
-    value: &serde_yaml_ng::Value,
+    value: &Value,
     explicit_bool: bool,
     argv: &mut Vec<String>,
 ) -> Result<(), String> {
-    use serde_yaml_ng::Value as Y;
+    use serde_json::Value as Y;
     let one = |v: &Y| -> Result<Option<String>, String> {
         match v {
             Y::Bool(value) if explicit_bool => Ok(Some(format!("--{long}={value}"))),
@@ -136,13 +148,11 @@ fn scalar_tokens(
             Y::Bool(true) => Ok(Some(format!("--{long}"))),
             Y::String(s) => Ok(Some(format!("--{long}={s}"))),
             Y::Number(n) => Ok(Some(format!("--{long}={n}"))),
-            Y::Sequence(_) | Y::Mapping(_) | Y::Tagged(_) => {
-                Err(format!("key `{key}` takes a scalar or a list of scalars"))
-            }
+            Y::Array(_) | Y::Object(_) => Err(format!("key `{key}` takes a scalar or a list of scalars")),
         }
     };
     match value {
-        Y::Sequence(items) => {
+        Y::Array(items) => {
             for item in items {
                 argv.extend(one(item)?);
             }
@@ -428,5 +438,36 @@ mod tests {
         };
         assert_eq!(value["crawl"]["captcha"]["key_ref"], "env://CAPTCHA_KEY");
         assert_eq!(value["crawl"]["captcha"]["timeout_seconds"], 30);
+    }
+
+    #[test]
+    fn yaml_scalars_keep_their_serde_yaml_types() {
+        // `off` is a string (a mode name), not YAML 1.1 false: the flag must survive.
+        let layer = flags_from_yaml("page-content-similar-mode: off\n", Path::new("c.yaml")).unwrap();
+        let ConfigLayer::Flags(args) = layer else {
+            panic!("flags expected");
+        };
+        assert!(matches!(
+            args.url.page_content_similar_mode,
+            Some(crate::crawl::SimilarityArg::Off)
+        ));
+        let doc: Value = serde_saphyr::from_str_with_options(
+            "a: no\nb: 0440\nc: 1_000\nd: 0612345678\ne: true\n",
+            yaml_options(),
+        )
+        .unwrap();
+        assert_eq!(
+            doc,
+            json!({"a": "no", "b": "0440", "c": "1_000", "d": "0612345678", "e": true})
+        );
+    }
+
+    #[test]
+    fn yaml_errors_do_not_quote_the_source() {
+        let err = flags_from_yaml("database-url: [postgres://u:secret@h/db\n", Path::new("c.yaml"))
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(!err.contains("secret"), "{err}");
     }
 }

@@ -133,6 +133,23 @@ project is pre-1.0; minor versions may contain breaking changes.
 - Dependencies: `sqlx` 0.9.0 to 0.9.1 (it accepts `libsqlite3-sys` up to 0.40) and `libsqlite3-sys` 0.30.1 to
   0.40.0, which bundles the SQLite release that fixes RUSTSEC-2026-0459 (a crafted database plus WAL file). The
   `deny.toml` ignore for it is removed; `cargo deny` and `cargo audit` report no vulnerability.
+- Dependencies: the remaining advisory findings of `Cargo.lock` (OpenSSF Scorecard and OSV match crates by
+  name and version, so a patched path crate keeps its version and is still reported) are gone.
+  - `serde_yaml_ng` (on the archived `unsafe-libyaml`, RUSTSEC-2024-0449) is replaced by `serde-saphyr` 2, a
+    safe-Rust YAML parser, for `--config`, `--custom-field-config` and `-fc` files. The reader options keep the
+    scalar typing of `serde_yaml_ng` (only `true` and `false` are booleans, so `page-content-similar-mode: off`
+    stays the mode; `0440`, `0612345678` and `1_000` stay strings) and errors carry no source snippet, because
+    a config file can hold credentials. Documents are read into `serde_json::Value`, so keys come out in sorted
+    order (which only decides which of several errors is reported first) and a YAML tag is dropped; merge keys
+    (`<<`) are now applied, `.inf` and `.nan` are refused, depth and node limits are stricter, and error texts
+    for malformed YAML differ. `fuzz/Cargo.toml` no longer patches the removed `vendor/lru`.
+  - `tokenizers` 0.23.2 (optional `onnx` feature of `crawlx-model`) uses `paste` (RUSTSEC-2024-0436, archived);
+    `vendor/tokenizers` is that release with `pastey`, the drop-in fork, in its two macros.
+  - `console-subscriber` 0.5.0 (opt-in `runtime-diagnostics` proof of `crawlx-bench`) uses `humantime`
+    (RUSTSEC-2026-0542, unmaintained); `vendor/console-subscriber` parses its duration variables with `jiff`.
+  - `wreq` 0.15.3 (synthetic ClientHello profiles) needs `lru` 0.13, and the `vendor/lru` backport of the
+    `IterMut` fix kept that version (RUSTSEC-2026-0002, RUSTSEC-2026-0253 still matched). `vendor/wreq` is that
+    release with `lru` 0.18, and `vendor/lru` is removed. wreq 0.16 would use `lru` 0.19 but needs Rust 1.98.
 - Politeness: back-off after `429`/`503` no longer turns one throttling answer into minutes of slow
   crawling (#76). With the new default profile, `politeness.backoffProfile = "balanced"`, the first
   throttling answer after a success sets the origin's spacing to `max(Retry-After, 2 × floor)` (floor =

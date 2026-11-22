@@ -15,7 +15,7 @@
 //! so the seeded default applies instead of an empty value.
 
 use crawlx_core::config::FormFill;
-use serde_yaml_ng::Value;
+use serde_json::Value;
 
 /// Errors of [`parse_form_config`].
 #[derive(Debug, thiserror::Error)]
@@ -23,7 +23,7 @@ use serde_yaml_ng::Value;
 pub enum FormConfigError {
     /// The text is not valid YAML.
     #[error("form config is not valid yaml")]
-    Yaml(#[from] serde_yaml_ng::Error),
+    Yaml(#[from] serde_saphyr::Error),
     /// The document is not a mapping of keys to scalar values.
     #[error("form config must be a mapping of email, color, password, phone, placeholder to scalar values")]
     NotAMapping,
@@ -33,6 +33,18 @@ pub enum FormConfigError {
     /// A value that is not a string, number or boolean.
     #[error("form config key `{0}` must be a scalar value")]
     NotScalar(String),
+}
+
+/// Reader options that keep the scalar typing of the former `serde_yaml_ng`: only `true`/`false` are booleans
+/// (`phone: 0612345678` and `placeholder: no` stay the text written), and numbers with a leading zero or an
+/// underscore stay strings. Errors carry no source snippet.
+fn yaml_options() -> serde_saphyr::Options {
+    serde_saphyr::options! {
+        strict_booleans: true,
+        leading_zero_numbers_as_strings: true,
+        underscored_numbers_as_strings: true,
+        with_snippet: false,
+    }
 }
 
 /// Parse a compatibility `-fc` YAML document.
@@ -47,17 +59,14 @@ pub enum FormConfigError {
 /// [`FormConfigError`] when the text is not YAML, is not a mapping, names a
 /// key the reference does not know, or holds a non-scalar value.
 pub fn parse_form_config(text: &str) -> Result<FormFill, FormConfigError> {
-    let doc: Value = serde_yaml_ng::from_str(text)?;
+    let doc: Value = serde_saphyr::from_str_with_options(text, yaml_options())?;
     let map = match doc {
         Value::Null => return Ok(FormFill::default()),
-        Value::Mapping(map) => map,
+        Value::Object(map) => map,
         _ => return Err(FormConfigError::NotAMapping),
     };
     let mut fill = FormFill::default();
     for (key, value) in map {
-        let Value::String(key) = key else {
-            return Err(FormConfigError::NotAMapping);
-        };
         let text = match value {
             Value::Null => None,
             Value::String(s) => Some(s),
@@ -76,4 +85,31 @@ pub fn parse_form_config(text: &str) -> Result<FormFill, FormConfigError> {
         }
     }
     Ok(fill)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+
+    #[test]
+    fn scalars_keep_the_text_written() {
+        let fill = parse_form_config(
+            "phone: 0612345678\nplaceholder: no\npassword: 1_000\nemail: yes\ncolor: 0440\n",
+        )
+        .unwrap();
+        assert_eq!(fill.phone.as_deref(), Some("0612345678"));
+        assert_eq!(fill.placeholder.as_deref(), Some("no"));
+        assert_eq!(fill.password.as_deref(), Some("1_000"));
+        assert_eq!(fill.email.as_deref(), Some("yes"));
+        assert_eq!(fill.color.as_deref(), Some("0440"));
+    }
+
+    #[test]
+    fn errors_do_not_quote_the_source() {
+        let err = parse_form_config("password: [hunter2secret\n").err().unwrap();
+        // `Yaml` shows a fixed text; the parser message is its source, which the CLI prints.
+        let source = std::error::Error::source(&err).unwrap().to_string();
+        assert!(!source.contains("hunter2secret"), "{source}");
+    }
 }
