@@ -671,7 +671,7 @@ impl Drop for AuthorizationWatch {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
-    use chrono::Duration as Span;
+    use crawlx_core::time::Duration as Span;
     use crawlx_core::{SystemClock, TenantId};
     use crawlx_storage::MemoryStore;
 

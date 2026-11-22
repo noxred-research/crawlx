@@ -9,9 +9,9 @@
 //! once each and in ascending order, because MariaDB binds positionally.
 
 use crate::rig::Rig;
-use chrono::{DateTime, Utc};
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::repo::{CrawlRun, RunRepo};
+use crawlx_core::time::Timestamp;
 use crawlx_core::TenantId;
 use crawlx_storage::backend::{BackendKind, Database, DatabaseUrl, MariaBackend, PgBackend, SqliteBackend};
 use crawlx_storage::sql::{Built, Sql, SqlRow};
@@ -38,7 +38,7 @@ pub enum V<'a> {
     /// Bytes.
     Bytes(&'a [u8]),
     /// A point in time (`timestamptz`, `DATETIME(6)` or integer microseconds).
-    Ts(DateTime<Utc>),
+    Ts(Timestamp),
     /// A JSON value.
     Json(&'a serde_json::Value),
 }
@@ -66,22 +66,18 @@ macro_rules! binder {
     };
 }
 
-binder!(
-    bind_pg,
-    Postgres,
-    |t: DateTime<Utc>| t,
-    |j: &serde_json::Value| j.clone()
-);
+binder!(bind_pg, Postgres, |t: Timestamp| t, |j: &serde_json::Value| j
+    .clone());
 binder!(
     bind_mariadb,
     MySql,
-    |t: DateTime<Utc>| t.naive_utc(),
+    |t: Timestamp| t.naive_utc(),
     |j: &serde_json::Value| j.to_string()
 );
 binder!(
     bind_sqlite,
     Sqlite,
-    |t: DateTime<Utc>| t.timestamp_micros(),
+    |t: Timestamp| t.timestamp_micros(),
     |j: &serde_json::Value| j.to_string()
 );
 
@@ -121,8 +117,8 @@ getters! {
     flag: bool,
     text: String,
     opt_text: Option<String>,
-    ts: DateTime<Utc>,
-    opt_ts: Option<DateTime<Utc>>,
+    ts: Timestamp,
+    opt_ts: Option<Timestamp>,
 }
 
 /// Placeholders of `template` outside string literals, in text order.
@@ -192,7 +188,7 @@ impl<'a> Raw<'a> {
     }
 
     /// The database clock.
-    pub async fn now(&self) -> DateTime<Utc> {
+    pub async fn now(&self) -> Timestamp {
         self.db.db_now().await.expect("read the database clock")
     }
 

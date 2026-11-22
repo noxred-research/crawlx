@@ -1,6 +1,7 @@
 //! Focused hash-only registry state tests; no backend or wall-clock dependencies.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use super::*;
+use crawlx_core::time::Timestamp;
 
 fn claim() -> ContentDedupeClaimV1 {
     serde_json::from_value(serde_json::json!({
@@ -16,7 +17,7 @@ fn claim() -> ContentDedupeClaimV1 {
 
 #[test]
 fn registry_plans_do_not_consume_hashes_and_keys_isolate_every_dimension() {
-    let now = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    let now = Timestamp::from_timestamp(1_700_000_000, 0).unwrap();
     let mut state = RegistryState::default();
     let original = claim();
     let abandoned = state.prepare(&original, 1, now);

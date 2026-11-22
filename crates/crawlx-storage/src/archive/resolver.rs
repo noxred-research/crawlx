@@ -1,6 +1,7 @@
 //! One bounded, zero-network record graph and logical payload resolver for all offline consumers.
 
 use super::{warc, ArchiveError, Limits};
+use crawlx_core::time::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Location of one validated physical WARC member within an approved local source.
@@ -493,7 +494,7 @@ fn resolve_target_dates(entries: &mut BTreeMap<String, RecordLocation>) -> Resul
     if unresolved.is_empty() {
         return Ok(());
     }
-    let mut by_target: BTreeMap<(&str, chrono::DateTime<chrono::Utc>), Vec<&str>> = BTreeMap::new();
+    let mut by_target: BTreeMap<(&str, Timestamp), Vec<&str>> = BTreeMap::new();
     for entry in entries.values() {
         if !matches!(
             entry.record.record_type.as_str(),

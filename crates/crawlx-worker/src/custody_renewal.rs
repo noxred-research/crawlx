@@ -6,6 +6,7 @@
 
 use crate::durable::DurableAuthority;
 use crawlx_core::custody::{CustodyLease, CustodyRenewalWindow};
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{StoreError, Timestamp};
 use crawlx_storage::custody::SecretAuthority;
 use crawlx_storage::sql::Sql;
@@ -26,7 +27,7 @@ fn schedule(window: &CustodyRenewalWindow) -> Result<(Duration, Timestamp), Stor
     if remaining.is_zero() {
         return Err(StoreError::LeaseLost);
     }
-    let delta = chrono::Duration::from_std(window.use_window)
+    let delta = SpanDuration::from_std(window.use_window)
         .map_err(|_| StoreError::Unavailable("custody renewal duration overflow".into()))?;
     let target = window
         .observed_at
@@ -175,6 +176,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
     use crawlx_core::custody::SecretEpoch;
+    use crawlx_core::time::Duration as SpanDuration;
     use crawlx_core::{CrawlRunId, TenantId};
 
     #[test]
@@ -183,19 +185,19 @@ mod tests {
         let version = SecretEpoch::new(TenantId::new(), CrawlRunId::new(), Uuid::nil(), 1);
         let window = CustodyRenewalWindow::new(
             version,
-            now + chrono::Duration::minutes(30),
-            now + chrono::Duration::hours(3),
+            now + SpanDuration::minutes(30),
+            now + SpanDuration::hours(3),
             Duration::from_secs(3600),
             now,
         );
         assert_eq!(
             schedule(&window).unwrap(),
-            (Duration::from_secs(60), now + chrono::Duration::hours(1))
+            (Duration::from_secs(60), now + SpanDuration::hours(1))
         );
         let narrow = CustodyRenewalWindow::new(
             version,
-            now + chrono::Duration::seconds(12),
-            now + chrono::Duration::seconds(20),
+            now + SpanDuration::seconds(12),
+            now + SpanDuration::seconds(20),
             Duration::from_secs(60),
             now,
         );
@@ -206,7 +208,7 @@ mod tests {
         let expired = CustodyRenewalWindow::new(
             version,
             now,
-            now + chrono::Duration::hours(1),
+            now + SpanDuration::hours(1),
             Duration::from_secs(60),
             now,
         );

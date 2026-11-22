@@ -1,11 +1,23 @@
-//! Injected clock (deterministic crates never read wall time).
+//! Injected clock (deterministic crates never read wall time) and the workspace time facade.
+//!
+//! Every crate reads and writes instants, durations and calendar dates through the types here.
 
-use chrono::{DateTime, Utc};
+mod civil;
+#[cfg(feature = "sqlx")]
+mod database;
+mod error;
+mod instant;
+mod scan;
+mod span;
+
+pub use ::time::Weekday;
+pub use civil::{Days, IsoWeek, NaiveDate, NaiveDateTime, NaiveTime};
+pub use error::{OutOfRangeError, ParseError, ParseErrorKind};
+pub use instant::{FixedDateTime, SecondsFormat, Timestamp};
+pub use span::Duration;
+
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
-
-/// RFC 3339 UTC timestamp with millisecond precision.
-pub type Timestamp = DateTime<Utc>;
 
 /// Source of time for deterministic crates.
 pub trait Clock: Send + Sync {
@@ -19,7 +31,7 @@ pub struct SystemClock;
 
 impl Clock for SystemClock {
     fn now(&self) -> Timestamp {
-        Utc::now()
+        Timestamp::now()
     }
 }
 
@@ -46,6 +58,6 @@ impl ManualClock {
 
 impl Clock for ManualClock {
     fn now(&self) -> Timestamp {
-        DateTime::<Utc>::from_timestamp_millis(self.millis.load(Ordering::SeqCst)).unwrap_or_default()
+        Timestamp::from_timestamp_millis(self.millis.load(Ordering::SeqCst)).unwrap_or_default()
     }
 }

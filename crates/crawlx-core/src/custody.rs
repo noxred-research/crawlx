@@ -699,6 +699,7 @@ pub trait SecretRegistrar: Send + Sync + std::fmt::Debug {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+    use crate::time::Duration;
 
     fn lease(fence: i64) -> CustodyLease {
         CustodyLease::new(
@@ -846,7 +847,7 @@ mod tests {
         assert!(FrozenArchiveGrant::new(
             &lease,
             epoch,
-            ArchiveCustodyV1::sensitive(deadline + chrono::Duration::hours(1)),
+            ArchiveCustodyV1::sensitive(deadline + Duration::hours(1)),
             vec![sensitive.clone()],
         )
         .is_err());
@@ -900,7 +901,7 @@ mod tests {
                 .check_output(Sensitivity::Sensitive, Some(deadline), "evidence", content_type)
                 .unwrap();
         }
-        let earlier = deadline - chrono::Duration::seconds(1);
+        let earlier = deadline - Duration::seconds(1);
         grant
             .check_output(
                 Sensitivity::Sensitive,
@@ -919,7 +920,7 @@ mod tests {
             (Sensitivity::Sensitive, None, "evidence", "application/warc"),
             (
                 Sensitivity::Sensitive,
-                Some(deadline + chrono::Duration::seconds(1)),
+                Some(deadline + Duration::seconds(1)),
                 "evidence",
                 "application/warc",
             ),

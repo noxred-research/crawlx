@@ -19,6 +19,7 @@ use crawlx_core::config::{
 };
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::PageRecord;
+use crawlx_core::time::Timestamp;
 use crawlx_core::traffic::TrustLane;
 use crawlx_core::CrawlRunId;
 use crawlx_url::{CanonicalizeOptions, Canonicalizer};
@@ -421,7 +422,7 @@ mod crawl_bench {
             html: None,
             metadata,
             links: links.iter().map(|l| (*l).to_owned()).collect(),
-            fetched_at: chrono::Utc::now(),
+            fetched_at: Timestamp::now(),
             lane: TrustLane::Diagnostic,
         }
     }

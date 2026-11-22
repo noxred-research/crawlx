@@ -18,6 +18,7 @@ use crawlx_core::orchestration::{
 };
 use crawlx_core::repo::FrontierStatus;
 use crawlx_core::scrape::{FormatSpec, JobKind, ScrapeJob, ScrapeOptions};
+use crawlx_core::time::Duration;
 use crawlx_core::{Clock, CreateCrawl, SystemClock};
 use crawlx_fetch::StaticResolver;
 use crawlx_storage::MemoryStore;
@@ -115,7 +116,7 @@ async fn run() -> Option<Outcome> {
     orchestration.recrawl = Some(
         serde_json::from_value(serde_json::json!({
             "version": 1, "minIntervalMs": 50, "maxIntervalMs": 50, "maxVisits": VISITS,
-            "endAt": SystemClock.now() + chrono::Duration::minutes(10),
+            "endAt": SystemClock.now() + Duration::minutes(10),
         }))
         .unwrap(),
     );

@@ -372,7 +372,7 @@ impl DeliveryOutboxRepo for MemoryStore {
         let terminal = g.dataset.feed_finalized.contains_key(&run);
         let now = self.clock.now();
         let expires = now
-            .checked_add_signed(ChronoDuration::seconds(i64::from(lease_seconds)))
+            .checked_add_signed(SpanDuration::seconds(i64::from(lease_seconds)))
             .ok_or_else(|| StoreError::Conflict("delivery lease expiry overflow".into()))?;
         let mut claims = Vec::with_capacity(usize::from(limit));
         for row in g
@@ -494,7 +494,7 @@ impl DeliveryOutboxRepo for MemoryStore {
         visible(g.runs.get(&run).ok_or_else(|| nf("crawl_run", run))?)?;
         let now = self.clock.now();
         let latest = now
-            .checked_add_signed(ChronoDuration::days(1))
+            .checked_add_signed(SpanDuration::days(1))
             .ok_or_else(|| StoreError::Conflict("delivery retry timestamp overflow".into()))?;
         let row = g
             .dataset

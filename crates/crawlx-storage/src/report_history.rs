@@ -17,6 +17,7 @@ use crawlx_core::report_history::{
     ProcessorStageV1, ReportDataV1, ReportEntryV1, ReportFactV1, ReportHistoryRepo, ReportKindV1,
     ReportPageV1, ReportQueryV1, RouteCountersV1, StageOutcomeV1,
 };
+use crawlx_core::time::Duration;
 use crawlx_core::{CrawlRunId, StoreError, TenantId, Timestamp};
 use uuid::Uuid;
 
@@ -80,13 +81,13 @@ pub(crate) fn source_deadline(
     let policy = if zdr {
         Some(
             created
-                .checked_add_signed(chrono::Duration::hours(1))
+                .checked_add_signed(Duration::hours(1))
                 .ok_or_else(|| conflict("report volatile deadline overflow"))?,
         )
     } else if days > 0 {
         Some(
             created
-                .checked_add_signed(chrono::Duration::days(i64::from(days)))
+                .checked_add_signed(Duration::days(i64::from(days)))
                 .ok_or_else(|| conflict("report source deadline overflow"))?,
         )
     } else {

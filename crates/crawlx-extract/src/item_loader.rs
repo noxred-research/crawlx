@@ -8,7 +8,7 @@
 use crate::handlers;
 use crate::regex_builtins;
 use crate::xpath::{CompiledSelector, SelectorDocument, SelectorError, XPathValue};
-use chrono::{DateTime, NaiveDate};
+use crawlx_core::time::{FixedDateTime, NaiveDate};
 use crawlx_core::{
     extraction::{DiscoveryIntentV1, DiscoveryPurposeV1},
     hash::Digest,
@@ -684,12 +684,12 @@ fn transform_values(
             }
             FieldTransformV1::IsoDate => {
                 if let Ok(date) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-                    let normalized = date.format("%Y-%m-%d").to_string();
+                    let normalized = date.to_string();
                     if normalized != s {
                         return Ok(false);
                     }
                     Value::String(normalized)
-                } else if let Ok(date) = DateTime::parse_from_rfc3339(s) {
+                } else if let Ok(date) = FixedDateTime::parse_rfc3339(s) {
                     Value::String(date.to_rfc3339())
                 } else {
                     return Ok(false);

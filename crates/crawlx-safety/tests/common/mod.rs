@@ -1,7 +1,6 @@
 //! Shared fixtures for the integration tests.
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::TimeZone as _;
 use crawlx_core::action::{BrowserAction, PointerButton};
 use crawlx_core::config::{DestructiveActions, LaunchProfile, SafetyProfile};
 use crawlx_core::epoch::ObservationEpoch;
@@ -12,7 +11,7 @@ use crawlx_core::observation::{LiveTargetFacts, RuntimeLocator};
 use crawlx_core::proposal::{ActionProposal, ExpectedEffect};
 use crawlx_core::repo::SafetyContext;
 use crawlx_core::safety::RiskClass;
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{ManualClock, Timestamp};
 use crawlx_core::url::RouteTemplate;
 use crawlx_safety::{KernelConfig, SafetyKernel, SinkSpec, TestSinks};
 use std::sync::Arc;
@@ -233,7 +232,7 @@ pub fn kernel(profile: SafetyProfile) -> SafetyKernel {
 }
 
 pub fn manual_clock() -> ManualClock {
-    ManualClock::new(chrono::Utc.with_ymd_and_hms(2026, 5, 1, 8, 0, 0).unwrap())
+    ManualClock::new(Timestamp::from_ymd_hms(2026, 5, 1, 8, 0, 0).unwrap())
 }
 
 pub fn kernel_with_clock(profile: SafetyProfile, clock: &ManualClock) -> SafetyKernel {
@@ -246,8 +245,8 @@ pub fn verified_sinks() -> TestSinks {
     TestSinks {
         email: Some(SinkSpec {
             address: format!("{SEED}/sink"),
-            verified_at: Some(chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
-            expires_at: chrono::Utc.with_ymd_and_hms(2099, 1, 1, 0, 0, 0).unwrap(),
+            verified_at: Some(Timestamp::from_ymd_hms(2026, 1, 1, 0, 0, 0).unwrap()),
+            expires_at: Timestamp::from_ymd_hms(2099, 1, 1, 0, 0, 0).unwrap(),
         }),
         ..TestSinks::default()
     }

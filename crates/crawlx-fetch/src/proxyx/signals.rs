@@ -16,6 +16,7 @@
 use crate::resolver::{parse_ip_literal, Resolver};
 use crate::retry::parse_retry_after;
 use crawlx_core::secret::SecretOr;
+use crawlx_core::time::Timestamp;
 use crawlx_policy::egress::EgressPolicy;
 use crawlx_telemetry::metrics::names;
 use crawlx_telemetry::Metrics;
@@ -341,7 +342,7 @@ async fn post(target: &ReportTarget, batch: &[BlockSignal]) -> Outcome {
 }
 
 fn retry_after(headers: &HeaderMap) -> Duration {
-    parse_retry_after(headers, chrono::Utc::now())
+    parse_retry_after(headers, Timestamp::now())
         .unwrap_or(DEFAULT_RETRY_AFTER)
         .max(Duration::from_secs(1))
 }

@@ -12,6 +12,7 @@ use super::strategy::{
 use super::{Backend, BackendKind, BackendRefusal, DatabaseUrl};
 use crate::error::db;
 use crate::store::{Store, StoreConfig};
+use crawlx_core::time::Timestamp;
 use crawlx_core::StoreError;
 use sqlx::migrate::Migrator;
 use sqlx::mysql::MySqlRow;
@@ -165,7 +166,7 @@ pub(crate) async fn migrate(store: &Store<MariaBackend>) -> Result<(), StoreErro
 }
 
 /// `NOW(6)` of the server, in UTC.
-pub(crate) async fn db_now(store: &Store<MariaBackend>) -> Result<chrono::DateTime<chrono::Utc>, StoreError> {
+pub(crate) async fn db_now(store: &Store<MariaBackend>) -> Result<Timestamp, StoreError> {
     sqlx::query_scalar("SELECT NOW(6)")
         .fetch_one(&store.pool)
         .await

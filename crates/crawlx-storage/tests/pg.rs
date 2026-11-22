@@ -2,7 +2,6 @@
 //! `CRAWLX_TEST_DATABASE_URL`; without that variable every test returns early.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::{Duration, NaiveDate, TimeZone as _, Utc};
 use crawlx_core::config::RetentionMode;
 use crawlx_core::counters::{ActionStatus, ReconcileResolution, RunStatus, TerminalReason};
 use crawlx_core::epoch::ObservationEpoch;
@@ -10,6 +9,7 @@ use crawlx_core::hash::Digest;
 use crawlx_core::observation::{ActionReceipt, SettleReport};
 use crawlx_core::repo::*;
 use crawlx_core::safety::SafetyDecision;
+use crawlx_core::time::{Duration, NaiveDate, Timestamp};
 use crawlx_core::traffic::{Fidelity, TrafficEvent, TrafficOrigin, TrustLane, UnattributedReason};
 use crawlx_core::{
     ArtifactId, ArtifactRef, CrawlRunId, NetworkEpochId, PrincipalId, SessionId, StateClusterId, StoreError,
@@ -284,7 +284,7 @@ async fn migrations_apply_from_empty_and_are_idempotent() {
 #[allow(clippy::field_reassign_with_default)] // BufferLimits is non-exhaustive outside its crate.
 async fn literal_controls_never_enter_postgres_config_and_expire_fail_closed() {
     let env = env!();
-    let clock = Arc::new(crawlx_core::time::ManualClock::new(Utc::now()));
+    let clock = Arc::new(crawlx_core::time::ManualClock::new(Timestamp::now()));
     let mut limits = crawlx_storage::BufferLimits::default();
     limits.ttl = std::time::Duration::from_secs(1);
     let buffer = Arc::new(crawlx_storage::DeliveryBuffer::new(clock.clone(), limits));
@@ -806,7 +806,7 @@ async fn frontier_reap_requeues_then_fails_after_max_attempts() {
         assert_eq!(batch[0].attempts, attempt);
         let r = env
             .pg
-            .reap_frontier(Utc::now() + Duration::seconds(120), 2)
+            .reap_frontier(Timestamp::now() + Duration::seconds(120), 2)
             .await
             .unwrap();
         assert_eq!((r.requeued, r.failed), if attempt < 2 { (1, 0) } else { (0, 1) });
@@ -823,7 +823,7 @@ async fn frontier_reap_requeues_then_fails_after_max_attempts() {
     let b = env.pg.lease_batch_fenced(run.id, w, 1).await.unwrap();
     assert!(env
         .pg
-        .retry_fenced(b[0].0.id, b[0].1, Utc::now() + Duration::seconds(360))
+        .retry_fenced(b[0].0.id, b[0].1, Timestamp::now() + Duration::seconds(360))
         .await
         .unwrap());
     assert!(
@@ -882,7 +882,7 @@ async fn t1_t2_round_trip() {
     ));
 
     let after = new_state(session, cluster, false, 2, epoch(1, 1, 5));
-    let now = Utc::now();
+    let now = Timestamp::now();
     let outcome = OutcomeRecord {
         status: ActionStatus::Succeeded,
         receipt: Some(ActionReceipt {
@@ -1012,7 +1012,7 @@ fn outcome_failed() -> OutcomeRecord {
         after_state: None,
         traffic: Vec::new(),
         error: Some("boom".to_owned()),
-        finished_at: Utc::now(),
+        finished_at: Timestamp::now(),
     }
 }
 
@@ -1127,7 +1127,7 @@ async fn mark_unknown_only_touches_expired_leases() {
     .execute(env.pg.pool())
     .await
     .unwrap();
-    let flipped = env.pg.mark_unknown(Utc::now()).await.unwrap();
+    let flipped = env.pg.mark_unknown(Timestamp::now()).await.unwrap();
     assert_eq!(flipped, vec![ids[0]]);
     assert_eq!(
         ActionJournal::get(&env.pg, ids[0]).await.unwrap().status,
@@ -1139,7 +1139,7 @@ async fn mark_unknown_only_touches_expired_leases() {
         "live lease untouched"
     );
     assert!(
-        env.pg.mark_unknown(Utc::now()).await.unwrap().is_empty(),
+        env.pg.mark_unknown(Timestamp::now()).await.unwrap().is_empty(),
         "idempotent"
     );
     // unknown is never rescheduled and is reconciled only through `reconcile`
@@ -1172,7 +1172,11 @@ async fn reaper_flow_recover_reconcile_and_retry() {
     env.pg.intend(id, session, epoch(1, 1, 0)).await.unwrap();
 
     // the holder dies: lease expires, reap marks the session recovering (never pending) and the action unknown
-    let report = env.pg.reap(Utc::now() + Duration::seconds(300)).await.unwrap();
+    let report = env
+        .pg
+        .reap(Timestamp::now() + Duration::seconds(300))
+        .await
+        .unwrap();
     assert_eq!(report.sessions_recovering, vec![session]);
     assert_eq!(report.actions_unknown, vec![id]);
     assert_eq!(
@@ -1214,7 +1218,7 @@ async fn reaper_flow_recover_reconcile_and_retry() {
             Reconciliation {
                 resolution: ReconcileResolution::NotApplied,
                 evidence: serde_json::json!({"probe": "absent"}),
-                reconciled_at: Utc::now(),
+                reconciled_at: Timestamp::now(),
             },
         )
         .await
@@ -1247,7 +1251,7 @@ async fn reaper_flow_recover_reconcile_and_retry() {
                     Reconciliation {
                         resolution: ReconcileResolution::Applied,
                         evidence: serde_json::json!({}),
-                        reconciled_at: Utc::now()
+                        reconciled_at: Timestamp::now()
                     }
                 )
                 .await,
@@ -1280,7 +1284,7 @@ async fn reaper_flow_recover_reconcile_and_retry() {
                 Reconciliation {
                     resolution,
                     evidence: serde_json::json!({}),
-                    reconciled_at: Utc::now(),
+                    reconciled_at: Timestamp::now(),
                 },
             )
             .await
@@ -1632,7 +1636,7 @@ async fn route_coarsened_contexts_persist_an_explicit_flag_and_stable_key() {
     let run = env.run(&[], 1).await;
     let mut key = proposal("anonymous", StateClusterId::new(), 1).key;
     key.state_cluster = key.coarsened_cluster();
-    let now = Utc.with_ymd_and_hms(2026, 11, 4, 12, 0, 0).unwrap();
+    let now = Timestamp::from_ymd_hms(2026, 11, 4, 12, 0, 0).unwrap();
     let row = LedgerRow {
         key: key.clone(),
         trusted_exercised: 0,
@@ -1686,7 +1690,7 @@ async fn pages_edges_ledger_events_and_audit_roundtrip() {
         html: None,
         metadata: serde_json::json!({"og:title": "x"}),
         links: vec!["https://example.test/b".to_owned()],
-        fetched_at: Utc::now(),
+        fetched_at: Timestamp::now(),
         lane: crawlx_core::TrustLane::Diagnostic,
     };
     PageRepo::put(&env.pg, &page).await.unwrap();
@@ -1703,7 +1707,7 @@ async fn pages_edges_ledger_events_and_audit_roundtrip() {
     // ledger absolute upsert + edge upsert keyed on the ledger context
     let session = env.running_session(&run, 1, 1).await.remove(0).lease.session.id;
     let p = proposal("anonymous", StateClusterId::new(), 1);
-    let now = Utc::now();
+    let now = Timestamp::now();
     let row = LedgerRow {
         key: p.key.clone(),
         trusted_exercised: 2,
@@ -1861,7 +1865,7 @@ async fn zdr_write_gate_and_artifact_store() {
         .unwrap();
     // The database revokes the first use immediately; advancing also expires the second use.
     let sweeper = RetentionSweeper::new(env.pg.clone()).with_artifacts(Arc::new(fs));
-    let report = sweeper.sweep(Utc::now() + Duration::days(8)).await.unwrap();
+    let report = sweeper.sweep(Timestamp::now() + Duration::days(8)).await.unwrap();
     assert!(report.artifacts_deleted >= 2);
     assert!(
         !dir.path().join(&key).exists(),
@@ -1893,7 +1897,7 @@ async fn sweeper_counts_each_zdr_artifact_row_once() {
     assert_eq!(violations.get(&[]), before + 1, "the gate counts its refusal");
 
     let sweeper = RetentionSweeper::new(env.pg.clone());
-    sweeper.sweep(Utc::now()).await.unwrap();
+    sweeper.sweep(Timestamp::now()).await.unwrap();
     assert_eq!(
         violations.get(&[]),
         before + 1,
@@ -1914,17 +1918,17 @@ async fn sweeper_counts_each_zdr_artifact_row_once() {
     .await
     .unwrap();
     assert_eq!(sweeper.zdr_violations().await.unwrap(), vec![rogue]);
-    sweeper.sweep(Utc::now()).await.unwrap();
+    sweeper.sweep(Timestamp::now()).await.unwrap();
     assert_eq!(
         violations.get(&[]),
         before + 2,
         "the row is counted on first sight"
     );
-    sweeper.sweep(Utc::now()).await.unwrap();
+    sweeper.sweep(Timestamp::now()).await.unwrap();
     assert_eq!(violations.get(&[]), before + 2, "and not again while it lingers");
     // a fresh sweeper has no memory of it
     RetentionSweeper::new(env.pg.clone())
-        .sweep(Utc::now())
+        .sweep(Timestamp::now())
         .await
         .unwrap();
     assert_eq!(violations.get(&[]), before + 3);
@@ -1937,7 +1941,7 @@ async fn sweeper_counts_each_zdr_artifact_row_once() {
 #[tokio::test]
 async fn retention_overdue_artifacts_counts_until_the_sweeper_runs_then_zero() {
     let env = env!();
-    let t0 = Utc.with_ymd_and_hms(2026, 10, 20, 12, 0, 0).unwrap();
+    let t0 = Timestamp::from_ymd_hms(2026, 10, 20, 12, 0, 0).unwrap();
     let clock = Arc::new(crawlx_core::time::ManualClock::new(t0));
     let run = env.run(&[], 1).await; // standard retention, 7 days (testkit default)
     let days = i64::from(run.config.retention.days);
@@ -1991,7 +1995,7 @@ async fn retention_overdue_artifacts_counts_until_the_sweeper_runs_then_zero() {
 async fn sweeper_purges_expired_runs_and_chains_the_audit_log() {
     let env = env!();
     let mut run = crawl_run(env.tenant, create_crawl("https://example.test/", &[], 1));
-    run.created_at = Utc::now() - Duration::days(30);
+    run.created_at = Timestamp::now() - Duration::days(30);
     run.status = RunStatus::Completed;
     run.terminal_reason = Some(TerminalReason::FrontierExhausted);
     env.pg.create(&run, None).await.unwrap();
@@ -2004,7 +2008,7 @@ async fn sweeper_purges_expired_runs_and_chains_the_audit_log() {
     env.pg.append(run.id, "k", serde_json::json!({})).await.unwrap();
     let fresh = env.run(&[], 1).await; // not expired: must survive
     let report = RetentionSweeper::new(env.pg.clone())
-        .sweep(Utc::now())
+        .sweep(Timestamp::now())
         .await
         .unwrap();
     assert_eq!(report.runs_purged, 1);
@@ -2036,14 +2040,14 @@ async fn sweeper_purges_expired_runs_and_chains_the_audit_log() {
 #[tokio::test]
 async fn traffic_partitions_are_created_ahead_and_zdr_redacts_traffic() {
     let env = env!();
-    let created = crawlx_storage::retention::ensure_traffic_partitions(&env.pg, Utc::now(), 3)
+    let created = crawlx_storage::retention::ensure_traffic_partitions(&env.pg, Timestamp::now(), 3)
         .await
         .unwrap();
     assert!(
         created.len() <= 2,
         "migrate already created the current and next two months: {created:?}"
     );
-    let again = crawlx_storage::retention::ensure_traffic_partitions(&env.pg, Utc::now(), 3)
+    let again = crawlx_storage::retention::ensure_traffic_partitions(&env.pg, Timestamp::now(), 3)
         .await
         .unwrap();
     assert!(again.is_empty());
@@ -2065,7 +2069,7 @@ async fn traffic_partitions_are_created_ahead_and_zdr_redacts_traffic() {
         .await
         .unwrap();
     env.pg.intend(id, session, epoch(1, 1, 0)).await.unwrap();
-    let now = Utc::now();
+    let now = Timestamp::now();
     let mut o = outcome_failed();
     o.status = ActionStatus::Succeeded;
     o.receipt = Some(ActionReceipt {
@@ -2117,7 +2121,7 @@ async fn traffic_without_an_epoch_needs_an_explicit_reason() {
     let run = crawl_run(env.tenant, create_crawl("https://example.test/", &[], 1));
     env.pg.create(&run, None).await.unwrap();
     let session = env.running_session(&run, 1, 1).await.remove(0).lease.session.id;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let event = |reason| TrafficEvent {
         seq: 1,
         epoch_id: None,
@@ -2252,7 +2256,7 @@ async fn in_memory_artifact_store_enforces_the_same_gate() {
 
 /// A succeeded outcome with a receipt at `fidelity`, `after` as the new state and one page request.
 fn succeeded_outcome(fidelity: Fidelity, after: Option<NewState>, url: &str) -> OutcomeRecord {
-    let now = Utc::now();
+    let now = Timestamp::now();
     OutcomeRecord {
         status: ActionStatus::Succeeded,
         receipt: Some(ActionReceipt {
@@ -2802,14 +2806,14 @@ async fn orphan_objects_are_collected_after_the_grace_period() {
     // within the grace period the orphan survives (a concurrent writer may be between PUT and row)
     assert_eq!(
         sweeper
-            .collect_orphans(Utc::now(), Duration::hours(1))
+            .collect_orphans(Timestamp::now(), Duration::hours(1))
             .await
             .unwrap(),
         0
     );
     assert!(dir.path().join(&orphan_key).is_file());
     // after it, the orphan goes and the referenced object never does
-    let later = Utc::now() + Duration::hours(2);
+    let later = Timestamp::now() + Duration::hours(2);
     assert_eq!(
         sweeper.collect_orphans(later, Duration::hours(1)).await.unwrap(),
         1
@@ -3073,7 +3077,7 @@ async fn audit_merkle_export_recomputes_root() {
     let other = TenantId::new();
     env.pg.ensure_tenant(other, "other").await.unwrap();
     let day = NaiveDate::from_ymd_opt(2026, 1, 15).unwrap();
-    let at = |d: NaiveDate, h: u32| Utc.from_utc_datetime(&d.and_hms_opt(h, 0, 0).unwrap());
+    let at = |d: NaiveDate, h: u32| d.and_hms_opt(h, 0, 0).unwrap().and_utc();
     let next = day.succ_opt().unwrap();
     let mut ids = Vec::new();
     // inserted out of time order so the export must sort by occurred_at, not audit_id
@@ -3156,7 +3160,7 @@ async fn outcome_counts_tally_the_rows_by_outcome() {
         after_state: None,
         traffic: Vec::new(),
         error: None,
-        finished_at: Utc::now(),
+        finished_at: Timestamp::now(),
     };
     let mut ids = Vec::new();
     for n in 1..=6 {
@@ -3187,7 +3191,7 @@ async fn outcome_counts_tally_the_rows_by_outcome() {
     }
     let flipped = env
         .pg
-        .mark_unknown(Utc::now() + Duration::seconds(300))
+        .mark_unknown(Timestamp::now() + Duration::seconds(300))
         .await
         .unwrap();
     assert_eq!(flipped.len(), 3);
@@ -3201,7 +3205,7 @@ async fn outcome_counts_tally_the_rows_by_outcome() {
                 Reconciliation {
                     resolution,
                     evidence: serde_json::json!({}),
-                    reconciled_at: Utc::now(),
+                    reconciled_at: Timestamp::now(),
                 },
             )
             .await
@@ -3320,7 +3324,7 @@ async fn a_frontier_lease_is_renewed_and_finished_only_under_its_fencing_token()
     let expiry = |id: i64| {
         let pool = env.pg.pool().clone();
         async move {
-            sqlx::query_scalar::<_, chrono::DateTime<Utc>>(
+            sqlx::query_scalar::<_, Timestamp>(
                 "SELECT lease_expires_at FROM url_frontier WHERE frontier_id = $1",
             )
             .bind(id)
@@ -3360,7 +3364,7 @@ async fn a_frontier_lease_is_renewed_and_finished_only_under_its_fencing_token()
     // the reaper returns the row that was not renewed
     let reaped = env
         .pg
-        .reap_frontier(Utc::now() + Duration::seconds(30), 5)
+        .reap_frontier(Timestamp::now() + Duration::seconds(30), 5)
         .await
         .unwrap();
     assert_eq!((reaped.requeued, reaped.failed), (1, 0));
@@ -3530,7 +3534,7 @@ async fn state_counts_tally_the_frontier_rows_of_one_run() {
 #[tokio::test]
 async fn zdr_metadata_stays_ephemeral_and_consumers_fail_closed_after_expiry() {
     let mut env = env!();
-    let now = Utc.with_ymd_and_hms(2026, 10, 20, 12, 0, 0).unwrap();
+    let now = Timestamp::from_ymd_hms(2026, 10, 20, 12, 0, 0).unwrap();
     let clock = Arc::new(crawlx_core::time::ManualClock::new(now));
     let buffer = Arc::new(crawlx_storage::DeliveryBuffer::with_defaults(clock.clone()));
     env.pg = env.pg.with_delivery_buffer(buffer.clone());

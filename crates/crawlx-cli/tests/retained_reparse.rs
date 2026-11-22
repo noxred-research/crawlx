@@ -8,6 +8,7 @@ use crawlx_core::custody::{
     ArtifactReadState, CustodyLease, RunSecretAuthority, RunSecretSnapshot, SecretEpoch,
 };
 use crawlx_core::repo::{ArtifactStore, Sensitivity};
+use crawlx_core::time::Duration;
 use crawlx_core::{
     ArtifactId, ArtifactRef, Clock as _, CrawlRunId, SecretOr, StoreError, SystemClock, TenantId, Timestamp,
 };
@@ -274,7 +275,7 @@ impl ArtifactStore for Expired<'_> {
     ) -> Result<crawlx_core::archive_catalog::ArchiveCustodyV1, StoreError> {
         let _ = self.0;
         Ok(crawlx_core::archive_catalog::ArchiveCustodyV1::content(Some(
-            SystemClock.now() - chrono::Duration::seconds(1),
+            SystemClock.now() - Duration::seconds(1),
         )))
     }
 }

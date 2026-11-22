@@ -4,6 +4,7 @@
 use super::*;
 use crate::dataset_export::{DatasetExportArgs, DatasetExportFormat};
 use crawlx_api::{ApiConfig, ApiStore, AppState, Repos, Scope};
+use crawlx_core::time::Duration;
 use crawlx_core::{
     dataset::{AcceptedBatchV1, AcceptedItemV1, DatasetRepo},
     orchestration::{RequestCommitRepo, RequestCommitV1},
@@ -97,7 +98,7 @@ async fn fixture(schema: &str) -> Fixture {
             .unwrap();
         assert_eq!(request, lease.0.id);
         let bytes = serde_json::to_vec(&json!({"title":title,"rank":index})).unwrap();
-        let deadline = clock.now() + chrono::Duration::seconds(600);
+        let deadline = clock.now() + Duration::seconds(600);
         let artifact = artifacts
             .put_dataset_until(
                 run.id,

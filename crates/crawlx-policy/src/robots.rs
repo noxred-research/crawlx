@@ -16,8 +16,7 @@
 //! Robots is not authorization; this module only answers
 //! "may this crawler fetch this path".
 
-use chrono::Duration as ChronoDuration;
-use crawlx_core::time::{Clock, Timestamp};
+use crawlx_core::time::{Clock, Duration as SpanDuration, Timestamp};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -451,8 +450,8 @@ pub struct RobotsCache {
     entries: HashMap<String, Entry>,
 }
 
-fn chrono_of(d: Duration) -> ChronoDuration {
-    ChronoDuration::from_std(d).unwrap_or(ChronoDuration::MAX)
+fn span_of(d: Duration) -> SpanDuration {
+    SpanDuration::from_std(d).unwrap_or(SpanDuration::MAX)
 }
 
 impl RobotsCache {
@@ -483,7 +482,7 @@ impl RobotsCache {
     }
 
     fn add(at: Timestamp, d: Duration) -> Timestamp {
-        at.checked_add_signed(chrono_of(d)).unwrap_or(at)
+        at.checked_add_signed(span_of(d)).unwrap_or(at)
     }
 
     /// Decide whether `path_and_query` on `origin` may be fetched.
@@ -514,7 +513,7 @@ impl RobotsCache {
                 ..
             }) => {
                 let give_up =
-                    now.signed_duration_since(*first_failure) >= chrono_of(self.config.unreachable_max);
+                    now.signed_duration_since(*first_failure) >= span_of(self.config.unreachable_max);
                 RobotsVerdict::Disallowed(DisallowedBy::Unreachable {
                     retry_at: *retry_at,
                     give_up,
@@ -687,7 +686,6 @@ impl RobotsCache {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
-    use chrono::TimeZone;
     use crawlx_core::time::ManualClock;
 
     const UA: &str = "crawlx/1.0 (+https://example.test/bot)";
@@ -957,7 +955,7 @@ mod tests {
     }
 
     fn cache() -> (RobotsCache, ManualClock) {
-        let clock = ManualClock::new(chrono::Utc.with_ymd_and_hms(2026, 10, 20, 12, 0, 0).unwrap());
+        let clock = ManualClock::new(Timestamp::from_ymd_hms(2026, 10, 20, 12, 0, 0).unwrap());
         (RobotsCache::new(Arc::new(clock.clone())), clock)
     }
 
@@ -1016,15 +1014,15 @@ mod tests {
             }
             other => panic!("{other:?}"),
         };
-        assert_eq!(first, start + ChronoDuration::seconds(60));
-        assert!(!c.needs_refetch(ORIGIN, start + ChronoDuration::seconds(59)));
+        assert_eq!(first, start + SpanDuration::seconds(60));
+        assert!(!c.needs_refetch(ORIGIN, start + SpanDuration::seconds(59)));
         assert!(c.needs_refetch(ORIGIN, first));
         // second consecutive failure doubles the delay from the new attempt time
         clock.advance_ms(60_000);
         c.record_fetch(ORIGIN, FetchStatus::Unreachable);
         match c.evaluate(ORIGIN, "/x") {
             RobotsVerdict::Disallowed(DisallowedBy::Unreachable { retry_at, .. }) => {
-                assert_eq!(retry_at, clock.now() + ChronoDuration::seconds(120));
+                assert_eq!(retry_at, clock.now() + SpanDuration::seconds(120));
             }
             other => panic!("{other:?}"),
         }
@@ -1040,7 +1038,7 @@ mod tests {
         match c.evaluate(ORIGIN, "/x") {
             RobotsVerdict::Disallowed(DisallowedBy::Unreachable { retry_at, give_up }) => {
                 assert!(!give_up);
-                assert!(retry_at - clock.now() <= ChronoDuration::seconds(3600));
+                assert!(retry_at - clock.now() <= SpanDuration::seconds(3600));
             }
             other => panic!("{other:?}"),
         }
@@ -1096,7 +1094,7 @@ mod tests {
 
     #[test]
     fn cache_uses_configured_user_agent() {
-        let clock = ManualClock::new(chrono::Utc.with_ymd_and_hms(2026, 10, 20, 12, 0, 0).unwrap());
+        let clock = ManualClock::new(Timestamp::from_ymd_hms(2026, 10, 20, 12, 0, 0).unwrap());
         let cfg = RobotsConfig {
             user_agent: "mybot/2.0".to_owned(),
             ..RobotsConfig::default()
@@ -1145,7 +1143,7 @@ mod tests {
 
     #[test]
     fn the_cache_applies_configured_aliases() {
-        let clock = ManualClock::new(chrono::Utc.with_ymd_and_hms(2026, 10, 20, 12, 0, 0).unwrap());
+        let clock = ManualClock::new(Timestamp::from_ymd_hms(2026, 10, 20, 12, 0, 0).unwrap());
         let cfg = RobotsConfig {
             aliases: vec!["firecrawlagent".to_owned()], // wire-compat: lowercase robots product token
             ..RobotsConfig::default()
@@ -1162,7 +1160,7 @@ mod tests {
     #[test]
     fn every_hop_kind_gets_the_page_verdict_and_unknown_origins_are_not_allowed() {
         let clock = Arc::new(ManualClock::new(
-            chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            Timestamp::from_ymd_hms(2026, 1, 1, 0, 0, 0).unwrap(),
         ));
         let mut cache = RobotsCache::with_config(
             clock,

@@ -13,9 +13,8 @@ crawlx-core = { path = "../crawlx-core" }
 crawlx-storage = { path = "../crawlx-storage" }
 crawlx-telemetry = { path = "../crawlx-telemetry" }
 async-trait.workspace = true
-chrono.workspace = true
-chrono-tz.workspace = true
 croner.workspace = true
+jiff.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 parking_lot.workspace = true

@@ -540,6 +540,13 @@ jobs:
         run: cargo test -p crawlx-browser --test cdp_surface
       - name: Golden trace on the pinned build must be clean
         run: cargo test -p crawlx-bench --test golden_traces -- --nocapture
+      - name: Retain the golden trace diff (which step and signature field differ)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: golden-trace-diff-browser
+          path: bench/out/golden-trace-diff.*.json
+          if-no-files-found: ignore
       - name: "Chaos suite: failpoints, SIGKILL mid-action, recover, reconcile"
         run: |
           cargo test -p crawlx-worker --features chaos --test chaos_failpoints

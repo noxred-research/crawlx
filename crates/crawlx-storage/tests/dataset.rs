@@ -1,7 +1,6 @@
 //! Dataset/KV/outbox consumer regressions. PostgreSQL cases require CRAWLX_TEST_DATABASE_URL.
 //! These tests exercise real repositories and retention-aware artifacts, not source-text wiring.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-use chrono::{Duration, Utc};
 use crawlx_core::acquisition::BackendCapabilitiesV1;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::data_capabilities::WorkerDataCapabilitiesV1;
@@ -14,7 +13,7 @@ use crawlx_core::orchestration::{RequestBatchV1, RequestCommitRepo, RequestCommi
 use crawlx_core::repo::{ArtifactStore, CrawlRun, FrontierRepo, FrontierStatus, RunRepo};
 use crawlx_core::request::RequestEnvelopeV1;
 use crawlx_core::secret::ArtifactSink;
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::{Clock, CrawlRunId, StoreError, TenantId, WorkerId};
 use crawlx_storage::artifacts::FsArtifactStore;
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};
@@ -242,7 +241,7 @@ where
         repo.acknowledge(run.id, a.id, a.fence + 1).await,
         Err(StoreError::LeaseLost)
     ));
-    repo.retry(run.id, a.id, a.fence, Utc::now() + Duration::seconds(10))
+    repo.retry(run.id, a.id, a.fence, Timestamp::now() + Duration::seconds(10))
         .await
         .unwrap();
     assert!(repo.claim(run.id, other, 10, 60).await.unwrap().is_empty());
@@ -314,7 +313,7 @@ async fn finish<R: DeliveryOutboxRepo + DatasetRepo + KvRepo>(
 
 #[tokio::test]
 async fn memory_transactional_append_cas_fencing_retry_isolation_and_physical_ack() {
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let buffer = Arc::new(DeliveryBuffer::new(clock.clone(), BufferLimits::default()));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     repo.set_dataset_delivery(buffer.clone());
@@ -338,7 +337,7 @@ async fn postgres_transactional_append_cas_fencing_retry_isolation_and_physical_
     let Ok(url) = std::env::var("CRAWLX_TEST_DATABASE_URL") else {
         return;
     };
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let buffer = Arc::new(DeliveryBuffer::new(clock.clone(), BufferLimits::default()));
     let pg = Pg::connect(
         &url,
@@ -411,7 +410,7 @@ async fn postgres_transactional_append_cas_fencing_retry_isolation_and_physical_
 
 #[tokio::test]
 async fn memory_expired_values_never_resurrect_and_maintenance_erases_without_send() {
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let buffer = Arc::new(DeliveryBuffer::new(clock.clone(), BufferLimits::default()));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     repo.set_dataset_delivery(buffer.clone());
@@ -445,7 +444,7 @@ async fn postgres_expired_rows_retire_and_physically_erase_even_with_expired_ope
     let Ok(url) = std::env::var("CRAWLX_TEST_DATABASE_URL") else {
         return;
     };
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let buffer = Arc::new(DeliveryBuffer::new(clock.clone(), BufferLimits::default()));
     let pg = Pg::connect(
         &url,
@@ -500,7 +499,7 @@ async fn postgres_expired_rows_retire_and_physically_erase_even_with_expired_ope
         .await
         .unwrap()
         .is_none());
-    let receipt: (String, Option<chrono::DateTime<Utc>>) =
+    let receipt: (String, Option<Timestamp>) =
         sqlx::query_as("SELECT state,erased_at FROM dataset_delivery_outbox WHERE delivery_id=$1")
             .bind(pending.receipt.id)
             .fetch_one(pg.pool())
@@ -529,7 +528,7 @@ async fn postgres_restart_after_commit_and_after_send_preserves_items_and_batch_
     pg.migrate().await.unwrap();
     let tenant = TenantId::new();
     pg.ensure_tenant(tenant, "dataset-crash").await.unwrap();
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let mut run = run(tenant, clock.now());
     run.config.retention.mode = RetentionMode::Standard;
     run.config.retention.days = 1;
@@ -654,7 +653,7 @@ async fn postgres_restart_after_commit_and_after_send_preserves_items_and_batch_
 
 #[tokio::test]
 async fn memory_recovery_keysets_reach_runs_beyond_unavailable_first_page() {
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let buffer = Arc::new(DeliveryBuffer::new(clock.clone(), BufferLimits::default()));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     repo.set_dataset_delivery(buffer.clone());

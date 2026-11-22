@@ -22,6 +22,7 @@ use async_trait::async_trait;
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::hash::Digest;
 use crawlx_core::safety::{RiskClass, SafetyDecision, SafetyVerdict};
+use crawlx_core::time::Duration;
 use crawlx_core::{
     ActionContextId, ActionId, ApprovalId, CrawlRunId, SessionId, StoreError, TenantId, Timestamp,
 };
@@ -113,7 +114,7 @@ impl ApprovalRequestV1 {
         if self.created_at > now
             || self.expires_at <= now
             || self.expires_at <= self.created_at
-            || self.expires_at.signed_duration_since(self.created_at) > chrono::Duration::hours(24)
+            || self.expires_at.signed_duration_since(self.created_at) > Duration::hours(24)
             || self.summary.len() > 16_384
         {
             return Err(conflict());

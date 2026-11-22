@@ -89,19 +89,19 @@ fn check_batches(
 /// Longest finalizer lease; holders renew well before it ends.
 const MAX_FINALIZER_TTL: std::time::Duration = std::time::Duration::from_secs(300);
 
-fn finalizer_ttl(ttl: std::time::Duration) -> Result<ChronoDuration, StoreError> {
+fn finalizer_ttl(ttl: std::time::Duration) -> Result<SpanDuration, StoreError> {
     if ttl.is_zero() || ttl > MAX_FINALIZER_TTL {
         return Err(StoreError::Conflict(
             "invalid feed finalizer lease duration".into(),
         ));
     }
-    ChronoDuration::from_std(ttl)
+    SpanDuration::from_std(ttl)
         .map_err(|_| StoreError::Conflict("invalid feed finalizer lease duration".into()))
 }
 
 fn finalizer_expiry(
     now: crawlx_core::Timestamp,
-    ttl: ChronoDuration,
+    ttl: SpanDuration,
 ) -> Result<crawlx_core::Timestamp, StoreError> {
     now.checked_add_signed(ttl)
         .ok_or_else(|| StoreError::Conflict("feed finalizer lease overflow".into()))
@@ -175,7 +175,7 @@ impl MemoryStore {
             && run.config.retention.days != 0
             && run
                 .created_at
-                .checked_add_signed(ChronoDuration::days(i64::from(run.config.retention.days)))
+                .checked_add_signed(SpanDuration::days(i64::from(run.config.retention.days)))
                 .is_none_or(|deadline| deadline <= now);
         let source_expired = state.dataset.items.iter().any(|((owner, _), dataset)| {
             *owner == id

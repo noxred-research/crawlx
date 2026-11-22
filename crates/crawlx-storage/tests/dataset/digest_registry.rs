@@ -7,6 +7,7 @@ use crawlx_core::extraction::{
     QualityStatusV1,
 };
 use crawlx_core::repo::{PageRecord, PageRepo};
+use crawlx_core::time::Timestamp;
 use crawlx_core::TrustLane;
 
 fn document() -> DocumentEnvelopeV1 {
@@ -47,7 +48,7 @@ fn claim(run: &CrawlRun, role: &[u8]) -> ContentDedupeClaimV1 {
     .unwrap()
 }
 fn retained_deadline(run: &CrawlRun) -> crawlx_core::Timestamp {
-    chrono::DateTime::from_timestamp_micros((run.created_at + Duration::hours(1)).timestamp_micros()).unwrap()
+    Timestamp::from_timestamp_micros((run.created_at + Duration::hours(1)).timestamp_micros()).unwrap()
 }
 fn page_commit(
     run: &CrawlRun,
@@ -328,7 +329,7 @@ where
 #[tokio::test]
 async fn memory_digest_claim_race_rollback_scope_isolation_and_optout() {
     for zdr in [false, true] {
-        let clock = Arc::new(ManualClock::new(Utc::now()));
+        let clock = Arc::new(ManualClock::new(Timestamp::now()));
         let buffer = Arc::new(DeliveryBuffer::new(clock.clone(), BufferLimits::default()));
         let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
         repo.set_dataset_delivery(buffer.clone());
@@ -357,7 +358,7 @@ async fn postgres_digest_claim_race_rollback_and_restart() {
     pg.migrate().await.unwrap();
     let tenant = TenantId::new();
     pg.ensure_tenant(tenant, "digest-registry-fixture").await.unwrap();
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let dir = tempfile::tempdir().unwrap();
     let artifacts = FsArtifactStore::open(dir.path(), Arc::new(pg.clone()), clock.clone())
         .await

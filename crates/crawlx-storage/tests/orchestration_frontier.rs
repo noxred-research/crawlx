@@ -1,7 +1,6 @@
 //! Request frontier parity sources. Optional PostgreSQL tests require CRAWLX_TEST_DATABASE_URL.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::{Duration, Utc};
 use crawlx_core::hash::Digest;
 use crawlx_core::orchestration::{
     FrontierActivityV1, LoaderCursorV1, OrchestrationConfigV1, ProducerModeV1, RequestBatchV1,
@@ -9,7 +8,7 @@ use crawlx_core::orchestration::{
 };
 use crawlx_core::repo::{CrawlRun, EventRepo, FrontierRepo, FrontierStatus, RunRepo};
 use crawlx_core::request::RequestEnvelopeV1;
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::{Clock, StoreError, TenantId, WorkerId};
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};
 use crawlx_storage::{LeaseRepo, MemoryStore, Pg, StoreConfig};
@@ -41,7 +40,7 @@ fn batch(run: &CrawlRun, name: &str, paths: &[&str]) -> RequestBatchV1 {
 }
 
 async fn shared_contract<R: FrontierRepo + RunRepo + RequestCommitRepo>(repo: &R, tenant: TenantId) {
-    let mut expired = run(tenant, Utc::now() - Duration::days(1));
+    let mut expired = run(tenant, Timestamp::now() - Duration::days(1));
     expired.config.limits.duration_seconds = 1;
     repo.create(&expired, None).await.unwrap();
     assert!(matches!(
@@ -59,7 +58,7 @@ async fn shared_contract<R: FrontierRepo + RunRepo + RequestCommitRepo>(repo: &R
         repo.append_batch(batch(&expired, "cancelled", &["late"])).await,
         Err(StoreError::AccessDenied(_))
     ));
-    let run = run(tenant, Utc::now());
+    let run = run(tenant, Timestamp::now());
     repo.create(&run, None).await.unwrap();
     assert_eq!(
         repo.activity(run.id).await.unwrap(),
@@ -115,7 +114,7 @@ async fn shared_contract<R: FrontierRepo + RunRepo + RequestCommitRepo>(repo: &R
         Err(StoreError::LeaseLost)
     ));
     let rest = repo.lease_batch_fenced(run.id, worker, 2).await.unwrap();
-    repo.defer_fenced(rest[0].0.id, rest[0].1, Utc::now() + Duration::minutes(1))
+    repo.defer_fenced(rest[0].0.id, rest[0].1, Timestamp::now() + Duration::minutes(1))
         .await
         .unwrap();
     assert_eq!(
@@ -192,7 +191,7 @@ async fn head_result_contract<R: FrontierRepo + RunRepo + RequestCommitRepo + Ev
     tenant: TenantId,
     zdr: bool,
 ) -> (CrawlRun, RequestCommitV1) {
-    let mut run = run(tenant, Utc::now());
+    let mut run = run(tenant, Timestamp::now());
     if zdr {
         run.config.retention.mode = crawlx_core::config::RetentionMode::Zdr;
         run.config.retention.days = 0;
@@ -360,7 +359,7 @@ async fn head_not_modified_commit<R: FrontierRepo + RunRepo>(
     repo: &R,
     tenant: TenantId,
 ) -> (CrawlRun, RequestCommitV1) {
-    let run = run(tenant, Utc::now());
+    let run = run(tenant, Timestamp::now());
     repo.create(&run, None).await.unwrap();
     let mut input = batch(&run, "head-not-modified", &["cached"]);
     input.requests[0].method = "HEAD".into();
@@ -725,7 +724,7 @@ async fn postgres_head_observation_commits_atomically_and_replays_once() {
             .len(),
         1
     );
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let mut limits = crawlx_storage::BufferLimits::default();
     limits.ttl = std::time::Duration::from_secs(60);
     let buffer = Arc::new(crawlx_storage::DeliveryBuffer::new(clock.clone(), limits));
@@ -792,7 +791,7 @@ async fn postgres_head_observation_commits_atomically_and_replays_once() {
     assert!(buffer.list(run.tenant, run.id).await.unwrap().is_empty());
     assert_eq!(pg.list_metadata_after(run.id, 0, 100).await.unwrap(), metadata);
     let (bound, bound_commit) = head_result_contract(&zdr, tenant, true).await;
-    let record = crawlx_policy::testkit::sample_record(tenant, Utc::now(), &["https://example.test"]);
+    let record = crawlx_policy::testkit::sample_record(tenant, Timestamp::now(), &["https://example.test"]);
     let body = serde_json::to_value(&record).unwrap();
     let digest = record.body_digest().unwrap();
     pg.ensure_authorization_record(&crawlx_storage::AuthorizationRow {
@@ -838,7 +837,7 @@ async fn postgres_head_observation_commits_atomically_and_replays_once() {
 
 #[tokio::test]
 async fn expiry_cannot_be_renewed_completed_or_used_to_append_children() {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let clock = Arc::new(ManualClock::new(now));
     let store = MemoryStore::with_clock(clock.clone());
     let run = run(TenantId::new(), clock.now());
@@ -880,7 +879,7 @@ async fn expiry_cannot_be_renewed_completed_or_used_to_append_children() {
 
 #[tokio::test]
 async fn request_reservations_survive_retry_and_do_not_extend_elapsed_deadline() {
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let store = MemoryStore::with_clock(clock.clone());
     let mut run = run(TenantId::new(), clock.now());
     run.config
@@ -922,7 +921,7 @@ async fn request_reservations_survive_retry_and_do_not_extend_elapsed_deadline()
 #[tokio::test]
 async fn loader_checkpoint_rejects_changed_source_without_advancing_or_inserting() {
     let store = MemoryStore::new();
-    let run = run(TenantId::new(), Utc::now());
+    let run = run(TenantId::new(), Timestamp::now());
     store.create(&run, None).await.unwrap();
     let mut first = batch(&run, "initial", &["first"]);
     let old = LoaderCursorV1::new("source".into(), Digest::of("test", b"one"), 1);
@@ -944,7 +943,7 @@ async fn loader_checkpoint_rejects_changed_source_without_advancing_or_inserting
 #[tokio::test]
 async fn hundred_thousand_rows_keep_claim_population_and_keysets_bounded() {
     let store = MemoryStore::new();
-    let mut run = run(TenantId::new(), Utc::now());
+    let mut run = run(TenantId::new(), Timestamp::now());
     let policy = run.config.orchestration.as_mut().unwrap();
     policy.queue.max_pending_entries = 100_000;
     policy.queue.max_pending_envelope_bytes = 128 * 1024 * 1024;
@@ -990,7 +989,7 @@ async fn hundred_thousand_rows_keep_claim_population_and_keysets_bounded() {
 
 #[tokio::test]
 async fn recrawl_allocates_delayed_generations_without_reopening_terminal_rows() {
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let store = MemoryStore::with_clock(clock.clone());
     let mut run = run(TenantId::new(), clock.now());
     run.config.orchestration.as_mut().unwrap().recrawl = Some(
@@ -1051,7 +1050,7 @@ async fn recrawl_allocates_delayed_generations_without_reopening_terminal_rows()
 #[tokio::test]
 async fn direct_import_cannot_mint_recrawl_generation_authority() {
     let store = MemoryStore::new();
-    let run = run(TenantId::new(), Utc::now());
+    let run = run(TenantId::new(), Timestamp::now());
     store.create(&run, None).await.unwrap();
     let mut forged = batch(&run, "forged", &["article"]);
     forged.requests[0].revisit_generation = 1;
@@ -1065,7 +1064,7 @@ async fn direct_import_cannot_mint_recrawl_generation_authority() {
 #[tokio::test]
 async fn native_escrow_settles_known_usage_but_lost_lease_forfeits_unused_capacity() {
     use crawlx_core::acquisition::{AcquisitionPolicyV1, AcquisitionUsageV1};
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let store = MemoryStore::with_clock(clock.clone());
     let mut run = run(TenantId::new(), clock.now());
     let mut acquisition = AcquisitionPolicyV1::default();
@@ -1140,7 +1139,7 @@ async fn native_escrow_settles_known_usage_but_lost_lease_forfeits_unused_capaci
 async fn session_and_url_claims_require_all_backends_on_the_claiming_worker() {
     use crawlx_core::acquisition::{AcquisitionPolicyV1, BackendCapabilitiesV1};
     use crawlx_storage::WorkerRegistry;
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let store = MemoryStore::with_clock(clock.clone());
     let mut run = run(TenantId::new(), clock.now());
     let mut policy = AcquisitionPolicyV1::default();
@@ -1214,7 +1213,7 @@ async fn legacy_strategy_fixture<R: FrontierRepo + RunRepo>(
     repo: &R,
     tenant: TenantId,
 ) -> (CrawlRun, Vec<i64>) {
-    let mut run = run(tenant, Utc::now());
+    let mut run = run(tenant, Timestamp::now());
     run.config.scope.strategy = crawlx_core::config::CrawlStrategy::Priority;
     run.config
         .orchestration
@@ -1262,7 +1261,7 @@ async fn strategy_fixture<R: FrontierRepo + RunRepo>(
 ) -> (CrawlRun, Vec<i64>) {
     use crawlx_core::config::CrawlStrategy;
 
-    let mut run = run(tenant, Utc::now());
+    let mut run = run(tenant, Timestamp::now());
     run.config.scope.strategy = strategy;
     let queue = &mut run.config.orchestration.as_mut().unwrap().queue;
     queue.max_pending_entries = 128;
@@ -1361,7 +1360,7 @@ async fn drain_strategy<R: FrontierRepo + RequestCommitRepo>(
                     Err(StoreError::LeaseLost)
                 ));
                 assert!(matches!(
-                    repo.retry_fenced(entry.id, *old, Utc::now()).await,
+                    repo.retry_fenced(entry.id, *old, Timestamp::now()).await,
                     Err(StoreError::LeaseLost)
                 ));
                 assert!(matches!(
@@ -1432,7 +1431,7 @@ async fn memory_strategies_choose_globally_across_batches_and_reaped_fences() {
         first[0] = replacement;
         assert_eq!(
             store
-                .reap_frontier(Utc::now() + Duration::minutes(2), 10)
+                .reap_frontier(Timestamp::now() + Duration::minutes(2), 10)
                 .await
                 .unwrap()
                 .requeued,
@@ -1491,7 +1490,7 @@ async fn postgres_strategies_survive_restart_and_backfill_without_changing_prior
     let restarted = Pg::connect_existing(&url, config).await.unwrap();
     assert_eq!(
         restarted
-            .reap_frontier(Utc::now() + Duration::minutes(2), 10)
+            .reap_frontier(Timestamp::now() + Duration::minutes(2), 10)
             .await
             .unwrap()
             .requeued,
@@ -1540,7 +1539,7 @@ async fn postgres_priority_backfill_reads_volatile_original_method_and_fails_clo
     pg.migrate().await.unwrap();
     let tenant = TenantId::new();
     pg.ensure_tenant(tenant, "strategy-zdr-tests").await.unwrap();
-    let mut run = run(tenant, Utc::now());
+    let mut run = run(tenant, Timestamp::now());
     run.config.scope.strategy = crawlx_core::config::CrawlStrategy::Priority;
     run.config.retention.mode = crawlx_core::config::RetentionMode::Zdr;
     run.config.retention.days = 0;

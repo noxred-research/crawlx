@@ -4,6 +4,7 @@
 //! DTDs and entity declarations are rejected. Namespace aliases are resolved by URI.
 
 use crawlx_core::discovery::{DiscoveryErrorV1, SourceDiscoveryPolicyV1};
+use crawlx_core::time::NaiveDateTime;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::ResolveResult;
 use quick_xml::reader::NsReader;
@@ -1005,7 +1006,7 @@ pub fn parse_connector(
                     .ok_or_else(|| protocol("CDX timestamp absent"))?;
                 if time.len() != 14
                     || !time.bytes().all(|byte| byte.is_ascii_digit())
-                    || chrono::NaiveDateTime::parse_from_str(time, "%Y%m%d%H%M%S").is_err()
+                    || NaiveDateTime::parse_from_str(time, "%Y%m%d%H%M%S").is_err()
                 {
                     return Err(protocol("invalid CDX capture timestamp"));
                 }

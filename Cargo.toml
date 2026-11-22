@@ -96,12 +96,16 @@ oxc_ast_visit = "0.156"
 oxc_allocator = "0.156"
 oxc_span = "0.156"
 # db / storage
-sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "mysql", "sqlite-bundled", "uuid", "chrono", "json", "migrate", "macros"] }
-chrono = { version = "0.4", features = ["serde"] }
-# monitor schedules (crawlx-scheduler `Schedule`): IANA zones and DST-aware five-field cron evaluation
-chrono-tz = "0.10"
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "mysql", "sqlite-bundled", "uuid", "time", "json", "migrate", "macros"] }
+# time: the single time facade is `crawlx_core::time` (UTC instants, durations, calendar dates), built on
+# `time` because sqlx 0.9 has native codecs for it (chrono is not a dependency of any crawlx crate)
+time = { version = "0.3.55", default-features = false, features = ["std", "large-dates"] }
+# monitor schedules (crawlx-scheduler `Schedule`) and article dates (crawlx-extract): IANA zones, from
+# the bundled database so results do not depend on the host's tzdata
+jiff = { version = "1", default-features = false, features = ["std", "tz-fat", "tzdb-bundle-always"] }
 icu_segmenter = { version = "=2.4.0", default-features = false, features = ["compiled_data"] }
-croner = "4"
+# DST-aware five-field cron evaluation on jiff (no chrono backend)
+croner = { version = "5", default-features = false, features = ["std", "jiff"] }
 # S3-compatible object store; TLS through rustls+ring like the rest of the workspace, not aws-lc
 aws-config = { version = "1.13", default-features = false, features = ["rt-tokio"] }
 aws-sdk-s3 = { version = "1.145", default-features = false, features = ["rt-tokio", "http-1x", "behavior-version-latest"] }

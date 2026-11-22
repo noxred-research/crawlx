@@ -11,6 +11,7 @@ use crawlx_core::archive::{
 use crawlx_core::archive_catalog::{ArchiveExportV1, ArchiveRecordV1, ArchiveRepo};
 use crawlx_core::counters::TerminalReason;
 use crawlx_core::repo::{RunRepo, Sensitivity};
+use crawlx_core::time::Duration;
 use crawlx_core::{ArtifactRef, Clock, SystemClock};
 use crawlx_storage::archive::{cdxj, warc, Limits};
 use crawlx_storage::{testkit, ArtifactIndex};
@@ -40,8 +41,8 @@ async fn archive_routes_enforce_scopes_tenants_publication_and_erasure() {
     let mut run = testkit::crawl_run(e.tenant, crawl);
     run.created_at = now;
     RunRepo::create(e.store.as_ref(), &run, None).await.unwrap();
-    let expires = (run.config.retention.days != 0)
-        .then(|| now + chrono::Duration::days(i64::from(run.config.retention.days)));
+    let expires =
+        (run.config.retention.days != 0).then(|| now + Duration::days(i64::from(run.config.retention.days)));
     let pending = ArchiveExportV1::pending(
         e.tenant,
         run.id,
@@ -184,7 +185,7 @@ async fn expired_archive_read_returns_gone_without_content_metadata() {
         run.id,
         config,
         now,
-        Some(now + chrono::Duration::days(1)),
+        Some(now + Duration::days(1)),
         TerminalReason::FrontierExhausted,
     );
     e.store.begin(&pending).await.unwrap();
@@ -243,12 +244,12 @@ async fn sensitive_archive_shards_package_and_index_keep_scope_and_source_deadli
         run.id,
         config,
         now,
-        Some(now + chrono::Duration::days(7)),
+        Some(now + Duration::days(7)),
         TerminalReason::FrontierExhausted,
     );
     e.store.begin(&pending).await.unwrap();
     let claim = e.store.claim(e.tenant, pending.id, now).await.unwrap().unwrap();
-    let deadline = now + chrono::Duration::minutes(10);
+    let deadline = now + Duration::minutes(10);
     let evidence = b"approved sensitive capture";
     let source = artifacts
         .put_until(run.id, Sensitivity::Sensitive, "text/plain", evidence, deadline)
@@ -408,7 +409,7 @@ async fn sensitive_archive_shards_package_and_index_keep_scope_and_source_deadli
             Sensitivity::Sensitive,
             "application/warc",
             member.get_ref(),
-            deadline + chrono::Duration::seconds(1),
+            deadline + Duration::seconds(1),
         )
         .await
         .unwrap();
@@ -476,7 +477,7 @@ async fn sensitive_archive_shards_package_and_index_keep_scope_and_source_deadli
     };
     assert_eq!(saved.custody, custody);
     let mut shortened_source = artifacts.row(source.id).await.unwrap().unwrap();
-    shortened_source.expires_at = Some(deadline - chrono::Duration::seconds(1));
+    shortened_source.expires_at = Some(deadline - Duration::seconds(1));
     ArtifactIndex::record(e.store.as_ref(), &shortened_source)
         .await
         .unwrap();

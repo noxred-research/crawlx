@@ -5,6 +5,7 @@ mod common;
 
 use bytes::Bytes;
 use common::LOOPBACK;
+use crawlx_core::time::Timestamp;
 use crawlx_core::traffic::{BodyDigest, Protocol, ProxyFlow, ProxyFlowSource, REDACTED_PLACEHOLDER};
 use crawlx_fetch::{EgressProxy, EgressProxyHandle, StaticResolver, DENIED_HEADER};
 use crawlx_policy::egress::{DenyRule, EgressPolicy};
@@ -314,7 +315,7 @@ async fn capture_reports_one_flow_per_forwarded_request_and_per_tunnel() {
     let client = proxied_client(&proxy);
     let port = server.address().port();
 
-    let before = chrono::Utc::now();
+    let before = Timestamp::now();
     let resp = client
         .get(format!("http://pub.test:{port}/x?q=1"))
         .header("authorization", "Bearer client-secret")

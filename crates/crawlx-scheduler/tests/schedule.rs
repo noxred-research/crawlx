@@ -2,11 +2,11 @@
 //! serde round trip of the request form.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::{DateTime, Utc};
+use crawlx_core::time::Timestamp;
 use crawlx_scheduler::schedule::{Schedule, ScheduleError, ScheduleSpec, MIN_INTERVAL_SECS};
 use serde_json::json;
 
-fn utc(s: &str) -> DateTime<Utc> {
+fn utc(s: &str) -> Timestamp {
     s.parse().unwrap()
 }
 
@@ -27,7 +27,7 @@ fn cron(c: &str, tz: &str) -> ScheduleSpec {
 }
 
 /// Every occurrence in `[from, to)`.
-fn occurrences(s: &Schedule, from: &str, to: &str) -> Vec<DateTime<Utc>> {
+fn occurrences(s: &Schedule, from: &str, to: &str) -> Vec<Timestamp> {
     let end = utc(to);
     let mut out = Vec::new();
     let mut at = utc(from);

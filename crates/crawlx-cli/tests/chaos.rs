@@ -744,7 +744,7 @@ async fn sigkill_after_object_put_leaves_only_a_collectible_orphan() {
     let now = SystemClock.now();
     assert_eq!(
         sweeper
-            .collect_orphans(now, chrono::Duration::hours(1))
+            .collect_orphans(now, SpanDuration::hours(1))
             .await
             .unwrap(),
         0,
@@ -752,7 +752,7 @@ async fn sigkill_after_object_put_leaves_only_a_collectible_orphan() {
     assert!(blobs.exists(orphan).await.unwrap());
     assert_eq!(
         sweeper
-            .collect_orphans(now + chrono::Duration::hours(2), chrono::Duration::hours(1))
+            .collect_orphans(now + SpanDuration::hours(2), SpanDuration::hours(1))
             .await
             .unwrap(),
         1,

@@ -273,7 +273,8 @@ fn every_structural_source_has_a_golden_row() {
     }
     let missing: Vec<String> = endpoints::ALL_SOURCES
         .iter()
-        .filter(|s| s.tag != "js")
+        // script-mined and response-value sources have no HTML construct to put in a golden row
+        .filter(|s| s.tag != "js" && s.tag != "json_endpoint")
         .map(|s| format!("{}/{}", s.tag, s.attribute))
         .filter(|s| !seen.contains(s))
         .collect();

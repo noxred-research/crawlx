@@ -15,6 +15,7 @@ use crate::sql::Stmt;
 use crate::store::Store;
 use crate::tenant::Tenancy;
 use crate::testkit::rig::Rig;
+use crawlx_core::time::{Duration, SecondsFormat, Timestamp};
 use crawlx_core::{CrawlRunId, StoreError, TenantId};
 use sqlx::Executor as _;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -64,13 +65,20 @@ impl Handle {
 
     /// SQL for the instant `at` as a literal of this engine, for raw probes.
     #[must_use]
-    pub fn ts(&self, at: chrono::DateTime<chrono::Utc>) -> String {
+    pub fn ts(&self, at: Timestamp) -> String {
         match self {
             Self::Postgres(_) => format!(
                 "'{}'::timestamptz",
-                at.to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+                at.to_rfc3339_opts(SecondsFormat::Micros, true)
             ),
-            Self::MariaDb(_) => format!("'{}'", at.naive_utc().format("%Y-%m-%d %H:%M:%S%.6f")),
+            Self::MariaDb(_) => format!(
+                "'{} {:02}:{:02}:{:02}.{:06}'",
+                at.date_naive(),
+                at.hour(),
+                at.minute(),
+                at.second(),
+                at.timestamp_subsec_micros()
+            ),
             Self::Sqlite(_) => at.timestamp_micros().to_string(),
         }
     }
@@ -440,7 +448,7 @@ async fn seed_on<B: Tenancy>(
 where
     crate::backend::strategy::Row<B>: crate::sql::SqlRow,
 {
-    let now = chrono::Utc::now();
+    let now = Timestamp::now();
     let key = Uuid::now_v7();
     let prefix = format!("{label}_{}", key.simple());
     let repo = ApiRepo::new(store.clone());
@@ -481,7 +489,7 @@ where
     let no_rules: Vec<String> = Vec::new();
     let minhash = [1_u8; 64];
     let page_payload = serde_json::json!({ "url": "https://app.example.test/" });
-    let approval_expiry = now + chrono::Duration::hours(1);
+    let approval_expiry = now + Duration::hours(1);
 
     insert(
         store,
@@ -640,7 +648,7 @@ where
         body: &body,
         body_digest: &[5; 32],
         valid_from: now,
-        valid_to: now + chrono::Duration::days(30),
+        valid_to: now + Duration::days(30),
         created_by: key,
         verified_at: now,
         verification: &verification,

@@ -533,6 +533,7 @@ pub fn read_shards(dir: &Path) -> Result<Vec<DatasetRow>, BenchError> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+    use crawlx_core::time::Timestamp;
     use serde_json::json;
 
     fn event(seq: u64, kind: &str, payload: serde_json::Value) -> RunEvent {
@@ -540,7 +541,7 @@ mod tests {
             seq,
             kind: kind.to_owned(),
             payload,
-            at: chrono::Utc::now(),
+            at: Timestamp::now(),
         }
     }
 

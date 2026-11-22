@@ -8,7 +8,7 @@ use crawlx_core::orchestration::{RequestBatchV1, RequestCommitV1};
 use crawlx_core::repo::{FrontierStatus, PageRecord, Sensitivity};
 use crawlx_core::request::RequestEnvelopeV1;
 use crawlx_core::secret::{ArtifactSink, Redactor as ArtifactRedactor};
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{Duration, FixedDateTime, ManualClock};
 use crawlx_core::traffic::{Protocol, TrustLane};
 use crawlx_core::WorkerId;
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};
@@ -20,9 +20,9 @@ const FIXTURE_SHA256: &str = "1bb0682e7256efceefe2d64c65a6af436cfcc6431d967774f1
 
 async fn memory(root: &Path) -> (Stores, Arc<ManualClock>) {
     let clock = Arc::new(ManualClock::new(
-        chrono::DateTime::parse_from_rfc3339("2026-11-08T00:00:00Z")
+        FixedDateTime::parse_rfc3339("2026-11-08T00:00:00Z")
             .unwrap()
-            .with_timezone(&chrono::Utc),
+            .to_utc(),
     ));
     let memory = Arc::new(MemoryStore::with_clock(clock.clone()));
     let mut stores = Stores::over_memory(memory.clone(), root).await.unwrap();
@@ -496,7 +496,7 @@ async fn journal_event_yields_separate_redacted_header_protocol_body_and_screens
         run.id,
         run.config.output.archive.as_ref().unwrap().clone(),
         run.created_at,
-        Some(run.created_at + chrono::Duration::days(1)),
+        Some(run.created_at + Duration::days(1)),
         TerminalReason::FrontierExhausted,
     );
     stores.archives.begin(&pending).await.unwrap();

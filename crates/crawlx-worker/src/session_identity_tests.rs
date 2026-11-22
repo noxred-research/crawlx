@@ -2,14 +2,14 @@
 use super::*;
 use crawlx_core::identity_profile::IdentityProfileV1;
 use crawlx_core::repo::CrawlRun;
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::{Clock, CreateCrawl};
 
 async fn fixture(
     identity_profile: Option<Digest>,
 ) -> (tempfile::TempDir, Arc<RunContext>, SessionLease, Arc<Fetcher>) {
     let dir = tempfile::tempdir().unwrap();
-    let now = chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap();
+    let now = Timestamp::from_timestamp(2_000_000_000, 0).unwrap();
     let clock: Arc<dyn Clock> = Arc::new(ManualClock::new(now));
     let memory = Arc::new(crawlx_storage::MemoryStore::with_clock(Arc::clone(&clock)));
     let stores = crate::Stores::over_memory(memory, dir.path()).await.unwrap();
@@ -92,7 +92,7 @@ fn binding(rc: &RunContext, lease: &SessionLease, build: Digest, policy: Digest)
     SessionBindingV1::new(
         identity,
         lease.fencing_token,
-        rc.clock.now() + chrono::Duration::minutes(10),
+        rc.clock.now() + Duration::minutes(10),
     )
 }
 

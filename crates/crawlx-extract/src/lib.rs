@@ -23,6 +23,7 @@
 //!   [`technologies`] and [`secrets`] are the surface-discovery and
 //!   classification extractors (ported with attribution where
 //!   noted in the module docs);
+//! * [`json_links`] lists the same-origin URLs a JSON endpoint response names (`scope.jsonEndpoints`);
 //! * [`form_fill`] fills a static form for submission (the `-aff`/`-fc` compatibility flags),
 //!   [`kb`] builds the `knowledgebase` record (endpoint and form classes,
 //!   the `-kb`/`-kb-endpoints` compatibility flags) and [`secret_validation`] plans and
@@ -76,9 +77,11 @@ pub mod isolated;
 pub mod isolated_language;
 pub mod item_export;
 pub mod item_loader;
+pub mod json_links;
 pub mod kb;
 pub mod link_media;
 pub mod link_options;
+pub mod link_scan;
 pub mod links;
 pub mod map_rank;
 pub mod markdown;

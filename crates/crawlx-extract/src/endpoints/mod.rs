@@ -219,6 +219,7 @@ pub const ALL_SOURCES: &[EndpointSource] = &[
     body::JS_WEBSOCKET,
     body::JS_EVENTSOURCE,
     body::JS_STRING,
+    body::JSON_ENDPOINT,
 ];
 
 /// How the endpoint was derived.

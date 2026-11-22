@@ -126,10 +126,10 @@ impl CheckpointTracker {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
-    use chrono::{Duration as D, TimeZone, Utc};
+    use crawlx_core::time::{Duration as D, Timestamp};
 
     fn t0() -> Timestamp {
-        Utc.with_ymd_and_hms(2026, 10, 16, 12, 0, 0).unwrap()
+        Timestamp::from_ymd_hms(2026, 10, 16, 12, 0, 0).unwrap()
     }
 
     #[test]

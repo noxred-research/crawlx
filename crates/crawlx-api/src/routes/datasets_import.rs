@@ -14,6 +14,7 @@ use axum::Extension;
 use crawlx_core::dataset::import::{commit_import, DatasetImportV1, ImportError};
 use crawlx_core::orchestration::RequestCommitV1;
 use crawlx_core::repo::FrontierStatus;
+use crawlx_core::time::Duration;
 use serde_json::json;
 
 /// Apply safe JSON objects to an existing admitted, leased request in the caller's run.
@@ -82,13 +83,11 @@ pub async fn apply(
     let execution_deadline = run
         .started_at
         .unwrap_or(run.created_at)
-        .checked_add_signed(chrono::Duration::seconds(i64::from(
-            run.config.limits.duration_seconds,
-        )))
+        .checked_add_signed(Duration::seconds(i64::from(run.config.limits.duration_seconds)))
         .ok_or_else(|| HttpError::malformed("invalid execution deadline"))?;
     let retention_deadline = run
         .created_at
-        .checked_add_signed(chrono::Duration::days(i64::from(run.config.retention.days)))
+        .checked_add_signed(Duration::days(i64::from(run.config.retention.days)))
         .ok_or_else(|| HttpError::malformed("invalid retention deadline"))?;
     let deadline = if run.config.retention.mode == crawlx_core::config::RetentionMode::Zdr {
         execution_deadline

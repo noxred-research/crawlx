@@ -3,10 +3,9 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use chrono::{TimeZone, Utc};
 use crawlx_core::config::RetentionMode;
 use crawlx_core::repo::{ArtifactStore, RunRepo, Sensitivity};
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{ManualClock, Timestamp};
 use crawlx_core::{Clock as _, StoreError, TenantId};
 use crawlx_storage::testkit::{crawl_run, create_crawl};
 use crawlx_storage::{
@@ -396,7 +395,7 @@ async fn store() -> (
     let run = crawl_run(TenantId::new(), config);
     runs.create(&run, None).await.unwrap();
     let spool = spool(4096, 8);
-    let clock = ManualClock::new(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap());
+    let clock = ManualClock::new(Timestamp::from_ymd_hms(2026, 1, 1, 0, 0, 0).unwrap());
     let store = ObjectArtifactStore::new(backend.clone(), runs, Arc::new(clock))
         .with_index(index.clone())
         .with_upload_spool(spool.clone());
@@ -499,7 +498,7 @@ async fn cancellation_during_index_upload_leaves_only_an_orphan_object() {
 async fn assert_secret_erasure_retry(terminal: bool) {
     let _metrics = METRICS_LOCK.lock().await;
     let backend = BackendHandle(Arc::new(Backend::new()));
-    let clock = ManualClock::new(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap());
+    let clock = ManualClock::new(Timestamp::from_ymd_hms(2026, 1, 1, 0, 0, 0).unwrap());
     let runs = Arc::new(MemoryStore::with_clock(Arc::new(clock.clone())));
     let mut config = create_crawl("https://example.test/", &[], 1);
     config.retention.mode = RetentionMode::Standard;

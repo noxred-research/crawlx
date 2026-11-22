@@ -30,6 +30,7 @@
 //! The collector is trusted operator configuration and is reached directly, not through the
 //! egress policy that guards crawled targets.
 
+use crawlx_core::time::SecondsFormat;
 use crawlx_core::Timestamp;
 use reqwest::header::{HeaderValue, CONTENT_TYPE};
 use reqwest::redirect::Policy;
@@ -547,15 +548,11 @@ impl TrafficExporter {
         event.insert("id".to_owned(), Value::from(uuid::Uuid::now_v7().to_string()));
         event.insert(
             "timestamp".to_owned(),
-            Value::from(
-                exchange
-                    .timestamp
-                    .to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
-            ),
+            Value::from(exchange.timestamp.to_rfc3339_opts(SecondsFormat::Nanos, true)),
         );
         event.insert(
             "captured_at".to_owned(),
-            Value::from(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)),
+            Value::from(Timestamp::now().to_rfc3339_opts(SecondsFormat::Nanos, true)),
         );
         event.insert("source_type".to_owned(), Value::from("cli"));
         event.insert("process".to_owned(), Value::from("crawlx"));

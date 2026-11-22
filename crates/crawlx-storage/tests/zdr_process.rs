@@ -1,8 +1,7 @@
 //! Cross-process zero-data-retention delivery, expiry, bounds, and crash recovery.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::{DateTime, Utc};
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{ManualClock, Timestamp};
 use crawlx_core::{ArtifactId, ArtifactRef, Clock as _, CrawlRunId, TenantId};
 use crawlx_storage::{BufferLimits, BufferedBlob, BufferedPage, DeliveryBuffer};
 use std::io::{BufRead as _, Write as _};
@@ -18,7 +17,7 @@ const CRASH_EXIT: i32 = 23;
 const LOCK_READY: &str = "ZDR_LOCKED";
 
 fn clock() -> Arc<ManualClock> {
-    Arc::new(ManualClock::new(EPOCH.parse::<DateTime<Utc>>().unwrap()))
+    Arc::new(ManualClock::new(EPOCH.parse::<Timestamp>().unwrap()))
 }
 
 fn limits(max_entries: usize, max_bytes: usize) -> BufferLimits {
@@ -808,7 +807,7 @@ async fn redis_native_ttl_expires_with_a_frozen_application_clock_without_read_r
         expired_ttl, -2,
         "Redis removed the page hash, not just its API visibility"
     );
-    assert_eq!(clock.now(), EPOCH.parse::<DateTime<Utc>>().unwrap());
+    assert_eq!(clock.now(), EPOCH.parse::<Timestamp>().unwrap());
     assert!(buffer.get(tenant, run, 1).await.unwrap().is_none());
     assert!(buffer.read(&artifact).await.unwrap().is_none());
     assert!(buffer

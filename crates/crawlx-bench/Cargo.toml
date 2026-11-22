@@ -74,7 +74,7 @@ name = "decision-eval"
 path = "src/bin/decision-eval.rs"
 
 [dependencies]
-crawlx-core = { path = "../crawlx-core" }
+crawlx-core = { path = "../crawlx-core", features = ["sqlx"] }
 crawlx-worker = { path = "../crawlx-worker" }
 crawlx-storage = { path = "../crawlx-storage" }
 crawlx-browser = { path = "../crawlx-browser" }
@@ -96,7 +96,6 @@ console-subscriber = { version = "0.5", optional = true }
 futures.workspace = true
 ipnet.workspace = true
 axum.workspace = true
-chrono.workspace = true
 clap.workspace = true
 parking_lot.workspace = true
 mimalloc.workspace = true

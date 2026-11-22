@@ -19,16 +19,15 @@ ocrs = ["dep:ocrs", "dep:rten"]
 crawlx-core = { path = "../crawlx-core" }
 crawlx-url = { path = "../crawlx-url" }
 base64.workspace = true
-calamine = { workspace = true, features = ["dates"] }
+calamine.workspace = true
 cfb.workspace = true
-chrono.workspace = true
-chrono-tz.workspace = true
 ego-tree.workspace = true
 encoding_rs.workspace = true
 icu_segmenter.workspace = true
 html5ever.workspace = true
 http.workspace = true
 image.workspace = true
+jiff.workspace = true
 lopdf.workspace = true
 ocrs = { workspace = true, optional = true }
 oxc_allocator = { workspace = true, optional = true }

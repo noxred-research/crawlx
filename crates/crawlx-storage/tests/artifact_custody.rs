@@ -7,11 +7,10 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use chrono::Utc;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::custody::{with_producer, CustodyLease, SecretRegistrar as _};
 use crawlx_core::repo::{ArtifactStore, RunRepo, Sensitivity};
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{Duration as SpanDuration, ManualClock, Timestamp};
 use crawlx_core::{CrawlRunId, SecretOr, SessionId, StoreError, TenantId, WorkerId};
 use crawlx_storage::artifact_custody::{
     ArtifactCustody, CustodyWrites, LeasedSecretRegistrar, LocalArtifactCustody, PgArtifactCustody,
@@ -121,7 +120,7 @@ struct Local {
 }
 
 async fn local() -> Local {
-    let clock = ManualClock::new(Utc::now());
+    let clock = ManualClock::new(Timestamp::now());
     let runs = Arc::new(MemoryStore::with_clock(Arc::new(clock.clone())));
     let tenant = TenantId::new();
     let mut config = create_crawl("https://example.test/", &[], 1);
@@ -226,7 +225,7 @@ async fn rejected_publication_with_undeletable_stage_reports_unresolved_object()
     let removed = crawlx_storage::ArtifactReaper::collect_orphans(
         store.as_ref(),
         &crawlx_storage::LiveArtifacts::default(),
-        Utc::now() + chrono::Duration::hours(1),
+        Timestamp::now() + SpanDuration::hours(1),
     )
     .await
     .unwrap();
@@ -854,7 +853,7 @@ async fn retained_archive_reads_decrypt_sealed_rows_and_refuse_tampering() {
     )
     .await
     .unwrap();
-    let now = Utc::now();
+    let now = Timestamp::now();
     let limits = Limits::default();
     let custody: &dyn ArtifactCustody = w.custody.as_ref();
     let read = |reference: ArtifactRef| {

@@ -515,7 +515,7 @@ mod tests {
     use crawlx_policy::testkit::sample_record;
 
     fn now() -> Timestamp {
-        chrono::Utc::now()
+        Timestamp::now()
     }
 
     fn record(ownership: OwnershipProof, origins: &[&str]) -> AuthorizationRecord {

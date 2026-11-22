@@ -30,6 +30,7 @@ use crawlx_core::observation::{
 use crawlx_core::repo::CrawlSession;
 use crawlx_core::safety::RiskClass;
 use crawlx_core::secret::SecretOr;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{BrowserContext, BrowserError, CoreError};
 use crawlx_elements::{CandidateDiscovery, DiscoveryConfig};
 use crawlx_forms::{
@@ -290,14 +291,14 @@ pub struct LoginMaterial {
 
 /// Bound initial authentication separately from exploration. Include one built-in
 /// fallback and cap the whole envelope even when a supplied plan has many steps.
-pub(crate) fn login_allowance(material: &LoginMaterial) -> chrono::Duration {
+pub(crate) fn login_allowance(material: &LoginMaterial) -> SpanDuration {
     let fallback = if material.plan.is_recorded() { 6 } else { 0 };
     let steps = material.plan.steps.len().saturating_add(fallback);
     let millis = u64::try_from(steps)
         .unwrap_or(u64::MAX)
         .saturating_mul(MAX_WAIT_MS)
         .min(crawlx_storage::session_binding::MAX_LOGIN_RESERVATION_MS);
-    chrono::Duration::milliseconds(i64::try_from(millis).unwrap_or(i64::MAX))
+    SpanDuration::milliseconds(i64::try_from(millis).unwrap_or(i64::MAX))
 }
 
 /// Why a login did not complete.

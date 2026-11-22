@@ -34,6 +34,7 @@ use crate::sql::{stmt, Sql, SqlRow};
 use crate::store::Store;
 use async_trait::async_trait;
 use crawlx_core::custody::{CustodyLease, CustodySource};
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{CrawlRunId, StoreError, TenantId, Timestamp, WorkerId};
 use std::sync::Arc;
 use std::time::Duration;
@@ -153,7 +154,7 @@ pub enum BootstrapClaim {
 pub struct BootstrapAuthority<B: Sql> {
     store: Store<B>,
     authorizer: Arc<dyn BootstrapProducerAuthorizer>,
-    ttl: chrono::Duration,
+    ttl: SpanDuration,
 }
 
 /// Bootstrap ownership over PostgreSQL.
@@ -174,7 +175,7 @@ impl<B: Sql> BootstrapAuthority<B> {
                 "bootstrap lease TTL must be between one millisecond and five minutes",
             ));
         }
-        let ttl = chrono::Duration::from_std(ttl).map_err(|_| denied("bootstrap lease TTL out of range"))?;
+        let ttl = SpanDuration::from_std(ttl).map_err(|_| denied("bootstrap lease TTL out of range"))?;
         Ok(Self {
             store,
             authorizer,

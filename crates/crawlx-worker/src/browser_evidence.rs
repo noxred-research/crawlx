@@ -13,6 +13,7 @@ use crawlx_core::page_op::{PageOp, PageOpResult, PdfSpec, ShotSpec};
 use crawlx_core::repo::{ArtifactStore, RunRepo, Sensitivity};
 use crawlx_core::request_controls::RequestControls;
 use crawlx_core::secret::{ArtifactSink, Redacted, Redactor};
+use crawlx_core::time::Duration;
 use crawlx_core::{ArtifactRef, CrawlRunId, StoreError};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -228,7 +229,7 @@ impl BrowserCaptureSink for EvidenceSink {
         };
         let expires_at = run
             .created_at
-            .checked_add_signed(chrono::Duration::days(i64::from(days)))
+            .checked_add_signed(Duration::days(i64::from(days)))
             .ok_or_else(|| StoreError::RetentionDenied("browser evidence deadline unavailable".into()))?;
         if !self.permits(descriptor.kind)? {
             return Ok(None);

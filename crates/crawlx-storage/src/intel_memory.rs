@@ -581,7 +581,7 @@ impl IntelRepo for MemoryIntel {
             .iter()
             .filter(|e| e.tenant == tenant && e.at >= from && e.at < to)
         {
-            add_usage(days.entry(e.at.format("%Y-%m-%d").to_string()).or_default(), e);
+            add_usage(days.entry(e.at.date_naive().to_string()).or_default(), e);
         }
         Ok(days
             .into_iter()

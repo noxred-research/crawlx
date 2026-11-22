@@ -15,7 +15,6 @@ thiserror.workspace = true
 ipnet.workspace = true
 publicsuffix.workspace = true
 url.workspace = true
-chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 hmac.workspace = true

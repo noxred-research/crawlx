@@ -4,12 +4,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use crate::rig::Rig;
-use chrono::Duration;
 use crawlx_core::cache::{AdaptiveSelectorRecordV1, AdaptiveSelectorRepo};
 use crawlx_core::config::RetentionMode;
 use crawlx_core::repo::RunRepo;
 use crawlx_core::selectors::{AdaptiveSelectorSpecV1, SelectorScopeV1, StructuralDescriptorV1};
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{Duration, ManualClock};
 use crawlx_core::{StoreError, TenantId, Timestamp};
 use crawlx_storage::testkit::{crawl_run, create_crawl, Engine};
 use crawlx_storage::{BufferLimits, DeliveryBuffer};
@@ -187,7 +186,7 @@ async fn descriptor_scope_retention_and_zdr_payload_gate_use_real_rows(rig: &Rig
     if rig.engine() != Engine::Memory {
         rig.insert_tenant(foreign.0).await.unwrap();
     }
-    let now = Timestamp::from_timestamp_micros(chrono::Utc::now().timestamp_micros()).unwrap();
+    let now = Timestamp::from_timestamp_micros(Timestamp::now().timestamp_micros()).unwrap();
     let buffer = buffer(now);
     with_buffer!(rig, buffer, |repo| zdr_contract(
         rig, repo, &buffer, tenant, foreign, now
@@ -266,7 +265,7 @@ async fn replacement_keeps_the_earlier_expiry(rig: &Rig) {
 }
 
 async fn replacement_contract<R: RunRepo + AdaptiveSelectorRepo>(repo: &R, tenant: TenantId) {
-    let now = Timestamp::from_timestamp_micros(chrono::Utc::now().timestamp_micros()).unwrap();
+    let now = Timestamp::from_timestamp_micros(Timestamp::now().timestamp_micros()).unwrap();
     let run = retained_run(repo, tenant, now).await;
     let scope = scope_of(tenant);
     let first = AdaptiveSelectorRecordV1::new(run.id, spec(scope.clone(), "a"), now + Duration::minutes(10));
@@ -318,7 +317,7 @@ async fn sweep_deletes_only_expired_descriptors(rig: &Rig) {
 }
 
 async fn sweep_contract<R: RunRepo + AdaptiveSelectorRepo>(repo: &R, tenant: TenantId) {
-    let now = Timestamp::from_timestamp_micros(chrono::Utc::now().timestamp_micros()).unwrap();
+    let now = Timestamp::from_timestamp_micros(Timestamp::now().timestamp_micros()).unwrap();
     let run = retained_run(repo, tenant, now).await;
     let scope = scope_of(tenant);
     let record = AdaptiveSelectorRecordV1::new(run.id, spec(scope.clone(), "a"), now + Duration::minutes(10));
@@ -344,7 +343,7 @@ async fn delete_run_removes_its_descriptors(rig: &Rig) {
 }
 
 async fn delete_run_contract<R: RunRepo + AdaptiveSelectorRepo>(repo: &R, tenant: TenantId) {
-    let now = Timestamp::from_timestamp_micros(chrono::Utc::now().timestamp_micros()).unwrap();
+    let now = Timestamp::from_timestamp_micros(Timestamp::now().timestamp_micros()).unwrap();
     let run = retained_run(repo, tenant, now).await;
     let kept = retained_run(repo, tenant, now).await;
     let scope = scope_of(tenant);

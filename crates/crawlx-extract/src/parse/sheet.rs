@@ -128,12 +128,19 @@ fn date_text(dt: &calamine::ExcelDateTime) -> String {
         }
         return dt.as_f64().to_string();
     }
-    match dt.as_datetime() {
-        Some(d) => {
-            let s = d.to_string();
-            s.strip_suffix(" 00:00:00").map_or(s.clone(), str::to_owned)
-        }
-        None => dt.as_f64().to_string(),
+    // Calendar fields straight from calamine (no chrono type); an unrepresentable serial keeps its number.
+    if !dt.as_f64().is_finite() || dt.as_f64() < 0.0 {
+        return dt.as_f64().to_string();
+    }
+    let (year, month, day, hour, minute, second, milli) = dt.to_ymd_hms_milli();
+    if year == 0 || month == 0 || day == 0 {
+        return dt.as_f64().to_string();
+    }
+    let date = format!("{year:04}-{month:02}-{day:02}");
+    match (hour, minute, second, milli) {
+        (0, 0, 0, 0) => date,
+        (_, _, _, 0) => format!("{date} {hour:02}:{minute:02}:{second:02}"),
+        _ => format!("{date} {hour:02}:{minute:02}:{second:02}.{milli:03}"),
     }
 }
 

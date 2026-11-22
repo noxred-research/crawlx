@@ -7,7 +7,7 @@ use crawlx_core::config::ExternalCommunication;
 use crawlx_core::observation::LiveTargetFacts;
 use crawlx_core::repo::SafetyContext;
 use crawlx_core::safety::{RiskClass, SafetyDecision};
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{Duration, FixedDateTime, ManualClock};
 use crawlx_core::{ActionKind, CreateCrawl, PrincipalId, SafetyProfile, StateClusterId, TenantId};
 use crawlx_policy::{testkit::sample_record, AuthorizationRecord};
 use crawlx_worker::run::build_kernel;
@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 #[test]
 fn only_the_selected_verified_unexpired_matching_sink_authorizes_external_communication() {
-    let now = chrono::DateTime::parse_from_rfc3339("2026-11-04T12:00:00Z")
+    let now = FixedDateTime::parse_rfc3339("2026-11-04T12:00:00Z")
         .unwrap()
         .to_utc();
     let clock = ManualClock::new(now);
@@ -73,7 +73,7 @@ fn only_the_selected_verified_unexpired_matching_sink_authorizes_external_commun
     let mut expired = record.clone();
     expired.valid_to = now;
     let mut future = record.clone();
-    future.valid_from = now + chrono::Duration::seconds(1);
+    future.valid_from = now + Duration::seconds(1);
     let mut revoked = record.clone();
     revoked.revoked_at = Some(now);
     let mut wrong_kind = record.clone();
@@ -336,14 +336,14 @@ async fn observed_channel_does_not_authorize_an_expired_sink_at_confirmation() {
 
     let rig = observed_form_rig("sms", "sms", FORM_DESTINATION).await;
     let (proposal, safety) = observed_proposal(&rig, "Send invite", ActionKind::Click).await;
-    let now = chrono::DateTime::parse_from_rfc3339("2026-11-04T12:00:00Z")
+    let now = FixedDateTime::parse_rfc3339("2026-11-04T12:00:00Z")
         .unwrap()
         .to_utc();
     let clock = ManualClock::new(now);
     let mut record = sample_record(rig.stores.tenant, now, &["https://example.test"]);
     record.id = rig.rc.crawl.safety.authorization_record_ref.unwrap();
     record.verified_at = Some(now);
-    record.valid_to = now + chrono::Duration::seconds(1);
+    record.valid_to = now + Duration::seconds(1);
     record.test_sinks.insert("sms".into(), FORM_DESTINATION.into());
     let kernel = build_kernel(&rig.rc.crawl, Arc::new(clock.clone()), Some(&record)).unwrap();
     let Adjudication::Allow(admitted) = kernel.adjudicate(proposal.clone(), &safety) else {

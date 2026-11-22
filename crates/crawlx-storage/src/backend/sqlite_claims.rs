@@ -15,6 +15,7 @@ use super::strategy::{
 use crate::codec::ts_from_micros;
 use crate::error::db;
 use crate::worker_eligibility::{claim_eligible, WorkerFacts};
+use crawlx_core::time::Timestamp;
 use crawlx_core::StoreError;
 use serde_json::Value;
 use sqlx::sqlite::SqliteRow;
@@ -23,7 +24,7 @@ use uuid::Uuid;
 
 /// Microseconds since the epoch on the host clock.
 fn now_micros() -> i64 {
-    chrono::Utc::now().timestamp_micros()
+    Timestamp::now().timestamp_micros()
 }
 
 fn json_column(row: &SqliteRow, column: &str) -> Result<Value, StoreError> {

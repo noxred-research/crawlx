@@ -23,6 +23,7 @@ use super::catalog::{self, Capability};
 use super::native::Native;
 use super::protocol::{RpcError, INVALID_PARAMS, METHOD_NOT_FOUND, SERVER_BUSY};
 use super::tools::Tool;
+use crawlx_core::time::{SecondsFormat, Timestamp};
 use serde_json::{json, Map, Value};
 use sha2::{Digest as _, Sha256};
 use std::fs::{File, OpenOptions, TryLockError};
@@ -273,7 +274,7 @@ impl Audit {
         record.insert("seq".to_owned(), json!(seq));
         record.insert(
             "ts".to_owned(),
-            json!(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)),
+            json!(Timestamp::now().to_rfc3339_opts(SecondsFormat::Nanos, true)),
         );
         record.insert("prev".to_owned(), json!(chain.prev));
         record.insert("phase".to_owned(), json!(entry.phase.name()));

@@ -8,6 +8,7 @@ use crawlx_core::config::RetentionMode;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{ArtifactStore, PageRecord, PageRepo, RunRepo, Sensitivity};
 use crawlx_core::scrape::{ScrapeDocument, ScrapeOptions};
+use crawlx_core::time::Duration;
 use crawlx_core::{CanonicalUrl, CrawlRunId, StoreError, TenantId, Timestamp};
 
 const CANDIDATES: u32 = 64;
@@ -151,7 +152,7 @@ pub async fn lookup(
         if source.tenant != tenant
             || source.retention.mode == RetentionMode::Zdr
             || source.retention.days == 0
-            || source.created_at + chrono::Duration::days(i64::from(source.retention.days)) <= now
+            || source.created_at + Duration::days(i64::from(source.retention.days)) <= now
         {
             continue;
         }
@@ -497,7 +498,7 @@ pub(crate) async fn lookup_native(
         if owner.tenant != tenant
             || owner.retention.mode == RetentionMode::Zdr
             || owner.retention.days == 0
-            || owner.created_at + chrono::Duration::days(i64::from(owner.retention.days)) <= now
+            || owner.created_at + Duration::days(i64::from(owner.retention.days)) <= now
         {
             continue;
         }
@@ -631,7 +632,7 @@ pub async fn replay_saved_response(
     }
     if owner.config.retention.mode == RetentionMode::Zdr
         || owner.config.retention.days == 0
-        || owner.created_at + chrono::Duration::days(i64::from(owner.config.retention.days)) <= now
+        || owner.created_at + Duration::days(i64::from(owner.config.retention.days)) <= now
     {
         return Err(StoreError::RetentionDenied("saved response source retention expired".into()).into());
     }
@@ -744,7 +745,7 @@ pub async fn import_entries(
     }
     if source.retention.mode == RetentionMode::Zdr
         || source.retention.days == 0
-        || source.created_at + chrono::Duration::days(i64::from(source.retention.days)) <= now
+        || source.created_at + Duration::days(i64::from(source.retention.days)) <= now
     {
         return Err(ImportError::RunNotRetaining);
     }

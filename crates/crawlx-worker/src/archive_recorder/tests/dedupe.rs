@@ -3,6 +3,7 @@
 
 use super::*;
 use crawlx_core::archive::ArchiveDedupe;
+use crawlx_core::time::{Duration, FixedDateTime, Timestamp};
 
 async fn prepared(
     stores: &Stores,
@@ -292,7 +293,7 @@ async fn exercise_renditions(stores: &Stores, clock: Arc<ManualClock>, root: &Pa
             next.id,
             next.config.output.archive.as_ref().unwrap().clone(),
             next.created_at,
-            Some(next.created_at + chrono::Duration::days(1)),
+            Some(next.created_at + Duration::days(1)),
             TerminalReason::FrontierExhausted,
         );
         stores.archives.begin(&pending).await.unwrap();
@@ -395,7 +396,7 @@ async fn exercise(stores: &Stores, clock: Arc<ManualClock>, root: &Path) {
         probe.id,
         probe.config.output.archive.as_ref().unwrap().clone(),
         probe.created_at,
-        Some(probe.created_at + chrono::Duration::days(1)),
+        Some(probe.created_at + Duration::days(1)),
         TerminalReason::FrontierExhausted,
     );
     stores.archives.begin(&pending).await.unwrap();
@@ -478,7 +479,7 @@ async fn exercise(stores: &Stores, clock: Arc<ManualClock>, root: &Path) {
         fresh.id,
         fresh.config.output.archive.as_ref().unwrap().clone(),
         fresh.created_at,
-        Some(fresh.created_at + chrono::Duration::days(1)),
+        Some(fresh.created_at + Duration::days(1)),
         TerminalReason::FrontierExhausted,
     );
     stores.archives.begin(&fresh_pending).await.unwrap();
@@ -500,9 +501,9 @@ async fn exercise(stores: &Stores, clock: Arc<ManualClock>, root: &Path) {
 async fn memory_cross_url_payload_revisits_preserve_captures_and_close_local_packages() {
     let root = tempfile::tempdir().unwrap();
     let clock = Arc::new(ManualClock::new(
-        chrono::DateTime::parse_from_rfc3339("2026-11-06T00:00:00Z")
+        FixedDateTime::parse_rfc3339("2026-11-06T00:00:00Z")
             .unwrap()
-            .with_timezone(&chrono::Utc),
+            .to_utc(),
     ));
     let memory = Arc::new(MemoryStore::with_clock(clock.clone()));
     let mut stores = Stores::over_memory(memory.clone(), root.path()).await.unwrap();
@@ -522,7 +523,7 @@ async fn postgres_cross_url_payload_revisits_match_memory_custody() {
     };
     let root = tempfile::tempdir().unwrap();
     let clock = Arc::new(ManualClock::new(
-        chrono::DateTime::from_timestamp_millis(chrono::Utc::now().timestamp_millis()).unwrap(),
+        Timestamp::from_timestamp_millis(Timestamp::now().timestamp_millis()).unwrap(),
     ));
     let pg = Pg::connect(
         &url,
@@ -565,7 +566,7 @@ async fn failed_source_is_never_selected(stores: &Stores, probe: &CrawlRun, cloc
         run.id,
         run.config.output.archive.as_ref().unwrap().clone(),
         run.created_at,
-        Some(run.created_at + chrono::Duration::days(1)),
+        Some(run.created_at + Duration::days(1)),
         TerminalReason::FrontierExhausted,
     );
     stores.archives.begin(&pending).await.unwrap();

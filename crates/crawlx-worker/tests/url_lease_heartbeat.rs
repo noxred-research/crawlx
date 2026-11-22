@@ -17,6 +17,7 @@ mod resume_rig;
 
 use crawlx_core::counters::{RunStatus, TerminalReason};
 use crawlx_core::repo::FrontierStatus;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{Clock, SystemClock};
 use resume_rig::{
     by_state, enqueue, finish, fleet_reaper, frontier, page_paths, terminal, Doomed, Reaped, Rig, Shape,
@@ -259,7 +260,7 @@ async fn row_taken_from_a_live_holder_is_never_completed_under_the_stale_fence(r
 
     let taken = stores
         .leases
-        .reap_frontier(SystemClock.now() + chrono::Duration::hours(1), 5)
+        .reap_frontier(SystemClock.now() + SpanDuration::hours(1), 5)
         .await
         .unwrap();
     assert_eq!((taken.requeued, taken.failed), (u64::try_from(BATCH).unwrap(), 0));

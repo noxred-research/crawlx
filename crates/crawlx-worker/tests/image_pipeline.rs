@@ -524,7 +524,7 @@ async fn thumbnails_and_expiry_deadlines_reach_the_store_and_count_against_the_q
     policy.thumbnail_edge = Some(8);
     let pipe = pipeline(policy, ImageQuota::default());
     let one = scope();
-    let deadline = chrono::DateTime::from_timestamp(1_900_000_000, 0).unwrap();
+    let deadline = Timestamp::from_timestamp(1_900_000_000, 0).unwrap();
     let mut request = ingest(one, "/t.png", &png(64, 32, 7));
     request.deadline = Some(deadline);
     let done = pipe.ingest(&cpu, &store, &request).await.unwrap();

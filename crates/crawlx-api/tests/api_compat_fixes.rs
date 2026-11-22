@@ -16,6 +16,7 @@ use axum::routing::get;
 use axum::Router;
 use crawlx_api::scrape_service::{failure_code, FAILURE_CODES};
 use crawlx_api::CompatConfig;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{Clock, SystemClock};
 use crawlx_model::llm::MockLlm;
 use crawlx_policy::authorization::AuthorizationRecord;
@@ -66,10 +67,10 @@ fn record(tenant: crawlx_core::TenantId, prefix: &str, acknowledged: bool) -> Au
     let now = SystemClock.now();
     AuthorizationRecord {
         url_prefixes: vec![prefix.to_owned()],
-        valid_from: now - chrono::Duration::days(1),
-        valid_to: now + chrono::Duration::days(1),
+        valid_from: now - SpanDuration::days(1),
+        valid_to: now + SpanDuration::days(1),
         robots_override_acknowledged: acknowledged,
-        verified_at: Some(now - chrono::Duration::days(1)),
+        verified_at: Some(now - SpanDuration::days(1)),
         ..sample_record(tenant, now, &[])
     }
 }

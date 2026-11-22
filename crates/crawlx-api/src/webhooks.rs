@@ -34,10 +34,10 @@ use crate::scrape_service::{compat_document, record_run_usage};
 use crate::state::AppState;
 use crate::store::{ApiStore, DeliveryResult, DeliveryStatus, WebhookDelivery};
 use async_trait::async_trait;
-use chrono::Duration as ChronoDuration;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::repo::{CrawlRun, EventRepo, PageRecord, RunEvent, RunRepo};
 use crawlx_core::scrape::ScrapeJob;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{Clock, CrawlRunId, StoreError, Timestamp};
 use crawlx_policy::EgressPolicy;
 use crawlx_storage::{BufferedPage, DeliveryBuffer};
@@ -612,7 +612,7 @@ impl WebhookSender {
                 status: failure.0,
                 error: failure.1,
                 next_attempt_at: now
-                    + ChronoDuration::milliseconds(i64::try_from(delay.as_millis()).unwrap_or(i64::MAX)),
+                    + SpanDuration::milliseconds(i64::try_from(delay.as_millis()).unwrap_or(i64::MAX)),
             }),
             None => Ok(dead(failure.0, failure.1)),
         }
@@ -811,7 +811,7 @@ mod tests {
         RunEvent {
             seq: 1,
             kind: kind.to_owned(),
-            at: chrono::Utc::now(),
+            at: Timestamp::now(),
             payload,
         }
     }

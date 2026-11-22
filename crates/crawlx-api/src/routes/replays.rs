@@ -349,6 +349,7 @@ mod tests {
     use super::*;
     use crate::store::ActionSummary;
     use crawlx_core::counters::ActionStatus;
+    use crawlx_core::time::Timestamp;
     use crawlx_core::{ActionId, SessionId, TrustLane};
 
     fn tr(before: StateId, after: Option<StateId>) -> TransitionRecord {
@@ -375,7 +376,7 @@ mod tests {
                 risk_class: None,
                 safety_verdict: None,
             },
-            created_at: chrono::Utc::now(),
+            created_at: Timestamp::now(),
         }
     }
 

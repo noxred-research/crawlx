@@ -15,6 +15,7 @@ use crawlx_core::report_history::{
     ReportHistoryRepo, ReportKindV1, ReportQueryV1, StageOutcomeV1,
 };
 use crawlx_core::request::RequestEnvelopeV1;
+use crawlx_core::time::Duration;
 use crawlx_core::{StoreError, TenantId, Timestamp, WorkerId};
 use crawlx_storage::sql::Built;
 use crawlx_storage::testkit::{self, Engine};
@@ -403,7 +404,7 @@ async fn contract<R: RunRepo + FrontierRepo + RequestCommitRepo + ReportHistoryR
         ReportDataV1::Dns {
             outcome: DnsOutcomeV1::Resolved,
             duration_us: 13,
-            recheck_at: Some(run.created_at + chrono::Duration::minutes(5)),
+            recheck_at: Some(run.created_at + Duration::minutes(5)),
         },
     );
     repo.append_fact(&lease, &dns).await.unwrap();
@@ -486,7 +487,7 @@ async fn filters<R: RunRepo + FrontierRepo + RequestCommitRepo + ReportHistoryRe
 ) {
     let (run, lease) = fixture(repo, tenant, false).await;
     let base = Timestamp::from_timestamp(run.created_at.timestamp(), 0).unwrap();
-    let at = |seconds: i64| base + chrono::Duration::seconds(seconds);
+    let at = |seconds: i64| base + Duration::seconds(seconds);
     let url_a = Digest::of("test/url-key", b"a");
     let url_b = Digest::of("test/url-key", b"b");
     let host_1 = Digest::of("test/host-key", b"1");
@@ -792,7 +793,7 @@ async fn purge<R: RunRepo + FrontierRepo + RequestCommitRepo + ReportHistoryRepo
         .await,
         1
     );
-    let past = chrono::Utc::now() - chrono::Duration::hours(1);
+    let past = Timestamp::now() - Duration::hours(1);
     let expired = [Bind::Ts(past), Bind::Uuid(run.id.0)];
     exec(
         rig,
@@ -892,7 +893,7 @@ where
     repo.complete_fenced(request, lease.fence, FrontierStatus::Succeeded, None)
         .await
         .unwrap();
-    let now = chrono::Utc::now();
+    let now = Timestamp::now();
     let mut ids = Vec::new();
     for name in ["first", "second"] {
         let worker = WorkerId::new();
@@ -905,8 +906,8 @@ where
                 Bind::I64(request),
                 Bind::Text(name),
                 Bind::Uuid(worker.0),
-                Bind::Ts(now + chrono::Duration::minutes(10)),
-                Bind::Ts(now + chrono::Duration::days(1)),
+                Bind::Ts(now + Duration::minutes(10)),
+                Bind::Ts(now + Duration::days(1)),
             ],
         )
         .await;
@@ -1409,7 +1410,7 @@ where
         .await,
         1
     );
-    let past = chrono::Utc::now() - chrono::Duration::hours(1);
+    let past = Timestamp::now() - Duration::hours(1);
     exec(
         rig,
         "UPDATE report_history SET expires_at=$1 WHERE run_id=$2",

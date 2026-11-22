@@ -3,12 +3,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;
-use chrono::{TimeZone, Utc};
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{ManualClock, Timestamp};
 
 fn clock() -> Arc<ManualClock> {
     Arc::new(ManualClock::new(
-        Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+        Timestamp::from_ymd_hms(2026, 1, 1, 0, 0, 0).unwrap(),
     ))
 }
 

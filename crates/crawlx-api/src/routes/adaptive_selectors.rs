@@ -14,6 +14,7 @@ use crawlx_core::cache::AdaptiveSelectorRecordV1;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::repo::{CrawlRun, PageRecord};
 use crawlx_core::selectors::SelectorScopeV1;
+use crawlx_core::time::Duration;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -168,9 +169,9 @@ pub async fn put(
     spec.validate().map_err(invalid)?;
     let horizon = run.created_at
         + if run.config.retention.mode == RetentionMode::Zdr {
-            chrono::Duration::hours(1)
+            Duration::hours(1)
         } else {
-            chrono::Duration::days(i64::from(run.config.retention.days))
+            Duration::days(i64::from(run.config.retention.days))
         };
     let record = AdaptiveSelectorRecordV1::new(run.id, spec, input.expires_at.unwrap_or(horizon));
     state.repos.adaptive_selectors.put(&record).await?;

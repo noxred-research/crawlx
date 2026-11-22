@@ -15,6 +15,7 @@
 //! manual clock replays the same stops.
 
 use super::*;
+use crawlx_core::time::Duration;
 
 /// Progress the idle criterion measures: the newest kept-page count and when it last grew.
 pub(super) struct IdleClock {
@@ -77,9 +78,7 @@ impl UrlPlaneRunner {
         if limits.idle_seconds > 0 {
             let now = self.deps.clock.now();
             idle.observe(urls.succeeded, now);
-            if now.signed_duration_since(idle.since)
-                >= chrono::Duration::seconds(i64::from(limits.idle_seconds))
-            {
+            if now.signed_duration_since(idle.since) >= Duration::seconds(i64::from(limits.idle_seconds)) {
                 return Some(TerminalDetail::IdleTimeout);
             }
         }

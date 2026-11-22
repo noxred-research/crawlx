@@ -8,6 +8,7 @@
 use crawlx_api::auth::{generate_key, key_record, tenant_id_for};
 use crawlx_api::ownership::StaticProbe;
 use crawlx_api::{ApiConfig, AppState, Repos, Scope};
+use crawlx_core::time::Duration;
 use crawlx_core::{ArtifactRef, Clock, SystemClock, TenantId};
 use crawlx_policy::attestation::OperatorKeys;
 use crawlx_policy::testkit::sample_record;
@@ -244,7 +245,7 @@ async fn sign_refuses_what_cannot_be_signed() {
         dir.path(),
         "e.json",
         &AuthorizationRecord {
-            valid_to: SystemClock.now() + chrono::Duration::days(200),
+            valid_to: SystemClock.now() + Duration::days(200),
             ..signable("http://10.20.0.5:8090")
         },
     );

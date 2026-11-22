@@ -405,9 +405,9 @@ async fn coverage_from_row<B: Tenancy>(store: &Store<B>, r: &B::Row) -> Result<C
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
-    use chrono::Utc;
     use crawlx_core::hash::Digest;
     use crawlx_core::identity::{ActionKind, ElementIdentityHash, InputClass, ResourceContext};
+    use crawlx_core::time::Timestamp;
     use crawlx_core::url::RouteTemplate;
     use crawlx_core::{PrincipalId, StateClusterId};
 
@@ -428,7 +428,7 @@ mod tests {
             failures: 0,
             denied,
             unknown: 0,
-            first_seen: Utc::now(),
+            first_seen: Timestamp::now(),
             last_exercised: None,
         }
     }

@@ -8,10 +8,9 @@
 //! ([`MAX_DEPTH`]) and total-URL ([`MAX_URLS`]) bounds while leaving the
 //! fetching to the caller.
 
+use crawlx_core::time::{FixedDateTime, NaiveDate, NaiveDateTime, Timestamp};
 use std::collections::BTreeSet;
 
-use chrono::{DateTime, NaiveDate, Utc};
-use crawlx_core::time::Timestamp;
 use quick_xml::events::Event;
 use quick_xml::name::ResolveResult;
 use quick_xml::reader::NsReader;
@@ -394,15 +393,15 @@ fn valid_loc(l: &str) -> bool {
 #[must_use]
 pub fn parse_lastmod(s: &str) -> Option<Timestamp> {
     let s = s.trim();
-    if let Ok(d) = DateTime::parse_from_rfc3339(s) {
-        return Some(d.with_timezone(&Utc));
+    if let Ok(d) = FixedDateTime::parse_rfc3339(s) {
+        return Some(d.to_utc());
     }
-    if let Ok(d) = DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M%:z") {
-        return Some(d.with_timezone(&Utc));
+    if let Ok(d) = FixedDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M%:z") {
+        return Some(d.to_utc());
     }
     if let Some(naive) = s
         .strip_suffix('Z')
-        .and_then(|t| chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M").ok())
+        .and_then(|t| NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M").ok())
     {
         return Some(naive.and_utc());
     }

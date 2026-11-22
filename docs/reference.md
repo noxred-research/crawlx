@@ -247,6 +247,23 @@ feature returns an explicit unavailable error, never a silent regex fallback.
 The standalone extractor's unspecified default follows its compiled miners
 (both with `js-ast`, regex without it).
 
+### JSON endpoint links
+
+A static crawl that fetches an `application/json` response (typically an endpoint the script miner found,
+such as `/api/app-index.json`) reads the document's string values: a root-relative path (`/app/item/01`) or
+an absolute `http(s)` URL on the response's own origin becomes a `Link` candidate whose request source is
+`json_endpoint`. Keys, numbers, scheme-relative (`//host/x`) and relative (`item/01`) strings, other origins
+and strings containing whitespace, markup or template characters are ignored, and so is JSON served under
+another media type (`application/ld+json`, `text/plain`) or with a non-2xx status. Each candidate meets
+scope, robots, the egress policy and the run budgets like any link. Reading is bounded to the first 1 MiB,
+16 levels of nesting and 500 URLs per document; the values themselves are not stored.
+
+`scope.jsonEndpoints` (native request JSON; default `true`) turns it off. `--compat-defaults` sets it to
+`false`, because the compatibility reference reads no JSON response for links. The default was chosen after
+a check on the CrawlerGym: no embedded JSON document names a same-origin path, and the static maze run with
+the option on requests no URL that the run with it off does not
+(`json_endpoints_add_no_request_on_the_gym` in `crates/crawlx-bench/tests/crawl_maze.rs`).
+
 ### Structural discovery matrix and unresolved expressions
 
 Header and HTML discovery is pinned by a golden construct matrix
@@ -265,7 +282,11 @@ resolution. Only GET endpoints without a body are fetch candidates: forms with
 another method, `formmethod` buttons and `hx-post`/`hx-put`/`hx-patch` are
 recorded as metadata and never submitted, and `method=dialog` forms produce no
 endpoint. Binary bodies (declared or sniffed) are never mined; their headers
-still are.
+still are. The `<base href>` URL itself is such an endpoint (like every other
+URL-bearing attribute), so a static crawl requests it once, in scope and under
+robots, even though a browser never does: a base that is only a path prefix
+(`<base href="/p/">`) is a request that may answer 404 and then counts as one
+failed URL.
 
 The AST miner never executes script text. When the URL position of a request
 site (`fetch`, `Request`, client methods, `xhr.open`, `location`, `history`,
@@ -1353,6 +1374,14 @@ one CPU second and one wall-clock second per MiB, so a page the fetcher admits
 (up to the 8 MiB default response cap) has the same room on every attempt. A page
 that still exceeds a limit fails as `parser_limit_exceeded` with its
 `inputBytes` in the run event, every time, never as a varying `extract_failed`.
+The static plane does not drop such a page's subtree: a bounded streaming scan
+(HTML tokenizer only, no DOM; at most 100000 links and 16 MiB of link text,
+reserved from the shared byte budget first) recovers its links, title,
+description, canonical URL, language and `robots` meta. The links are admitted
+through the usual scope, robots and dedupe gates, and the `page.failed` event
+carries them as `metadataOnly` (`status` `recovered`, or `unavailable` with a
+`reason` when the budget refuses the scan). The browser plane and the
+acquisition-service path do not run the scan.
 Increase only the required limit within the container's total memory budget;
 concurrent helpers add their address-space ceilings to parent memory (the
 default limits at most two helpers on the default 4 GiB parse budget).

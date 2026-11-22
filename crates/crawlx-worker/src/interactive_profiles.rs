@@ -8,6 +8,7 @@
 
 use crawlx_core::secret::CredentialRef;
 use crawlx_core::session_binding::{BindingState, SessionBindingV1};
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{Clock, CrawlRunId, SessionId, TenantId, Timestamp};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -514,7 +515,7 @@ impl InteractiveProfiles {
                 state.state = InteractiveState::Starting;
                 state.expires_at = state
                     .expires_at
-                    .min(self.clock.now() + chrono::Duration::seconds(i64::from(request.ttl_seconds)));
+                    .min(self.clock.now() + SpanDuration::seconds(i64::from(request.ttl_seconds)));
                 state.expected_generation = Some(request.expected_generation);
                 state.capture_consent = request.capture_consent;
                 let remaining = (state.expires_at - self.clock.now())

@@ -4,13 +4,14 @@ use super::{database_now, denied, live, locked, SecretAuthority, EXPIRY_MARGIN_M
 use crate::backend::strategy::Conn;
 use crate::sql::{stmt, Sql, SqlRow};
 use crawlx_core::custody::{CustodyLease, CustodyRenewalWindow, SecretEpoch};
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{StoreError, Timestamp};
 use std::time::Duration;
 
 fn add_window(now: Timestamp, duration: Duration) -> Result<Timestamp, StoreError> {
     let millis =
         i64::try_from(duration.as_millis()).map_err(|_| denied("secret authority duration overflow"))?;
-    now.checked_add_signed(chrono::Duration::milliseconds(millis))
+    now.checked_add_signed(SpanDuration::milliseconds(millis))
         .ok_or_else(|| denied("secret authority deadline overflow"))
 }
 
@@ -52,7 +53,7 @@ impl<B: Sql> SecretAuthority<B> {
         let expires_at = add_window(now, self.ttl)?.min(ceiling);
         let expires_at = Timestamp::from_timestamp_millis(expires_at.timestamp_millis())
             .ok_or_else(|| denied("secret authority deadline overflow"))?;
-        if ceiling.signed_duration_since(now) <= chrono::Duration::milliseconds(EXPIRY_MARGIN_MS)
+        if ceiling.signed_duration_since(now) <= SpanDuration::milliseconds(EXPIRY_MARGIN_MS)
             || expires_at <= now
         {
             return Err(denied("secret authority original retention already expired"));
@@ -153,12 +154,13 @@ impl<B: Sql> SecretAuthority<B> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+    use crawlx_core::time::Duration as SpanDuration;
 
     #[test]
     fn long_retention_needs_both_explicit_permissions_and_respects_operator_maximum() {
         let now = Timestamp::from_timestamp(1_700_000_000, 0).unwrap();
-        let day = now + chrono::Duration::hours(24);
-        let long = now + chrono::Duration::hours(96);
+        let day = now + SpanDuration::hours(24);
+        let long = now + SpanDuration::hours(96);
         let hard_max = Duration::from_secs(72 * 3600);
         assert_eq!(original_ceiling(now, None, None, None, hard_max).unwrap(), day);
         assert_eq!(
@@ -171,33 +173,33 @@ mod tests {
         );
         assert_eq!(
             original_ceiling(now, Some(long), Some(long), None, hard_max).unwrap(),
-            now + chrono::Duration::hours(72)
+            now + SpanDuration::hours(72)
         );
         assert_eq!(
             original_ceiling(
                 now,
                 Some(long),
-                Some(now + chrono::Duration::hours(30)),
+                Some(now + SpanDuration::hours(30)),
                 None,
                 hard_max
             )
             .unwrap(),
-            now + chrono::Duration::hours(30)
+            now + SpanDuration::hours(30)
         );
         assert_eq!(
             original_ceiling(
                 now,
                 Some(long),
                 Some(long),
-                Some(now + chrono::Duration::hours(8)),
+                Some(now + SpanDuration::hours(8)),
                 hard_max
             )
             .unwrap(),
-            now + chrono::Duration::hours(8)
+            now + SpanDuration::hours(8)
         );
         assert_eq!(
             original_ceiling(now, Some(long), Some(long), None, Duration::from_secs(6 * 3600)).unwrap(),
-            now + chrono::Duration::hours(6)
+            now + SpanDuration::hours(6)
         );
     }
 }

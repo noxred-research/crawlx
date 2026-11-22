@@ -4,13 +4,13 @@
 //! `--features chaos` (the T2 failpoints of `crawlx_storage::chaos`).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::{Duration, Utc};
 use crawlx_core::counters::{ActionStatus, ReconcileResolution};
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::observation::{ActionReceipt, SettleReport};
 use crawlx_core::repo::{
     ActionJournal, CrawlRun, NewState, OutcomeRecord, Reconciliation, RunRepo, StateRepo,
 };
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::traffic::{Fidelity, TrafficEvent, TrafficOrigin};
 use crawlx_core::{
     ActionId, CrawlRunId, NetworkEpochId, SessionId, StateClusterId, StoreError, TenantId, WorkerId,
@@ -172,7 +172,7 @@ fn epoch(n: u64, d: u64, m: u64) -> ObservationEpoch {
 /// A succeeded outcome that reaches every T2 statement: receipt, after-state, two
 /// traffic events (and the action has a before-state, so a transition is written).
 fn full_outcome(session: SessionId, cluster: StateClusterId) -> OutcomeRecord {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let after: NewState = new_state(session, cluster, false, 2, epoch(1, 1, 5));
     OutcomeRecord {
         status: ActionStatus::Succeeded,
@@ -275,7 +275,7 @@ async fn pg_terminated_connection_between_t1_and_t2_leaves_intended_and_nothing_
     let worker = Pg::connect(&env.url, config(&env.schema, 1)).await.unwrap();
     assert_eq!(
         worker
-            .mark_unknown(Utc::now() + Duration::seconds(300))
+            .mark_unknown(Timestamp::now() + Duration::seconds(300))
             .await
             .unwrap(),
         vec![a.id]
@@ -286,7 +286,7 @@ async fn pg_terminated_connection_between_t1_and_t2_leaves_intended_and_nothing_
             Reconciliation {
                 resolution: ReconcileResolution::NotApplied,
                 evidence: serde_json::json!({ "probe": "absent" }),
-                reconciled_at: Utc::now(),
+                reconciled_at: Timestamp::now(),
             },
         )
         .await
@@ -369,7 +369,7 @@ async fn a_mid_transaction_failure_is_recovered_through_unknown_and_reconcile_on
 
         let flipped = env
             .pg
-            .mark_unknown(Utc::now() + Duration::seconds(300))
+            .mark_unknown(Timestamp::now() + Duration::seconds(300))
             .await
             .unwrap();
         assert!(
@@ -388,7 +388,7 @@ async fn a_mid_transaction_failure_is_recovered_through_unknown_and_reconcile_on
                 Reconciliation {
                     resolution: ReconcileResolution::Applied,
                     evidence: serde_json::json!({ "probe": "present", "point": point }),
-                    reconciled_at: Utc::now(),
+                    reconciled_at: Timestamp::now(),
                 },
             )
             .await

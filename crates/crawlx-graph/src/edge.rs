@@ -264,7 +264,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
     use crate::testutil::{act, cluster, hash, t0};
-    use chrono::Duration;
+    use crawlx_core::time::Duration;
 
     fn edge() -> EnablementEdge {
         EnablementEdge::new(

@@ -2,13 +2,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use async_trait::async_trait;
-use chrono::{Duration, TimeZone, Utc};
 use crawlx_core::repo::{ActionJournal, RunRepo};
 use crawlx_core::safety::{SafetyDecision, SafetyVerdict};
-use crawlx_core::time::{Clock, ManualClock};
+use crawlx_core::time::{Clock, Duration, ManualClock, Timestamp};
 use crawlx_core::{
-    ActionId, ApprovalId, AuthorizationRecordId, CrawlRunId, StateClusterId, StoreError, TenantId, Timestamp,
-    WorkerId,
+    ActionId, ApprovalId, AuthorizationRecordId, CrawlRunId, StateClusterId, StoreError, TenantId, WorkerId,
 };
 use crawlx_storage::approvals::{
     ApprovalBindingV1, ApprovalRepository, ApprovalRequestV1, DurableApprovalV1,
@@ -49,7 +47,7 @@ impl HeadResponseAuthorizer for LiveAuthority {
 impl Fixture {
     async fn new(authority: Option<Arc<LiveAuthority>>) -> Self {
         let clock = Arc::new(ManualClock::new(
-            Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            Timestamp::from_ymd_hms(2026, 1, 1, 0, 0, 0).unwrap(),
         ));
         let store = Arc::new(MemoryStore::with_clock(clock.clone()).with_ttls(
             std::time::Duration::from_secs(600),

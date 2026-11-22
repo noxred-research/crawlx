@@ -3,7 +3,6 @@
 //! Row-level checks use raw SQL, which is why these tests live outside `src/`.
 
 use async_trait::async_trait;
-use chrono::{Duration, Utc};
 use crawlx_api::database::{DatabaseApiStore, DatabaseEraser};
 use crawlx_api::store::{
     ApiStore, ApprovalDecision, ArtifactSource, AuthorizationInsert, DecideOutcome, DeliveryResult,
@@ -16,10 +15,11 @@ use crawlx_core::hash::Digest;
 use crawlx_core::observation::{ActionReceipt, SettleReport};
 use crawlx_core::repo::{ActionJournal, CrawlRun, OutcomeRecord, RunRepo, StateRepo};
 use crawlx_core::safety::{SafetyDecision, SafetyVerdict};
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::traffic::{Fidelity, TrafficEvent, TrafficOrigin, TrustLane};
 use crawlx_core::{
     ActionId, ApprovalId, ArtifactId, ArtifactRef, AuthorizationRecordId, CrawlRunId, NetworkEpochId,
-    SessionId, StateClusterId, StoreError, TenantId, Timestamp, WorkerId,
+    SessionId, StateClusterId, StoreError, TenantId, WorkerId,
 };
 use crawlx_policy::testkit::sample_record;
 use crawlx_policy::{AuthorizationRecord, AuthzFailure, OwnershipProof};
@@ -71,7 +71,7 @@ macro_rules! env {
 }
 
 fn now_ms() -> Timestamp {
-    chrono::DateTime::from_timestamp_millis(Utc::now().timestamp_millis()).unwrap()
+    Timestamp::from_timestamp_millis(Timestamp::now().timestamp_millis()).unwrap()
 }
 
 fn approval_verdict() -> SafetyVerdict {
@@ -414,10 +414,7 @@ async fn approvals_decide_flow() {
     // The decision instant is database time, never the caller-supplied clock: durable
     // expiry and single-use consume must not depend on an application clock.
     let decided = applied.decided_at.expect("decision time recorded");
-    assert!(
-        (decided - now).abs() < chrono::Duration::minutes(1),
-        "{decided} vs {now}"
-    );
+    assert!((decided - now).abs() < Duration::minutes(1), "{decided} vs {now}");
     assert_eq!(applied.reason.as_deref(), Some("looks fine"));
     assert_eq!(env.hold(a1).await, "awaiting_approval");
 

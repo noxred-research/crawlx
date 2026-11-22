@@ -18,6 +18,7 @@ use crawlx_core::epoch::EpochPolicy;
 use crawlx_core::observation::BrowserBuildInfo;
 use crawlx_core::repo::{ActionRecord, CheckpointRecord, CrawlSession, SessionStatus};
 use crawlx_core::state::StateSignature;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{ActionId, CheckpointId, CrawlRunId, PrincipalId, SessionId, StateId, TransitionId};
 use crawlx_elements::IdentityResolver;
 use crawlx_observe::spec;
@@ -1057,7 +1058,7 @@ async fn session_body(
             // Restored authentication spends no new login envelope.
             crate::role_budget::RoleBudget::load(rc, session)
                 .await?
-                .reserve_login(rc, chrono::Duration::zero())
+                .reserve_login(rc, SpanDuration::zero())
                 .await?;
             let role_budget = crate::role_budget::RoleBudget::load(rc, session).await?;
             let deadline = role_budget.deadline().min(rc.budget.lock().deadline());
@@ -1129,6 +1130,7 @@ async fn session_body(
 #[cfg(test)]
 mod deadline_consumer_tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crawlx_core::time::Duration as SpanDuration;
 
     use super::*;
     use crate::run::login_lifecycle_tests::fixture_with_bounds;
@@ -1159,9 +1161,9 @@ mod deadline_consumer_tests {
     async fn completed_step_forwards_execution_expiry_without_fabricating_durable_progress() {
         for failure in 0..3 {
             let f = fixture_with_bounds(
-                chrono::Duration::minutes(5),
-                Some(chrono::Duration::milliseconds(100)),
-                (failure == 1).then_some(chrono::Duration::milliseconds(50)),
+                SpanDuration::minutes(5),
+                Some(SpanDuration::milliseconds(100)),
+                (failure == 1).then_some(SpanDuration::milliseconds(50)),
             )
             .await;
             let rc = Arc::new(f.rc);
@@ -1251,8 +1253,8 @@ mod deadline_consumer_tests {
     async fn restore_progress_forwards_execution_expiry_only_after_required_checkpoint_evidence() {
         for failure in 0..3 {
             let f = fixture_with_bounds(
-                chrono::Duration::minutes(5),
-                Some(chrono::Duration::milliseconds(100)),
+                SpanDuration::minutes(5),
+                Some(SpanDuration::milliseconds(100)),
                 None,
             )
             .await;

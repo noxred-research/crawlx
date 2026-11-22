@@ -170,7 +170,7 @@ fn hotp<M: Mac + KeyInit>(key: &[u8], counter: u64, digits: u32) -> Result<u32, 
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
-    use crawlx_core::time::ManualClock;
+    use crawlx_core::time::{ManualClock, Timestamp};
 
     /// RFC 6238 Appendix B secrets: ASCII `1234567890` repeated to 20, 32 and 64 bytes.
     fn secret_b32(len: usize) -> String {
@@ -179,7 +179,7 @@ mod tests {
     }
 
     fn at(unix_seconds: i64) -> crawlx_core::Timestamp {
-        chrono::DateTime::from_timestamp(unix_seconds, 0).unwrap()
+        Timestamp::from_timestamp(unix_seconds, 0).unwrap()
     }
 
     fn code_at(reference: &str, unix_seconds: i64) -> String {

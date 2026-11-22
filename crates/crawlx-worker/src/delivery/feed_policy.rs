@@ -6,6 +6,7 @@ use crawlx_core::dataset::{
     AcceptedItemV1, DatasetContentV1, DeliveryRangeV1, EmptyFeedPolicyV1, FeedBatchingV1, FeedCompressionV1,
     FeedDeclarationV1, FeedPredicateV1,
 };
+use crawlx_core::time::Timestamp;
 use crawlx_extract::item_export::{write_item_with, ItemExportOptions};
 use crawlx_extract::serialize::ItemFormat;
 use serde::Serialize;
@@ -779,7 +780,7 @@ async fn terminal_batches(
         .stores
         .iter()
         .any(|store| store.name == feed.source && store.schema_version == "document_v1");
-    let deadline = article_deadline(run, None).unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC);
+    let deadline = article_deadline(run, None).unwrap_or(Timestamp::MAX_UTC);
     let mut pending = accumulator(cpu, feed, deadline)?;
     let mut after = 0;
     loop {

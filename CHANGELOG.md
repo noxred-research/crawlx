@@ -23,14 +23,20 @@ project is pre-1.0; minor versions may contain breaking changes.
   type) and a `browser.observation_partial` run event. Embedders implementing `NavigationGuard` see
   `check_subresource` gain a `ResourceKind` argument and a new `vets_frame_sessions` method. To get the
   old behaviour, leave the option unset or set it to `document`.
-- Technology catalog: six `security` entries for bot-defence and device-intelligence products, written from
+- Technology catalog: five `security` entries for bot-defence and device-intelligence products, written from
   each vendor's own public documentation (script host, cookie name or global; the source URL of every entry
   is in the `crates/crawlx-extract/src/technologies.rs` module docs): DataDome, HUMAN Security, Akamai Bot
-  Manager (cookie `bm_sv`), Cloudflare Bot Management (cookie `__cf_bm`), Fingerprint (agent CDN
-  `fpjscdn.net`) and Noxtica (collector host `collect.noxtica.com`; the project's owners disclose their
-  relation to Noxtica in the README). Script patterns are anchored to the documented host, and the
+  Manager (cookie `bm_sv`), Cloudflare Bot Management (cookie `__cf_bm`), Fingerprint (`fpjscdn.net`).
+  <!-- detection-data: the vendor names above are catalog data -->
+  Script patterns are anchored to the documented host, and the
   `data-site-key` attribute is not used because other widgets share it. A detection shows that the response
   carried the marker, not that the product ran or is effective.
+- Static plane: the same-origin URLs named by the string values of a fetched `application/json` response
+  (root-relative paths and absolute URLs on the response's origin) are admitted as links with request source
+  `json_endpoint`, so a single-page application's route table in a JSON endpoint no longer needs a browser
+  (crawlx#74). They pass scope, robots, egress and budgets like any link; reading is bounded to 1 MiB,
+  16 nesting levels and 500 URLs per document. New key `scope.jsonEndpoints` (default `true`; a check on
+  the CrawlerGym found no false positive); `--compat-defaults` sets it to `false`.
 - Tests: an RFC 9309 conformance corpus (#77). `crates/crawlx-policy/tests/robots_rfc9309.rs` is a pure
   table of parser, matcher and `robots.txt` fetch-outcome vectors (RFC section 2.2 patterns, 2.3.1 fetch
   results, 2.4 caching, 5.1 sample file). `crawlx-bench` gains a deterministic loopback `robots-edge` fixture
@@ -43,6 +49,20 @@ project is pre-1.0; minor versions may contain breaking changes.
   detection as `TechInput::js_globals` (`ExtractOptions::js_globals`), so catalog `js_globals` patterns now
   match (crawlx#75). The page record states the source: `browser.jsGlobals.source = "browser_plane"`.
   This replaces the matcher-only note of crawlx#68 in `docs/reference.md` and the `technologies` docs.
+- Static plane: a page the parser refuses for resources (a helper limit, or the shared parse-memory budget) no
+  longer costs the crawl its subtree (issue #71, third point). `crawlx_extract::link_scan` tokenizes the body
+  with `html5ever`'s tokenizer alone (no tree), in 32 KiB decoded chunks, and recovers every `a[href]` and
+  `area[href]` link (resolved against `<base href>`, `http(s)` only, fragments removed, duplicates merged, with
+  anchor text and `rel`), the title, description, canonical URL, language and `robots` meta. The links are
+  discovered through the same scope, robots and dedupe gates as the links of a parsed page. The page itself
+  still fails as `parser_limit_exceeded` (no content was extracted); its `page.failed` event gains
+  `metadataOnly` with the recovered metadata, the link count, `linksFollowed` and `linksTruncated`, or
+  `{"status":"unavailable"}` when the shared byte budget refuses the scan's reservation. The scan keeps at
+  most 100000 links and 16 MiB of link text and reserves `64 x input + 33 MiB` from the shared budget first.
+- Docs and tests: a static crawl requests a page's `<base href>` URL once, as a structural endpoint like every
+  other URL-bearing attribute (the unexplained lone `GET /p/` 404 of the benchmark fixture came from
+  `<base href="/p/">`). The behaviour is unchanged, now documented in `docs/reference.md` and pinned by
+  `crates/crawlx-cli/tests/base_href_request.rs`.
 
 ### Fixed
 
@@ -55,9 +75,8 @@ project is pre-1.0; minor versions may contain breaking changes.
   2 GiB (at most two concurrent helpers on the default 4 GiB parse budget) and every helper run adds
   64 bytes of address space per input byte and one CPU second and one wall-clock second per MiB of input.
   The `rlimit` isolation is unchanged. A page that still exceeds a helper limit fails as
-  `parser_limit_exceeded` with `inputBytes` in the failure event, the same way every time. There is no
-  metadata-only link fallback: the extractor builds its tree with `scraper` and has no streaming link
-  tokenizer to run in the parent safely.
+  `parser_limit_exceeded` with `inputBytes` in the failure event, the same way every time. The page's links and
+  metadata are still recovered (see the metadata-only link scan under Added).
 - Browser plane (`dynamic` and `hybrid`): one failed page no longer ends the run with `fatal_error`
   (issue #70). An egress denial on a navigation or redirect target, a network error page
   (`chrome-error://`), a navigation timeout and an extraction failure of a page's output now fail only that
@@ -86,10 +105,21 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ### Changed
 
-- `deny.toml` records a reviewed exception for RUSTSEC-2026-0543 (`chrono`) and RUSTSEC-2026-0555
-  (`chrono-tz`), published after 0.2.0: both only mark the crates unmaintained, report no vulnerability and
-  have no upgrade, so `cargo deny check advisories` failed on every build. The exception comment names the
-  condition for removing it.
+- `chrono` and `chrono-tz` are no longer dependencies of any CrawlX crate (#69; RUSTSEC-2026-0543 and
+  RUSTSEC-2026-0555 mark them unmaintained). Timestamps, durations and calendar dates go through one
+  facade, `crawlx_core::time` (`Timestamp`, `Duration`, `NaiveDate`, `FixedDateTime`, built on `time`, which
+  sqlx 0.9 supports natively for PostgreSQL `TIMESTAMPTZ` and MariaDB `TIMESTAMP`/`DATETIME(6)`); IANA zones
+  (monitor schedules, `extract.content.dateTimezone`) and the five-field cron evaluation run on `jiff` with
+  its bundled zone database, and `croner` 5 with its `jiff` backend. Wire formats are unchanged: JSON and
+  RFC 3339 text, `Display`, the SQLite microsecond columns and the MariaDB `DATETIME(6)` binds are
+  byte-identical, pinned by `crates/crawlx-core/tests/time_golden.rs` (tables generated from chrono before it
+  was removed), and the RFC 3339, RFC 2822 and strptime-style readers accept and reject the same texts as
+  before (checked against chrono on several hundred thousand mutated inputs). Two behaviour notes: a
+  leap-second `:60` reads as the first instant of the next minute (chrono kept it as a second of
+  `1_000_000_000+` nanoseconds), and zone names must be spelled as the IANA database spells them (as
+  with `chrono-tz`). `deny.toml` drops both exceptions: chrono stays in the lockfile only
+  through `rskafka` (the Kafka record timestamp type), and cargo-deny checks unmaintained advisories for
+  workspace dependencies only (`unmaintained = "workspace"`).
 - Politeness: back-off after `429`/`503` no longer turns one throttling answer into minutes of slow
   crawling (#76). With the new default profile, `politeness.backoffProfile = "balanced"`, the first
   throttling answer after a success sets the origin's spacing to `max(Retry-After, 2 × floor)` (floor =

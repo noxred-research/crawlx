@@ -4,19 +4,19 @@
 use crate::routes::pages::{content, default_include, page_doc, read_content};
 use crate::state::AppState;
 use base64::Engine as _;
-use chrono::Duration as ChronoDuration;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::repo::{CrawlRun, PageRecord};
 pub use crawlx_core::scrape::credits_for;
 use crawlx_core::scrape::page_credits;
 use crawlx_core::scrape::{ActionResults, BlobRef, CacheState, JobKind, ScrapeDocument, ScrapeOptions};
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{ArtifactRef, Timestamp};
 use crawlx_storage::PRESIGN_MAX_TTL;
 use serde_json::{json, Map, Value};
 
 /// A run that started no later than this after it was created did not queue: the worker's
 /// lease loop polls for queued runs every 250 ms, so a shorter wait is pick-up latency.
-const QUEUE_PICKUP_GRACE: ChronoDuration = ChronoDuration::seconds(1);
+const QUEUE_PICKUP_GRACE: SpanDuration = SpanDuration::seconds(1);
 
 /// The compat job id of `page`: the run id of a scrape run, `{run}.{frontier}` for the pages
 /// of crawl and batch runs.
@@ -291,7 +291,7 @@ pub(crate) async fn render(
 /// How long a run waited in the admission queue: from its creation (`queued_at`) to the moment a
 /// worker started it. `None` while it has not started and for a wait of [`QUEUE_PICKUP_GRACE`]
 /// or less, which is the worker's polling latency, not queueing.
-fn queue_wait(created: Timestamp, started: Option<Timestamp>) -> Option<ChronoDuration> {
+fn queue_wait(created: Timestamp, started: Option<Timestamp>) -> Option<SpanDuration> {
     started
         .map(|started| started - created)
         .filter(|wait| *wait > QUEUE_PICKUP_GRACE)
@@ -322,6 +322,7 @@ mod tests {
     use super::*;
     use crawlx_core::hash::Digest;
     use crawlx_core::scrape::{FormatSpec, ParserSpec};
+    use crawlx_core::time::FixedDateTime;
 
     fn doc(status: u16) -> ScrapeDocument {
         ScrapeDocument::new(
@@ -334,17 +335,17 @@ mod tests {
 
     #[test]
     fn only_a_wait_beyond_the_pick_up_latency_counts_as_queueing() {
-        let created = chrono::DateTime::parse_from_rfc3339("2026-10-28T10:00:00Z")
+        let created = FixedDateTime::parse_rfc3339("2026-10-28T10:00:00Z")
             .unwrap()
-            .with_timezone(&chrono::Utc);
-        let after = |ms: i64| Some(created + ChronoDuration::milliseconds(ms));
+            .to_utc();
+        let after = |ms: i64| Some(created + SpanDuration::milliseconds(ms));
         assert_eq!(queue_wait(created, None), None, "not started yet");
         assert_eq!(queue_wait(created, after(0)), None);
         assert_eq!(queue_wait(created, after(250)), None, "one worker poll");
         assert_eq!(queue_wait(created, after(1_000)), None, "the grace itself");
         assert_eq!(
             queue_wait(created, after(1_001)),
-            Some(ChronoDuration::milliseconds(1_001))
+            Some(SpanDuration::milliseconds(1_001))
         );
         assert_eq!(
             queue_wait(created, after(90_000)).map(|w| w.num_milliseconds()),

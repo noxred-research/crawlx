@@ -12,13 +12,13 @@ use axum::http::{header, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
-use chrono::SecondsFormat;
 use crawlx_core::config::{CrawlMode, HostScope, SitemapMode};
 use crawlx_core::counters::{PlaneCounters, RunStatus};
 use crawlx_core::repo::{CrawlRun, FrontierStatus, PageRecord, RunRepo};
 use crawlx_core::scrape::{
     CacheState, ChangeMode, ChangeStatus, FormatSpec, JobKind, ScrapeDocument, ScrapeJob, ScrapeOptions,
 };
+use crawlx_core::time::{Duration as SpanDuration, SecondsFormat};
 use crawlx_core::{CanonicalUrl, Clock, CrawlRunId, CreateCrawl, SystemClock, TenantId};
 use crawlx_fetch::StaticResolver;
 use crawlx_policy::testkit::sample_record;
@@ -142,8 +142,8 @@ async fn rig() -> Option<Rig> {
     let auth = AuthorizationRecord {
         url_prefixes: vec!["http://127.0.0.1".to_owned()],
         authorized_networks: vec!["127.0.0.0/8".parse().unwrap()],
-        valid_from: now - chrono::Duration::days(1),
-        valid_to: now + chrono::Duration::days(1),
+        valid_from: now - SpanDuration::days(1),
+        valid_to: now + SpanDuration::days(1),
         verified_at: Some(now),
         ..sample_record(stores.tenant, now, &[])
     };

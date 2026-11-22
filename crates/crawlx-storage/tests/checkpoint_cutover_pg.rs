@@ -1,9 +1,8 @@
 //! Real PostgreSQL checkpoint encryption cutover; skips without CRAWLX_TEST_DATABASE_URL.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::Duration;
 use crawlx_core::repo::{ArtifactStore, CheckpointRecord, CheckpointRepo, Sensitivity};
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::{CheckpointId, ObservationEpoch, StoreError, TenantId};
 use crawlx_storage::artifacts::{ArtifactReaper, FsArtifactStore, FsBlobs, ObjectArtifactStore};
 use crawlx_storage::checkpoint_crypto::{CheckpointContext, CheckpointKeys, MemoryCheckpointKeys};
@@ -214,7 +213,7 @@ async fn migration_0037_revokes_only_legacy_checkpoint_uses_and_sweeps_their_obj
             .num_milliseconds()
             .saturating_add(2),
     );
-    let deadlines: (chrono::DateTime<chrono::Utc>, bool) =
+    let deadlines: (Timestamp, bool) =
         sqlx::query_as("SELECT expires_at, deleted_at IS NULL FROM artifacts WHERE artifact_id=$1")
             .bind(legacy.id.0)
             .fetch_one(pg.pool())

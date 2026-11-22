@@ -6,7 +6,7 @@
 //! both new engines share one implementation of the same rule. The function is pure: the
 //! caller supplies `now` from the database clock.
 
-use chrono::{DateTime, Duration, Utc};
+use crawlx_core::time::{Duration, Timestamp};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -27,7 +27,7 @@ pub(crate) struct WorkerFacts {
     /// `workers.draining`.
     pub draining: bool,
     /// `workers.last_heartbeat_at`.
-    pub last_heartbeat_at: DateTime<Utc>,
+    pub last_heartbeat_at: Timestamp,
 }
 
 /// The claim rule: the run needs nothing from the worker, or the worker is live, accepts
@@ -36,7 +36,7 @@ pub(crate) struct WorkerFacts {
 pub(crate) fn claim_eligible(
     worker: Option<&WorkerFacts>,
     run: Uuid,
-    now: DateTime<Utc>,
+    now: Timestamp,
     required_backends: &[String],
     data_required: bool,
     requirements: &Value,
@@ -46,13 +46,13 @@ pub(crate) fn claim_eligible(
     backends_ok && data_eligible(worker, now, requirements)
 }
 
-fn alive(worker: &WorkerFacts, now: DateTime<Utc>) -> bool {
+fn alive(worker: &WorkerFacts, now: Timestamp) -> bool {
     !worker.draining
         && worker.last_heartbeat_at <= now
         && worker.last_heartbeat_at >= now - Duration::seconds(HEARTBEAT_WINDOW_SECS)
 }
 
-fn backends_ready(worker: &WorkerFacts, run: Uuid, now: DateTime<Utc>, required: &[String]) -> bool {
+fn backends_ready(worker: &WorkerFacts, run: Uuid, now: Timestamp, required: &[String]) -> bool {
     if !alive(worker, now) {
         return false;
     }
@@ -115,7 +115,7 @@ fn compressed_supported(worker: &WorkerFacts, requirements: &Value) -> bool {
     required.iter().all(|id| id.is_string() && offered.contains(id))
 }
 
-fn data_eligible(worker: Option<&WorkerFacts>, now: DateTime<Utc>, requirements: &Value) -> bool {
+fn data_eligible(worker: Option<&WorkerFacts>, now: Timestamp, requirements: &Value) -> bool {
     if requirements_empty(requirements) {
         return true;
     }
@@ -170,7 +170,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn worker(capacity: Value, age_secs: i64, draining: bool, now: DateTime<Utc>) -> WorkerFacts {
+    fn worker(capacity: Value, age_secs: i64, draining: bool, now: Timestamp) -> WorkerFacts {
         WorkerFacts {
             capacity,
             draining,
@@ -180,7 +180,7 @@ mod tests {
 
     #[test]
     fn a_run_without_needs_accepts_any_worker_even_none() {
-        let now = Utc::now();
+        let now = Timestamp::now();
         assert!(claim_eligible(None, Uuid::nil(), now, &[], false, &json!({})));
         assert!(claim_eligible(None, Uuid::nil(), now, &[], false, &Value::Null));
         assert!(claim_eligible(
@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn required_backends_need_a_live_queue_worker_advertising_them() {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let run = Uuid::now_v7();
         let needs = vec!["native_http".to_owned()];
         let cap =
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn data_requirements_match_destinations_and_bundles() {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let run = Uuid::now_v7();
         let digest = "ab".repeat(32);
         let cap = json!({"acceptsQueued": true, "data": {"destinations": {"sink-a": true, "sink-b": false}, "languageBundles": [digest]}});
@@ -329,7 +329,7 @@ mod tests {
 
     #[test]
     fn compressed_destinations_need_published_compressed_support() {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let run = Uuid::now_v7();
         let cap = json!({"acceptsQueued": true, "data": {
             "destinations": {"loc": false, "queue": false},

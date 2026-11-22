@@ -4,7 +4,6 @@
 //! and filesystem artifact stores.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::Utc;
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::hash::Digest;
 use crawlx_core::observation::{
@@ -12,7 +11,7 @@ use crawlx_core::observation::{
 };
 use crawlx_core::repo::{ArtifactStore, NewState, RunRepo, Sensitivity, StateRepo};
 use crawlx_core::state::{MaskReason, MaskSet, StateSignature};
-use crawlx_core::time::ManualClock;
+use crawlx_core::time::{ManualClock, Timestamp};
 use crawlx_core::url::{CanonicalUrl, RouteTemplate};
 use crawlx_core::{
     ArtifactRef, AxNodeId, BackendNodeId, FrameId, SessionId, StateClusterId, StateId, TabId, TenantId,
@@ -205,7 +204,7 @@ async fn persist(
             (AX_ARTIFACT_KIND.to_owned(), ax.clone()),
             (MASKS_ARTIFACT_KIND.to_owned(), mask_ref.clone()),
         ],
-        observed_at: Utc::now(),
+        observed_at: Timestamp::now(),
     };
     states.put_state(&state).await.unwrap();
     Persisted {
@@ -304,7 +303,7 @@ async fn assert_reproducible(
 
 #[tokio::test]
 async fn signature_recomputed_from_stored_artifact_and_masks_is_bit_identical() {
-    let clock = ManualClock::new(Utc::now());
+    let clock = ManualClock::new(Timestamp::now());
     let store = Arc::new(MemoryStore::with_clock(Arc::new(clock.clone())));
     let run = crawl_run(TenantId::new(), create_crawl("https://shop.test/", &[], 1));
     store.create(&run, None).await.unwrap();

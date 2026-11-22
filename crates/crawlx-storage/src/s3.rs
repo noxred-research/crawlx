@@ -59,7 +59,6 @@ use aws_sdk_s3::types::{ChecksumAlgorithm, ServerSideEncryption};
 use aws_sdk_s3::Client;
 use aws_smithy_http_client::tls;
 use bytes::Bytes;
-use chrono::TimeZone;
 use crawlx_core::{StoreError, Timestamp};
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -1204,7 +1203,7 @@ fn sdk_error<E: std::error::Error + 'static, R: std::fmt::Debug>(
 
 fn to_timestamp(dt: Option<&aws_sdk_s3::primitives::DateTime>) -> Option<Timestamp> {
     let dt = dt?;
-    chrono::Utc.timestamp_opt(dt.secs(), dt.subsec_nanos()).single()
+    Timestamp::from_timestamp(dt.secs(), dt.subsec_nanos())
 }
 
 #[async_trait]

@@ -17,6 +17,7 @@ use axum::response::Response;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use crawlx_core::hash::Digest;
+use crawlx_core::time::SecondsFormat;
 use crawlx_core::Timestamp;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -26,7 +27,7 @@ use uuid::Uuid;
 /// RFC 3339 UTC with milliseconds.
 #[must_use]
 pub fn ts(t: Timestamp) -> String {
-    t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    t.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 /// Optional timestamp as JSON.

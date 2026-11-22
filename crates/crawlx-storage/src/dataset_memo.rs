@@ -2,6 +2,7 @@
 use super::*;
 use crawlx_core::dataset::memo::*;
 use crawlx_core::hash::Digest;
+use crawlx_core::time::Duration;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -68,9 +69,9 @@ pub(crate) fn capacity(articles: &[Digest], maximum: u32) -> Result<usize, Store
 }
 pub(crate) fn horizon(run: &CrawlRun, now: Timestamp) -> Result<Timestamp, StoreError> {
     let duration = if run.config.retention.mode == RetentionMode::Zdr {
-        chrono::Duration::hours(1)
+        Duration::hours(1)
     } else {
-        chrono::Duration::days(i64::from(run.config.retention.days))
+        Duration::days(i64::from(run.config.retention.days))
     };
     let deadline = run.created_at.checked_add_signed(duration).ok_or_else(expired)?;
     if deadline <= now {
@@ -122,9 +123,9 @@ async fn scope_tx<B: Sql>(
     let zdr = row.text("retention_mode")? == "zdr";
     let created = row.ts("created_at")?;
     let duration = if zdr {
-        chrono::Duration::hours(1)
+        Duration::hours(1)
     } else {
-        chrono::Duration::days(i64::from(row.i32("retention_days")?))
+        Duration::days(i64::from(row.i32("retention_days")?))
     };
     let deadline = created.checked_add_signed(duration).ok_or_else(expired)?;
     let deadline = row
