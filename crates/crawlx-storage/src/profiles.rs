@@ -1365,6 +1365,7 @@ impl<B: Sql> Store<B> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crawlx_core::time::Duration;
     use super::*;
     fn scope() -> ProfileScopeV1 {
         ProfileScopeV1 {
@@ -1380,12 +1381,12 @@ mod tests {
     fn encrypted_profile_rejects_wrong_principal_build_tampering_and_expiry() {
         let cipher = ProfileCipher::new(&[7; 32]).unwrap();
         let scope = scope();
-        let now = chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap();
+        let now = Timestamp::from_timestamp(2_000_000_000, 0).unwrap();
         let bytes = cipher
             .seal(
                 &scope,
                 1,
-                now + chrono::Duration::seconds(10),
+                now + Duration::seconds(10),
                 ProfileFiles::new(
                     BTreeMap::from([("Default/Cookies".into(), b"secret-cookie-canary".to_vec())]),
                     false,
@@ -1407,7 +1408,7 @@ mod tests {
         wrong.backend_build = Digest::of("build", b"2");
         assert!(cipher.open(&bytes, &wrong, now, false).is_err());
         assert!(cipher
-            .open(&bytes, &scope, now + chrono::Duration::seconds(10), false)
+            .open(&bytes, &scope, now + Duration::seconds(10), false)
             .is_err());
         let mut tampered = bytes;
         tampered[20] ^= 1;
@@ -1439,7 +1440,7 @@ mod tests {
             .open(
                 b"not-an-encrypted-tar-profile-bundle",
                 &scope(),
-                chrono::Utc::now(),
+                Timestamp::now(),
                 false
             )
             .is_err());

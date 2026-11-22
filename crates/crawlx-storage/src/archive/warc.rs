@@ -1,7 +1,7 @@
 //! WARC 1.1 exact framing and record-at-a-time gzip. Based only on the IIPC normative format.
 
+use crawlx_core::time::{FixedDateTime, SecondsFormat, Timestamp};
 use super::{ArchiveError, Limits};
-use chrono::{DateTime, SecondsFormat, Utc};
 use flate2::{bufread::GzDecoder, Compression, GzBuilder};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -18,7 +18,7 @@ pub struct RecordSummary {
     /// Whether the type is defined by WARC 1.1.
     pub known_type: bool,
     /// Truthful WARC-Date.
-    pub date: DateTime<Utc>,
+    pub date: Timestamp,
     /// Target URI when present.
     pub target: Option<String>,
     /// Stored payload MIME type.
@@ -53,7 +53,7 @@ pub struct RecordSummary {
     /// Optional revisit target constraint from the original record.
     pub refers_to_target: Option<String>,
     /// Optional revisit capture-date constraint from the original record.
-    pub refers_to_date: Option<DateTime<Utc>>,
+    pub refers_to_date: Option<Timestamp>,
     /// Captured partial-message declaration; materialization never fills missing bytes.
     pub truncated: bool,
     /// Revisit profile URI; only the two WARC 1.1 baseline-reuse profiles are interpreted.
@@ -209,9 +209,9 @@ fn summarize(
     if !valid_id(id) {
         return Err(ArchiveError::Invalid("invalid WARC record identifier"));
     }
-    let date = DateTime::parse_from_rfc3339(required(fields, "warc-date")?)
+    let date = FixedDateTime::parse_rfc3339(required(fields, "warc-date")?)
         .map_err(|_| ArchiveError::Invalid("invalid WARC date"))?
-        .with_timezone(&Utc);
+        .to_utc();
     let kind = required(fields, "warc-type")?;
     if !valid_name(kind) {
         return Err(ArchiveError::Invalid("invalid WARC type"));
@@ -325,8 +325,8 @@ fn summarize(
     let refers_to_date = fields
         .get("warc-refers-to-date")
         .map(|date| {
-            DateTime::parse_from_rfc3339(date)
-                .map(|date| date.with_timezone(&Utc))
+            FixedDateTime::parse_rfc3339(date)
+                .map(|date| date.to_utc())
                 .map_err(|_| ArchiveError::Invalid("invalid revisit date"))
         })
         .transpose()?;
@@ -990,6 +990,6 @@ pub fn read_member<R: Read + Seek>(
 
 /// RFC3339 UTC date suitable for WARC-Date.
 #[must_use]
-pub fn date(value: DateTime<Utc>) -> String {
+pub fn date(value: Timestamp) -> String {
     value.to_rfc3339_opts(SecondsFormat::AutoSi, true)
 }

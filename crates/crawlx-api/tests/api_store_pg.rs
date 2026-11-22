@@ -3,7 +3,7 @@
 //! Row-level checks use raw SQL, which is why these tests live outside `src/`.
 
 use async_trait::async_trait;
-use chrono::{Duration, Utc};
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_api::database::{DatabaseApiStore, DatabaseEraser};
 use crawlx_api::store::{
     ApiStore, ApprovalDecision, ArtifactSource, AuthorizationInsert, DecideOutcome, DeliveryResult,
@@ -71,7 +71,7 @@ macro_rules! env {
 }
 
 fn now_ms() -> Timestamp {
-    chrono::DateTime::from_timestamp_millis(Utc::now().timestamp_millis()).unwrap()
+    Timestamp::from_timestamp_millis(Timestamp::now().timestamp_millis()).unwrap()
 }
 
 fn approval_verdict() -> SafetyVerdict {
@@ -415,7 +415,7 @@ async fn approvals_decide_flow() {
     // expiry and single-use consume must not depend on an application clock.
     let decided = applied.decided_at.expect("decision time recorded");
     assert!(
-        (decided - now).abs() < chrono::Duration::minutes(1),
+        (decided - now).abs() < Duration::minutes(1),
         "{decided} vs {now}"
     );
     assert_eq!(applied.reason.as_deref(), Some("looks fine"));

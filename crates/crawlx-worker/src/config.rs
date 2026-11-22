@@ -1258,6 +1258,7 @@ impl WorkerConfig {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crawlx_core::time::Timestamp;
     use super::*;
     use crawlx_fetch::proxyx::PoolTier;
 
@@ -1420,7 +1421,7 @@ mod tests {
         let binding = SessionBindingV1::new(
             identity,
             7,
-            chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap(),
+            Timestamp::from_timestamp(2_000_000_000, 0).unwrap(),
         );
         let enhanced = egress.enhanced_route().unwrap();
         assert!(enhanced.bind(&binding, None).is_err());

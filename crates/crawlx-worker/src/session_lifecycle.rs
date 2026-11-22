@@ -414,14 +414,14 @@ async fn run_local_http_plane_inner(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crawlx_core::time::{Duration, ManualClock, Timestamp};
     use super::*;
     use crawlx_core::repo::CrawlRun;
-    use crawlx_core::time::ManualClock;
     use crawlx_core::{Clock, CreateCrawl, PrincipalId};
 
     async fn fixture() -> (tempfile::TempDir, Arc<RunContext>, SessionLease, SessionBindingV1) {
         let dir = tempfile::tempdir().unwrap();
-        let now = chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap();
+        let now = Timestamp::from_timestamp(2_000_000_000, 0).unwrap();
         let clock: Arc<dyn Clock> = Arc::new(ManualClock::new(now));
         let memory = Arc::new(crawlx_storage::MemoryStore::with_clock(Arc::clone(&clock)));
         let stores = crate::Stores::over_memory(memory, dir.path()).await.unwrap();
@@ -485,7 +485,7 @@ mod tests {
             None,
         );
         let mut retired =
-            SessionBindingV1::new(identity, lease.fencing_token, now + chrono::Duration::minutes(10));
+            SessionBindingV1::new(identity, lease.fencing_token, now + Duration::minutes(10));
         let limits = crawlx_core::session_binding::SessionLimits::default();
         retired.usage = limits.max_usage.saturating_sub(1);
         retired.record_use(true, now, limits).unwrap();

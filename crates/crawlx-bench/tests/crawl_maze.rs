@@ -4,6 +4,7 @@
 //! (with Chromium) the hybrid run adds browser-plane targets.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crawlx_core::time::Timestamp;
 use crawlx_bench::crawl_maze::{score_ledger, MazeScore};
 use crawlx_bench::gym::fixtures::crawl_maze::{self, MazePage, PAGES, TEST_PREFIX};
 use crawlx_bench::gym::manifest::{FixtureManifest, MazePlane, MazeTarget};
@@ -565,7 +566,7 @@ async fn static_plane_reaches_the_crawl_maze_floor() {
 
     let mut baseline = load_baseline();
     if record_baselines() {
-        baseline.recorded = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        baseline.recorded = Timestamp::now().date_naive().to_string();
         baseline.request["static"] = serde_json::json!({
             "mode": "static",
             "seedUrl": "/g32/",

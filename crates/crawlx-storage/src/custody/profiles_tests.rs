@@ -1,6 +1,7 @@
 //! Supported storage-state and real database/registry custody regressions.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crawlx_core::time::Duration as SpanDuration;
 use super::*;
 use crate::artifact_key_crypto::{FileArtifactKeys, MemoryArtifactKeys};
 use crate::codec::get;
@@ -423,7 +424,7 @@ async fn postgres_profile_policy_loss_corruption_and_legacy_directory_paths_fail
             &f.custody,
             &f.scope,
             0,
-            f.expiry + chrono::Duration::hours(2),
+            f.expiry + SpanDuration::hours(2),
             true,
             &bytes
         )
@@ -435,7 +436,7 @@ async fn postgres_profile_policy_loss_corruption_and_legacy_directory_paths_fail
             &f.custody,
             &f.scope,
             0,
-            f.expiry - chrono::Duration::hours(2),
+            f.expiry - SpanDuration::hours(2),
             true,
             &bytes
         )

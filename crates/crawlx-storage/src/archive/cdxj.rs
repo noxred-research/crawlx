@@ -1,10 +1,28 @@
 //! CDXJ 0.1.0 searchable URL keys, bounded external sorting and actual member-range validation.
 
 use super::{staging::StagedFile, validate_path, warc::RecordSummary, ArchiveError, Limits};
+use crawlx_core::time::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
 use std::io::{BufRead, BufReader, BufWriter, Write};
+
+/// The CDXJ sort stamp of a capture: `YYYYMMDDhhmmss`, plus three digits of milliseconds.
+fn cdx_stamp(date: Timestamp, millis: bool) -> String {
+    let mut stamp = format!(
+        "{:04}{:02}{:02}{:02}{:02}{:02}",
+        date.year(),
+        date.month(),
+        date.day(),
+        date.hour(),
+        date.minute(),
+        date.second()
+    );
+    if millis {
+        stamp.push_str(&format!("{:03}", date.timestamp_subsec_millis()));
+    }
+    stamp
+}
 
 /// The required CDXJ JSON object. Resource records use status `-`, never synthetic HTTP 200.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -90,7 +108,7 @@ impl Entry {
         Ok(format!(
             "{} {} {}\n",
             searchable_url(&self.url)?,
-            record.date.format("%Y%m%d%H%M%S%3f"),
+            cdx_stamp(record.date, true),
             serde_json::to_string(self)?
         ))
     }
@@ -273,9 +291,9 @@ pub fn validate<R: BufRead>(
             .get(&(entry.filename.clone(), entry.offset))
             .ok_or(ArchiveError::Invalid("CDXJ member unavailable"))?;
         let actual_timestamp = if timestamp.len() == 14 {
-            member.date.format("%Y%m%d%H%M%S").to_string()
+            cdx_stamp(member.date, false)
         } else {
-            member.date.format("%Y%m%d%H%M%S%3f").to_string()
+            cdx_stamp(member.date, true)
         };
         let status_matches = match member.status {
             Some(status) => {

@@ -9,6 +9,7 @@
 //! `factsAfter`/`factNext` cursor. The two cursor spaces never merge, and a field leaves
 //! `notRecorded` only when a fact returned in that very page proves it.
 
+use crawlx_core::time::{Duration, FixedDateTime};
 use crate::auth::Principal;
 use crate::errors::{ApiResult, Detail, HttpError};
 use crate::resources::metadata_expires_at;
@@ -705,7 +706,7 @@ fn number<T: std::str::FromStr>(params: &Params, key: &str) -> ApiResult<Option<
 fn timestamp(params: &Params, key: &str) -> ApiResult<Option<Timestamp>> {
     params
         .get(key)
-        .map(|text| chrono::DateTime::parse_from_rfc3339(text).map(|time| time.to_utc()))
+        .map(|text| FixedDateTime::parse_rfc3339(text).map(|time| time.to_utc()))
         .transpose()
         .map_err(|_| invalid("report time filter must be an RFC 3339 timestamp"))
 }
@@ -935,7 +936,7 @@ impl Query {
     /// nanosecond. Facts never predate the epoch, so earlier bounds clamp or select nothing.
     /// Returns `None` when no fact can match.
     fn companion_query(&self, class: ReportKindV1) -> ApiResult<Option<ReportQueryV1>> {
-        let epoch: Timestamp = chrono::DateTime::UNIX_EPOCH;
+        let epoch: Timestamp = Timestamp::UNIX_EPOCH;
         let mut core = ReportQueryV1::default();
         core.after = self.facts_after;
         core.limit = self.limit;
@@ -945,7 +946,7 @@ impl Query {
         core.since = self.since.map(|since| since.max(epoch));
         if let Some(until) = self.until {
             let inclusive = until
-                .checked_sub_signed(chrono::Duration::nanoseconds(1))
+                .checked_sub_signed(Duration::nanoseconds(1))
                 .ok_or_else(HttpError::internal)?;
             if inclusive < epoch {
                 return Ok(None);
@@ -1187,7 +1188,7 @@ fn retained(run: &RunMetadata, now: Timestamp) -> ApiResult<()> {
     if run.retention.days != 0 {
         let deadline = run
             .created_at
-            .checked_add_signed(chrono::Duration::days(i64::from(run.retention.days)))
+            .checked_add_signed(Duration::days(i64::from(run.retention.days)))
             .ok_or_else(HttpError::internal)?;
         if deadline <= now {
             return Err(HttpError::expired("report source retention expired"));

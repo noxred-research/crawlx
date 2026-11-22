@@ -2,13 +2,13 @@
 //! Data endpoints (pages, states, transitions, traffic, artifacts, approvals) and SSE.
 mod common;
 
+use crawlx_core::time::{Duration as SpanDuration, Timestamp};
 use axum::body::Body;
 #[allow(
     clippy::disallowed_types,
     reason = "test fixture builds raw HTTP messages for a local peer"
 )]
 use axum::http::{Method, Request, StatusCode};
-use chrono::Utc;
 use common::{env, env_with, simple_body, Env};
 use crawlx_api::memory::approval_summary;
 use crawlx_api::store::{ApprovalDecision, ApprovalRecord};
@@ -91,7 +91,7 @@ async fn add_page(e: &Env, run: CrawlRunId, n: i64, role: &str, big: bool) {
             html: Some(html),
             metadata: json!({"description": "d", "language": "en", "role": role, "depth": 1}),
             links: vec![format!("https://app.example.test/p/{}", n + 1)],
-            fetched_at: Utc::now(),
+            fetched_at: Timestamp::now(),
             lane: TrustLane::Diagnostic,
         })
         .await
@@ -473,7 +473,7 @@ async fn finish(
     with_traffic: Option<&str>,
 ) {
     let epoch = NetworkEpochId::new();
-    let now = Utc::now();
+    let now = Timestamp::now();
     let traffic: Vec<TrafficEvent> = with_traffic
         .into_iter()
         .map(|url| TrafficEvent {
@@ -644,7 +644,7 @@ async fn coverage_replica_partitions_equal_the_strategy_ledger_and_grouped_views
                     trusted_exercised: 0,
                     diagnostic_exercised: u32::from(n == 2),
                     failures: 0,
-                    first_seen: Utc::now(),
+                    first_seen: Timestamp::now(),
                     last_exercised: None,
                 },
             )
@@ -989,7 +989,7 @@ async fn artifact_sensitivity_rules() {
 // ---- approvals -----------------------------------------------------------------
 
 fn approval(run: CrawlRunId, expires_in_secs: i64) -> ApprovalRecord {
-    let now = Utc::now();
+    let now = Timestamp::now();
     ApprovalRecord {
         id: ApprovalId::new(),
         run,
@@ -998,7 +998,7 @@ fn approval(run: CrawlRunId, expires_in_secs: i64) -> ApprovalRecord {
         summary: approval_summary("member", "/orders/:id", "click"),
         decision: ApprovalDecision::Pending,
         requested_at: now,
-        expires_at: now + chrono::Duration::seconds(expires_in_secs),
+        expires_at: now + SpanDuration::seconds(expires_in_secs),
         decided_by: None,
         decided_at: None,
         reason: None,
@@ -1073,7 +1073,7 @@ async fn approvals_can_be_decided_once() {
     // consumed approvals cannot change
     let (s, _, _) = e.post_empty(&uri(&a2, "approve")).await;
     assert_eq!(s, StatusCode::OK);
-    e.api.consume_approval(a2.id, Utc::now());
+    e.api.consume_approval(a2.id, Timestamp::now());
     let (s, _, v) = e.post_empty(&uri(&a2, "deny")).await;
     assert_eq!(s, StatusCode::CONFLICT, "{v}");
     let (_, _, l) = e
@@ -1286,7 +1286,7 @@ async fn replay_source(
 #[tokio::test]
 async fn a_replay_under_an_authorization_record_is_bound_and_audited_like_a_crawl() {
     let e = env();
-    let now = chrono::Utc::now();
+    let now = Timestamp::now();
     let record = crawlx_policy::AuthorizationRecord {
         verified_at: Some(now),
         ..crawlx_policy::testkit::sample_record(e.tenant, now, &["https://app.example.test"])

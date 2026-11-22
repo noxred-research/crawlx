@@ -4,6 +4,7 @@
 //! providers, with a recording webhook transport.
 mod common;
 
+use crawlx_core::time::{Duration as SpanDuration, ManualClock, Timestamp};
 use async_trait::async_trait;
 use axum::http::{Method, StatusCode};
 use common::Env;
@@ -14,7 +15,6 @@ use crawlx_api::intel::tools::MockPageTools;
 use crawlx_api::intel::webhook::{compat_signature, JobWebhookSink};
 use crawlx_api::webhooks::{TransportError, WebhookRequest, WebhookTransport};
 use crawlx_api::{ApiConfig, AppState, Repos, Scope, Settings};
-use crawlx_core::time::ManualClock;
 use crawlx_core::Clock;
 use crawlx_model::llm::{Completion, LlmError, LlmExtractor, MockLlm, TokenUsage};
 use crawlx_policy::AdmissionPolicy;
@@ -126,7 +126,7 @@ fn web_hit(position: u32, url: &str) -> WebHit {
 }
 
 async fn rig_with(llm: Option<Arc<dyn LlmExtractor>>, with_search: bool) -> Rig {
-    let clock = ManualClock::new(chrono::Utc::now());
+    let clock = ManualClock::new(Timestamp::now());
     let dyn_clock: Arc<dyn Clock> = Arc::new(clock.clone());
     let store = Arc::new(MemoryStore::new());
     let zdr = Arc::new(DeliveryBuffer::with_defaults(dyn_clock.clone()));
@@ -966,7 +966,7 @@ async fn a_run_without_a_task_here_is_cancelled_directly() {
         created_at: now,
         updated_at: now,
         finished_at: None,
-        expires_at: now + chrono::Duration::hours(24),
+        expires_at: now + SpanDuration::hours(24),
     };
     r.state.repos.intel.job_insert(&job).await.unwrap();
     let (s, _, v) = r.delete(&format!("{AGENT}/{id}")).await;

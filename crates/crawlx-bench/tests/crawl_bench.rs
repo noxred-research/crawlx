@@ -4,6 +4,7 @@
 //! binary's exit status. Wall-clock numbers are measured, never asserted exactly.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crawlx_core::time::Timestamp;
 use crawlx_bench::crawl_bench::recorder::{Hit, Recorder};
 use crawlx_bench::crawl_bench::{
     browser_available, combine, compare, delta_label, discovered_endpoints, endpoint_key, known_endpoints,
@@ -421,7 +422,7 @@ mod crawl_bench {
             html: None,
             metadata,
             links: links.iter().map(|l| (*l).to_owned()).collect(),
-            fetched_at: chrono::Utc::now(),
+            fetched_at: Timestamp::now(),
             lane: TrustLane::Diagnostic,
         }
     }

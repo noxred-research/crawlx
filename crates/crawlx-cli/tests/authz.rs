@@ -5,6 +5,7 @@
 //! Router fixtures store real, tenant-owned evidence before records are signed or submitted.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crawlx_core::time::Duration;
 use crawlx_api::auth::{generate_key, key_record, tenant_id_for};
 use crawlx_api::ownership::StaticProbe;
 use crawlx_api::{ApiConfig, AppState, Repos, Scope};
@@ -244,7 +245,7 @@ async fn sign_refuses_what_cannot_be_signed() {
         dir.path(),
         "e.json",
         &AuthorizationRecord {
-            valid_to: SystemClock.now() + chrono::Duration::days(200),
+            valid_to: SystemClock.now() + Duration::days(200),
             ..signable("http://10.20.0.5:8090")
         },
     );

@@ -4,6 +4,7 @@
 //! and revalidate its authority before every send. This module grants no lease, performs no
 //! identity rotation, and never falls back from an unavailable name to another session.
 
+use crawlx_core::time::{Duration as SpanDuration, FixedDateTime};
 use crawlx_core::request_controls::{ControlCookie, MAX_VALUE_LEN};
 use crawlx_core::secret::SecretOr;
 use crawlx_core::session_binding::{
@@ -203,7 +204,7 @@ impl NamedHttpSessions {
     ) -> Result<Self, HttpSessionError> {
         if limits.max_sessions == 0
             || limits.max_age.is_zero()
-            || chrono::Duration::from_std(limits.max_age).is_err()
+            || SpanDuration::from_std(limits.max_age).is_err()
             || limits.binding.max_usage == 0
             || limits.binding.max_health_errors == 0
             || limits.max_cookies == 0
@@ -280,7 +281,7 @@ impl NamedHttpSessions {
         }
         let expires_at = now
             .checked_add_signed(
-                chrono::Duration::from_std(self.limits.max_age)
+                SpanDuration::from_std(self.limits.max_age)
                     .map_err(|_| HttpSessionError::Configuration)?,
             )
             .ok_or(HttpSessionError::Configuration)?
@@ -918,9 +919,9 @@ impl StoredCookie {
                     }
                 }
                 "expires" => {
-                    expires_at = chrono::DateTime::parse_from_rfc2822(value.trim())
+                    expires_at = FixedDateTime::parse_rfc2822(value.trim())
                         .ok()
-                        .map(|date| date.with_timezone(&chrono::Utc));
+                        .map(|date| date.to_utc());
                 }
                 _ => {}
             }
@@ -938,7 +939,7 @@ impl StoredCookie {
             expires_at = Some(if seconds <= 0 {
                 now
             } else {
-                chrono::Duration::try_seconds(seconds)
+                SpanDuration::try_seconds(seconds)
                     .and_then(|duration| now.checked_add_signed(duration))
                     .unwrap_or(Timestamp::MAX_UTC)
             });

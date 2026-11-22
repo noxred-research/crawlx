@@ -5,9 +5,8 @@
 //! claim ordering, barrier checks) with storage latency removed.
 #![allow(missing_docs, clippy::unwrap_used, clippy::expect_used)]
 
-use chrono::Utc;
+use crawlx_core::time::{ManualClock, Timestamp};
 use crawlx_core::repo::{RunRepo, SessionStatus};
-use crawlx_core::time::ManualClock;
 use crawlx_core::{TenantId, WorkerId};
 use crawlx_scheduler::{RunPlanner, Scheduler};
 use crawlx_storage::testkit::{crawl_run, create_crawl};
@@ -18,7 +17,7 @@ use std::sync::Arc;
 const ROLES: &[&str] = &["admin", "member", "guest", "auditor"];
 
 async fn store(runs_per_role: u8) -> (Arc<MemoryStore>, crawlx_core::repo::CrawlRun) {
-    let clock = ManualClock::new(Utc::now());
+    let clock = ManualClock::new(Timestamp::now());
     let store = Arc::new(MemoryStore::with_clock(Arc::new(clock)));
     let cfg = create_crawl("https://example.test/", ROLES, runs_per_role);
     let run = crawl_run(TenantId::new(), cfg.clone());

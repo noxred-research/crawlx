@@ -28,7 +28,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::routing::get;
 use axum::{Extension, Router};
-use chrono::Duration as ChronoDuration;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::config::{RetentionMode, Webhook, MAX_BATCH_URLS};
 use crawlx_core::counters::RunStatus;
 use crawlx_core::repo::{CrawlRun, FrontierStatus};
@@ -769,7 +769,7 @@ pub(crate) fn batch_expires(run: &CrawlRun) -> crawlx_core::Timestamp {
     } else {
         i64::from(run.config.retention.days)
     };
-    expires_at(run).unwrap_or(run.created_at + ChronoDuration::days(retention_days))
+    expires_at(run).unwrap_or(run.created_at + SpanDuration::days(retention_days))
 }
 
 /// `GET /compat/v2/batch/scrape/{id}`: `status` (`scraping`, `completed`, `failed`,
@@ -851,7 +851,7 @@ pub async fn batch_status(
         i64::from(run.retention.days)
     };
     let expires = crate::resources::metadata_expires_at(&run)
-        .unwrap_or(run.created_at + ChronoDuration::days(retention_days));
+        .unwrap_or(run.created_at + SpanDuration::days(retention_days));
     let mut body = json!({
         "success": true,
         "status": batch_status_name(run.status),

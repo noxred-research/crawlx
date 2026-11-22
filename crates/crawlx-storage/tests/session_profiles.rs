@@ -1,6 +1,7 @@
 //! Real PostgreSQL session/profile consumer regressions. Skip without CRAWLX_TEST_DATABASE_URL.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crawlx_core::time::Duration;
 use crawlx_core::counters::{ActionStatus, ReconcileResolution, RunStatus};
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{ActionJournal, EventRepo, Reconciliation, RunRepo, SessionStatus};
@@ -63,11 +64,11 @@ async fn two_connections_cannot_lease_one_profile_generation_or_reuse_a_stale_se
     let digest = Digest::of("fixture", b"bound");
     let identity = SessionIdentityV1::new(tenant, &lease.session, digest, digest, digest, digest, None);
     let first_binding = pg
-        .bind_session(&lease, identity.clone(), now + chrono::Duration::minutes(10))
+        .bind_session(&lease, identity.clone(), now + Duration::minutes(10))
         .await
         .unwrap();
     assert!(
-        peer.bind_session(&lease, identity.clone(), now + chrono::Duration::minutes(10))
+        peer.bind_session(&lease, identity.clone(), now + Duration::minutes(10))
             .await
             .is_err(),
         "same lease cannot spawn two bound actors"
@@ -78,7 +79,7 @@ async fn two_connections_cannot_lease_one_profile_generation_or_reuse_a_stale_se
         .seal(
             &scope,
             1,
-            now + chrono::Duration::minutes(5),
+            now + Duration::minutes(5),
             ProfileFiles::new(
                 BTreeMap::from([("Default/Cookies".into(), b"profile-secret-canary".to_vec())]),
                 false,
@@ -122,7 +123,7 @@ async fn two_connections_cannot_lease_one_profile_generation_or_reuse_a_stale_se
         .unwrap();
     assert_eq!(replacement.session.id, lease.session.id);
     let renewed = peer
-        .bind_session(&replacement, identity, now + chrono::Duration::minutes(10))
+        .bind_session(&replacement, identity, now + Duration::minutes(10))
         .await
         .unwrap();
     assert_eq!(
@@ -148,7 +149,7 @@ async fn binding_expiry_uses_only_durable_login_credit_and_a_bounded_reservation
     };
     let run = RunRepo::get(&pg, lease.session.run).await.unwrap();
     let raw_deadline = run.started_at.unwrap_or(run.created_at)
-        + chrono::Duration::seconds(i64::from(run.config.limits.duration_seconds));
+        + Duration::seconds(i64::from(run.config.limits.duration_seconds));
     let digest = Digest::of("fixture", b"login-clock");
     let budget = |credit, allowance| {
         serde_json::json!({
@@ -168,22 +169,22 @@ async fn binding_expiry_uses_only_durable_login_credit_and_a_bounded_reservation
         .unwrap();
     let identity = SessionIdentityV1::new(tenant, &lease.session, digest, digest, digest, digest, None);
     let binding = pg
-        .bind_session(&lease, identity, raw_deadline + chrono::Duration::days(1))
+        .bind_session(&lease, identity, raw_deadline + Duration::days(1))
         .await
         .unwrap();
     assert_eq!(
         binding.expires_at,
-        raw_deadline + chrono::Duration::milliseconds(11_000)
+        raw_deadline + Duration::milliseconds(11_000)
     );
     // Another slot cannot borrow the first slot's active reservation.
     let identity = SessionIdentityV1::new(tenant, &other.session, digest, digest, digest, digest, None);
     let binding = pg
-        .bind_session(&other, identity, raw_deadline + chrono::Duration::days(1))
+        .bind_session(&other, identity, raw_deadline + Duration::days(1))
         .await
         .unwrap();
     assert_eq!(
         binding.expires_at,
-        raw_deadline + chrono::Duration::milliseconds(1_000)
+        raw_deadline + Duration::milliseconds(1_000)
     );
     EventRepo::append(
         &pg,
@@ -198,7 +199,7 @@ async fn binding_expiry_uses_only_durable_login_credit_and_a_bounded_reservation
     .unwrap();
     let identity = SessionIdentityV1::new(tenant, &other.session, digest, digest, digest, digest, None);
     let error = pg
-        .bind_session(&other, identity, raw_deadline + chrono::Duration::days(1))
+        .bind_session(&other, identity, raw_deadline + Duration::days(1))
         .await
         .unwrap_err();
     assert!(error.to_string().contains("invalid durable login clock"));
@@ -210,8 +211,8 @@ async fn fenced_recovery_can_reserve_relogin_past_the_previous_exploration_deadl
         return;
     };
     let run = RunRepo::get(&pg, lease.session.run).await.unwrap();
-    let raw = pg.now().await.unwrap() + chrono::Duration::seconds(10);
-    let started = raw - chrono::Duration::seconds(i64::from(run.config.limits.duration_seconds));
+    let raw = pg.now().await.unwrap() + Duration::seconds(10);
+    let started = raw - Duration::seconds(i64::from(run.config.limits.duration_seconds));
     sqlx::query("UPDATE crawl_runs SET started_at=$2 WHERE run_id=$1")
         .bind(run.id.0)
         .bind(started)
@@ -229,14 +230,14 @@ async fn fenced_recovery_can_reserve_relogin_past_the_previous_exploration_deadl
         .await
         .unwrap();
     let mut old = pg
-        .bind_session(&lease, identity.clone(), raw + chrono::Duration::seconds(20))
+        .bind_session(&lease, identity.clone(), raw + Duration::seconds(20))
         .await
         .unwrap();
     let version = old.state_version;
     old.state_version = old.state_version.checked_add(1).unwrap();
     old.expires_at = raw;
     pg.update_session_binding(&lease, version, &old).await.unwrap();
-    assert_eq!(old.lifetime_expires_at, Some(raw + chrono::Duration::seconds(20)));
+    assert_eq!(old.lifetime_expires_at, Some(raw + Duration::seconds(20)));
     // A later fenced holder reserves relogin after the previous actor narrowed to raw.
     EventRepo::append(&pg, run.id, "session.budget", reservation)
         .await
@@ -253,19 +254,19 @@ async fn fenced_recovery_can_reserve_relogin_past_the_previous_exploration_deadl
         .bind_session(
             &replacement,
             identity.clone(),
-            raw + chrono::Duration::seconds(20),
+            raw + Duration::seconds(20),
         )
         .await
         .unwrap();
     assert_eq!(renewed.generation, old.generation);
-    assert_eq!(renewed.expires_at, raw + chrono::Duration::seconds(20));
+    assert_eq!(renewed.expires_at, raw + Duration::seconds(20));
     assert_eq!(renewed.lifetime_expires_at, old.lifetime_expires_at);
     assert!(
         renewed
             .eligible(
                 &identity,
                 replacement.fencing_token,
-                raw + chrono::Duration::seconds(1),
+                raw + Duration::seconds(1),
                 crawlx_core::session_binding::SessionLimits::default(),
             )
             .is_ok(),
@@ -273,13 +274,13 @@ async fn fenced_recovery_can_reserve_relogin_past_the_previous_exploration_deadl
     );
     let version = renewed.state_version;
     renewed.state_version = renewed.state_version.checked_add(1).unwrap();
-    renewed.expires_at = raw + chrono::Duration::seconds(5);
+    renewed.expires_at = raw + Duration::seconds(5);
     peer.update_session_binding(&replacement, version, &renewed)
         .await
         .unwrap();
     let mut changed_cap = renewed.clone();
     changed_cap.state_version = changed_cap.state_version.checked_add(1).unwrap();
-    changed_cap.lifetime_expires_at = Some(raw + chrono::Duration::seconds(21));
+    changed_cap.lifetime_expires_at = Some(raw + Duration::seconds(21));
     assert!(
         peer.update_session_binding(&replacement, renewed.state_version, &changed_cap,)
             .await
@@ -305,12 +306,12 @@ async fn expired_binding_keeps_independent_lease_profile_and_repository_failures
     let digest = Digest::of("fixture", b"expiry-cause");
     let identity = SessionIdentityV1::new(tenant, &lease.session, digest, digest, digest, digest, None);
     let mut binding = pg
-        .bind_session(&lease, identity, now + chrono::Duration::minutes(1))
+        .bind_session(&lease, identity, now + Duration::minutes(1))
         .await
         .unwrap();
     let version = binding.state_version;
     binding.state_version = binding.state_version.checked_add(1).unwrap();
-    binding.expires_at = now - chrono::Duration::seconds(1);
+    binding.expires_at = now - Duration::seconds(1);
     pg.update_session_binding(&lease, version, &binding)
         .await
         .unwrap();
@@ -333,7 +334,7 @@ async fn expired_binding_keeps_independent_lease_profile_and_repository_failures
         .seal(
             &profile_scope,
             1,
-            now + chrono::Duration::minutes(1),
+            now + Duration::minutes(1),
             ProfileFiles::new(BTreeMap::new(), false).unwrap(),
         )
         .unwrap();
@@ -360,12 +361,12 @@ async fn expired_binding_keeps_independent_lease_profile_and_repository_failures
         Some(profile),
     );
     let mut profiled = pg
-        .bind_session(&other, identity, now + chrono::Duration::minutes(1))
+        .bind_session(&other, identity, now + Duration::minutes(1))
         .await
         .unwrap();
     let version = profiled.state_version;
     profiled.state_version = profiled.state_version.checked_add(1).unwrap();
-    profiled.expires_at = now - chrono::Duration::seconds(1);
+    profiled.expires_at = now - Duration::seconds(1);
     pg.update_session_binding(&other, version, &profiled)
         .await
         .unwrap();
@@ -399,7 +400,7 @@ async fn cancellation_and_retention_sweep_erase_actual_encrypted_profile_objects
         .seal(
             &scope,
             1,
-            now + chrono::Duration::minutes(5),
+            now + Duration::minutes(5),
             ProfileFiles::new(BTreeMap::new(), false).unwrap(),
         )
         .unwrap();
@@ -468,7 +469,7 @@ async fn crashed_tmpfs_copy_is_reaped_only_by_its_database_authority_and_dead_fe
         .seal(
             &scope,
             1,
-            now + chrono::Duration::minutes(5),
+            now + Duration::minutes(5),
             ProfileFiles::new(BTreeMap::new(), false).unwrap(),
         )
         .unwrap();
@@ -598,7 +599,7 @@ async fn unresolved_prior_owner_blocks_handover(replace_generation: bool) {
             .seal(
                 &scope,
                 generation,
-                now + chrono::Duration::minutes(5),
+                now + Duration::minutes(5),
                 ProfileFiles::new(
                     BTreeMap::from([("Default/Cookies".into(), b"prior-owner-secret".to_vec())]),
                     false,
@@ -797,7 +798,7 @@ async fn anonymous_binding_fixture(
         .bind_session(
             &lease,
             identity,
-            pg.now().await.unwrap() + chrono::Duration::minutes(1),
+            pg.now().await.unwrap() + Duration::minutes(1),
         )
         .await
         .unwrap();
@@ -925,7 +926,7 @@ async fn explicit_binding_replacement_requires_reconciled_write_exact_owner_and_
             &lease,
             &binding,
             binding.identity.clone(),
-            binding.expires_at + chrono::Duration::seconds(1),
+            binding.expires_at + Duration::seconds(1),
         )
         .await
         .is_err(),
@@ -934,7 +935,7 @@ async fn explicit_binding_replacement_requires_reconciled_write_exact_owner_and_
     for status in [ActionStatus::Intended, ActionStatus::Unknown] {
         if status == ActionStatus::Unknown {
             assert_eq!(
-                pg.mark_unknown(now + chrono::Duration::days(1)).await.unwrap(),
+                pg.mark_unknown(now + Duration::days(1)).await.unwrap(),
                 vec![action]
             );
         }
@@ -981,7 +982,7 @@ async fn explicit_binding_replacement_requires_reconciled_write_exact_owner_and_
             &lease,
             &binding,
             binding.identity.clone(),
-            binding.expires_at + chrono::Duration::seconds(1),
+            binding.expires_at + Duration::seconds(1),
         )
         .await
         .is_err(),
@@ -1114,7 +1115,7 @@ async fn explicit_anonymous_rotation_never_erases_an_existing_encrypted_profile(
         .seal(
             &profile_scope,
             1,
-            now + chrono::Duration::minutes(1),
+            now + Duration::minutes(1),
             ProfileFiles::new(
                 BTreeMap::from([("Default/Cookies".into(), b"strict-profile-secret".to_vec())]),
                 false,

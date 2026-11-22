@@ -13,6 +13,7 @@
 //!   resolved through the run's resolver, every address is checked and the connection is
 //!   pinned to the checked addresses.
 
+use crawlx_core::time::Timestamp;
 use crate::resolver::{parse_ip_literal, Resolver};
 use crate::retry::parse_retry_after;
 use crawlx_core::secret::SecretOr;
@@ -341,7 +342,7 @@ async fn post(target: &ReportTarget, batch: &[BlockSignal]) -> Outcome {
 }
 
 fn retry_after(headers: &HeaderMap) -> Duration {
-    parse_retry_after(headers, chrono::Utc::now())
+    parse_retry_after(headers, Timestamp::now())
         .unwrap_or(DEFAULT_RETRY_AFTER)
         .max(Duration::from_secs(1))
 }

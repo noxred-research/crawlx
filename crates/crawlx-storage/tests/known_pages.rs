@@ -5,7 +5,7 @@
 //! `CRAWLX_TEST_DATABASE_URL`; without that variable they return early.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::{DateTime, Duration, Utc};
+use crawlx_core::time::{Timestamp, Duration};
 use crawlx_core::config::RetentionMode;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{FrontierRepo, KnownPage, PageRecord, PageRepo, RunRepo};
@@ -17,8 +17,8 @@ use serde_json::{json, Value};
 use sqlx::Row as _;
 
 /// Millisecond precision: what PostgreSQL round-trips.
-fn now_ms() -> DateTime<Utc> {
-    DateTime::from_timestamp_millis(Utc::now().timestamp_millis()).unwrap()
+fn now_ms() -> Timestamp {
+    Timestamp::from_timestamp_millis(Timestamp::now().timestamp_millis()).unwrap()
 }
 
 /// A page to store.
@@ -49,7 +49,7 @@ async fn new_run<S: RunRepo>(
     tenant: TenantId,
     mode: RetentionMode,
     days: u16,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
 ) -> CrawlRunId {
     let mut cfg = create_crawl("https://example.test/", &[], 1);
     cfg.retention.mode = mode;
@@ -60,7 +60,7 @@ async fn new_run<S: RunRepo>(
     run.id
 }
 
-async fn store_page<S: FrontierRepo + PageRepo>(s: &S, run: CrawlRunId, at: DateTime<Utc>, spec: &Spec) {
+async fn store_page<S: FrontierRepo + PageRepo>(s: &S, run: CrawlRunId, at: Timestamp, spec: &Spec) {
     let url = canonical_url(spec.url);
     let (_, frontier) = FrontierRepo::discover(s, run, &url, 0, None, None).await.unwrap();
     let mut metadata = json!({});

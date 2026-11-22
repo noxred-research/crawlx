@@ -2,7 +2,7 @@
 //! `Retry-After` (delta-seconds or HTTP-date). Jitter comes from a seeded RNG
 //! passed in by the caller.
 
-use chrono::{DateTime, Utc};
+use crawlx_core::time::{FixedDateTime, Timestamp};
 use http::{header, HeaderMap};
 use rand::{Rng, RngExt as _};
 use std::time::Duration;
@@ -63,18 +63,19 @@ impl RetryPolicy {
 
 /// Parse `Retry-After`: non-negative delta-seconds or an HTTP-date relative to `now`.
 #[must_use]
-pub fn parse_retry_after(headers: &HeaderMap, now: DateTime<Utc>) -> Option<Duration> {
+pub fn parse_retry_after(headers: &HeaderMap, now: Timestamp) -> Option<Duration> {
     let raw = headers.get(header::RETRY_AFTER)?.to_str().ok()?.trim();
     if let Ok(secs) = raw.parse::<u64>() {
         return Some(Duration::from_secs(secs));
     }
-    let when = DateTime::parse_from_rfc2822(raw).ok()?.with_timezone(&Utc);
+    let when = FixedDateTime::parse_rfc2822(raw).ok()?.to_utc();
     Some((when - now).to_std().unwrap_or(Duration::ZERO))
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crawlx_core::time::FixedDateTime;
     use super::*;
     use crawlx_core::seed::CrawlSeed;
     use http::HeaderValue;
@@ -87,9 +88,9 @@ mod tests {
 
     #[test]
     fn parses_delta_seconds_and_http_date() {
-        let now = DateTime::parse_from_rfc3339("1994-11-06T08:49:07Z")
+        let now = FixedDateTime::parse_rfc3339("1994-11-06T08:49:07Z")
             .unwrap()
-            .with_timezone(&Utc);
+            .to_utc();
         assert_eq!(parse_retry_after(&hm("120"), now), Some(Duration::from_secs(120)));
         assert_eq!(
             parse_retry_after(&hm("Sun, 06 Nov 1994 08:49:37 GMT"), now),

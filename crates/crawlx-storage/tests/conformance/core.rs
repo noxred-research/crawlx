@@ -7,7 +7,7 @@
 //! runs the cases whose contract it shares.
 
 use crate::rig::Rig;
-use chrono::{DateTime, Duration, TimeZone as _, Utc};
+use crawlx_core::time::{Timestamp, Duration};
 use crawlx_core::config::RetentionMode;
 use crawlx_core::counters::{RunStatus, TerminalReason};
 use crawlx_core::epoch::ObservationEpoch;
@@ -111,7 +111,7 @@ impl Env<'_> {
         run
     }
 
-    async fn credential_artifact(&self, run: CrawlRunId, expires_at: DateTime<Utc>) -> ArtifactId {
+    async fn credential_artifact(&self, run: CrawlRunId, expires_at: Timestamp) -> ArtifactId {
         Raw(self.rig)
             .credential_artifact(self.tenant, run, expires_at)
             .await
@@ -141,7 +141,7 @@ enum V<'a> {
     Uuid(Uuid),
     Text(&'a str),
     Bytes(&'a [u8]),
-    Ts(DateTime<Utc>),
+    Ts(Timestamp),
 }
 
 macro_rules! bind_values {
@@ -173,7 +173,7 @@ impl Raw<'_> {
         let database = self.0.database();
         match self.0.kind().unwrap() {
             BackendKind::Sqlite => {
-                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .timestamp_micros())
                 .execute(database.sqlite_pool().unwrap())
                 .await
@@ -181,14 +181,14 @@ impl Raw<'_> {
                 .rows_affected()
             }
             BackendKind::MariaDb => {
-                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .naive_utc())
                 .execute(database.mariadb_pool().unwrap())
                 .await
                 .unwrap()
                 .rows_affected()
             }
-            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t)
+            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t)
                 .execute(database.postgres().unwrap().pool())
                 .await
                 .unwrap()
@@ -203,7 +203,7 @@ impl Raw<'_> {
         let database = self.0.database();
         match self.0.kind().unwrap() {
             BackendKind::Sqlite => {
-                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .timestamp_micros())
                 .fetch_all(database.sqlite_pool().unwrap())
                 .await
@@ -213,7 +213,7 @@ impl Raw<'_> {
                 .collect()
             }
             BackendKind::MariaDb => {
-                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .naive_utc())
                 .fetch_all(database.mariadb_pool().unwrap())
                 .await
@@ -222,7 +222,7 @@ impl Raw<'_> {
                 .map(|row| row.try_get::<Option<String>, _>(0).unwrap())
                 .collect()
             }
-            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t)
+            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t)
                 .fetch_all(database.postgres().unwrap().pool())
                 .await
                 .unwrap()
@@ -239,7 +239,7 @@ impl Raw<'_> {
         let database = self.0.database();
         match self.0.kind().unwrap() {
             BackendKind::Sqlite => {
-                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .timestamp_micros())
                 .fetch_one(database.sqlite_pool().unwrap())
                 .await
@@ -248,7 +248,7 @@ impl Raw<'_> {
                 .unwrap()
             }
             BackendKind::MariaDb => {
-                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .naive_utc())
                 .fetch_one(database.mariadb_pool().unwrap())
                 .await
@@ -256,7 +256,7 @@ impl Raw<'_> {
                 .try_get::<i64, _>(0)
                 .unwrap()
             }
-            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t)
+            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t)
                 .fetch_one(database.postgres().unwrap().pool())
                 .await
                 .unwrap()
@@ -374,7 +374,7 @@ impl Raw<'_> {
         &self,
         tenant: TenantId,
         run: CrawlRunId,
-        expires_at: DateTime<Utc>,
+        expires_at: Timestamp,
     ) -> ArtifactId {
         let id = ArtifactId::new();
         let digest = Digest::of("t", id.0.as_bytes());
@@ -573,7 +573,7 @@ async fn edges_need_a_ledger_context_and_upsert_by_key(rig: &Rig) {
     let env = env(rig).await;
     let (run, _) = env.run_with_session().await;
     let p = proposal("anonymous", StateClusterId::new(), 1);
-    let now = Utc::now();
+    let now = Timestamp::now();
     let edge = EdgeRecord {
         id: crawlx_core::EdgeId::new(),
         run: run.id,
@@ -796,7 +796,7 @@ fn model_decision(run: CrawlRunId, session: SessionId, marker: &str) -> ModelDec
         prompt_digest: Digest::of("test/prompt", marker.as_bytes()),
         latency_ms: Some(12),
         breaker_state: Some(marker.to_owned()),
-        created_at: Utc.with_ymd_and_hms(2026, 10, 20, 12, 0, 0).unwrap(),
+        created_at: Timestamp::from_ymd_hms(2026, 10, 20, 12, 0, 0).unwrap(),
     }
 }
 
@@ -871,7 +871,7 @@ async fn states_clusters_and_splits_round_trip(rig: &Rig) {
         trusted_exercised: 1,
         diagnostic_exercised: 0,
         failures: 0,
-        first_seen: Utc::now(),
+        first_seen: Timestamp::now(),
         last_exercised: None,
     };
     env.repos.ledger.upsert(run.id, &row).await.unwrap();
@@ -897,7 +897,7 @@ async fn states_clusters_and_splits_round_trip(rig: &Rig) {
                 },
             ],
         }],
-        decided_at: Utc::now(),
+        decided_at: Timestamp::now(),
     };
     let applied = env.repos.states.apply_split(&split).await.unwrap();
     assert_eq!(applied.memberships_moved, 2);
@@ -971,7 +971,7 @@ async fn replay_creation_checks_the_source_and_is_atomic(rig: &Rig) {
 
 #[allow(clippy::field_reassign_with_default)] // BufferLimits is non-exhaustive outside its crate.
 async fn literal_controls_never_enter_the_database_and_expire_fail_closed(rig: &Rig) {
-    let clock = Arc::new(crawlx_core::time::ManualClock::new(Utc::now()));
+    let clock = Arc::new(crawlx_core::time::ManualClock::new(Timestamp::now()));
     let mut limits = crawlx_storage::BufferLimits::default();
     limits.ttl = std::time::Duration::from_secs(1);
     let buffer = Arc::new(DeliveryBuffer::new(clock.clone(), limits));
@@ -1033,7 +1033,7 @@ async fn literal_controls_never_enter_the_database_and_expire_fail_closed(rig: &
     }
 }
 
-fn page_record(run: CrawlRunId, frontier_id: i64, url: &str, at: DateTime<Utc>) -> PageRecord {
+fn page_record(run: CrawlRunId, frontier_id: i64, url: &str, at: Timestamp) -> PageRecord {
     PageRecord {
         run,
         frontier_id,
@@ -1060,7 +1060,7 @@ async fn pages_roundtrip_and_upsert_by_role_and_url(rig: &Rig) {
     let frontier = Raw(rig)
         .frontier(env.tenant, run.id, "https://example.test/a", false)
         .await;
-    let fetched_at = DateTime::from_timestamp_micros(Utc::now().timestamp_micros()).unwrap();
+    let fetched_at = Timestamp::from_timestamp_micros(Timestamp::now().timestamp_micros()).unwrap();
     let page = page_record(run.id, frontier, "https://example.test/a", fetched_at);
     env.repos.pages.put(&page).await.unwrap();
     let mut changed = page.clone();
@@ -1126,8 +1126,8 @@ impl Spec {
     }
 }
 
-fn now_ms() -> DateTime<Utc> {
-    DateTime::from_timestamp_millis(Utc::now().timestamp_millis()).unwrap()
+fn now_ms() -> Timestamp {
+    Timestamp::from_timestamp_millis(Timestamp::now().timestamp_millis()).unwrap()
 }
 
 async fn site_run(
@@ -1135,7 +1135,7 @@ async fn site_run(
     tenant: TenantId,
     mode: RetentionMode,
     days: u16,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
 ) -> CrawlRunId {
     let mut config = create_crawl("https://example.test/", &[], 1);
     config.retention.mode = mode;
@@ -1151,7 +1151,7 @@ async fn store_page(
     tenant: TenantId,
     run: CrawlRunId,
     zdr: bool,
-    at: DateTime<Utc>,
+    at: Timestamp,
     spec: &Spec,
 ) {
     use crawlx_core::repo::FrontierRepo as _;
@@ -1533,7 +1533,7 @@ async fn ledger_rows_keep_the_coarsened_flag_and_absolute_counters(rig: &Rig) {
     let run = env.run(&[], 1).await;
     let mut key = proposal("anonymous", StateClusterId::new(), 1).key;
     key.state_cluster = key.coarsened_cluster();
-    let now = Utc.with_ymd_and_hms(2026, 11, 4, 12, 0, 0).unwrap();
+    let now = Timestamp::from_ymd_hms(2026, 11, 4, 12, 0, 0).unwrap();
     let row = LedgerRow {
         key: key.clone(),
         trusted_exercised: 0,
@@ -1658,7 +1658,7 @@ fn checkpoint(
     session: SessionId,
     artifact: ArtifactId,
     seq: u64,
-    expires: DateTime<Utc>,
+    expires: Timestamp,
 ) -> CheckpointRecord {
     CheckpointRecord {
         id: CheckpointId::new(),
@@ -1672,8 +1672,8 @@ fn checkpoint(
             digest: Digest::of("t", artifact.0.as_bytes()),
         },
         url_hash: Some(Digest::of("t", b"url")),
-        created_at: DateTime::from_timestamp_micros(
-            Utc::now().timestamp_micros() + i64::try_from(seq).unwrap(),
+        created_at: Timestamp::from_timestamp_micros(
+            Timestamp::now().timestamp_micros() + i64::try_from(seq).unwrap(),
         )
         .unwrap(),
         expires_at: expires,
@@ -1685,7 +1685,7 @@ async fn checkpoints_keep_the_newest_three_and_hide_expired_ones(rig: &Rig) {
     let (run, session) = env.run_with_session().await;
     // every engine stores microseconds: a nanosecond instant would not round-trip
     let future =
-        DateTime::from_timestamp_micros((Utc::now() + Duration::days(1)).timestamp_micros()).unwrap();
+        Timestamp::from_timestamp_micros((Timestamp::now() + Duration::days(1)).timestamp_micros()).unwrap();
     let mut stored = Vec::new();
     for seq in 1..=5_u64 {
         let artifact = env.credential_artifact(run.id, future).await;
@@ -1715,7 +1715,7 @@ async fn checkpoints_keep_the_newest_three_and_hide_expired_ones(rig: &Rig) {
     );
     // an expired checkpoint, or one whose artifact is deleted, is not offered
     let artifact = env
-        .credential_artifact(run.id, Utc::now() - Duration::hours(1))
+        .credential_artifact(run.id, Timestamp::now() - Duration::hours(1))
         .await;
     let expired_artifact = checkpoint(run.id, session, artifact, 9, future);
     env.repos.checkpoints.put(&expired_artifact).await.unwrap();
@@ -1732,7 +1732,7 @@ async fn checkpoints_keep_the_newest_three_and_hide_expired_ones(rig: &Rig) {
         other.1,
         artifact,
         1,
-        Utc::now() - Duration::seconds(1),
+        Timestamp::now() - Duration::seconds(1),
     );
     env.repos.checkpoints.put(&expired).await.unwrap();
     assert!(env.repos.checkpoints.list(other.1).await.unwrap().is_empty());
@@ -1742,7 +1742,7 @@ async fn terminal_status_revokes_credentials_in_the_same_transaction(rig: &Rig) 
     let env = env(rig).await;
     let (run, session) = env.run_with_session().await;
     let raw = Raw(rig);
-    let future = Utc::now() + Duration::days(1);
+    let future = Timestamp::now() + Duration::days(1);
     let artifact = env.credential_artifact(run.id, future).await;
     let kept = env.credential_artifact(run.id, future).await;
     // a content artifact is not credential-bearing and keeps its retention
@@ -1771,7 +1771,7 @@ async fn terminal_status_revokes_credentials_in_the_same_transaction(rig: &Rig) 
         async move {
             raw.int(
                 &format!("SELECT count(*) FROM {table} WHERE run_id = $1 AND expires_at > $2"),
-                &[V::Uuid(run.0), V::Ts(Utc::now() + Duration::hours(1))],
+                &[V::Uuid(run.0), V::Ts(Timestamp::now() + Duration::hours(1))],
             )
             .await
         }
@@ -1818,7 +1818,7 @@ async fn terminal_status_revokes_credentials_in_the_same_transaction(rig: &Rig) 
 #[allow(clippy::too_many_lines)]
 #[allow(clippy::field_reassign_with_default)] // BufferLimits is non-exhaustive outside its crate.
 async fn zdr_rows_never_hold_content(rig: &Rig) {
-    let now = Utc.with_ymd_and_hms(2026, 10, 20, 12, 0, 0).unwrap();
+    let now = Timestamp::from_ymd_hms(2026, 10, 20, 12, 0, 0).unwrap();
     let clock = Arc::new(crawlx_core::time::ManualClock::new(now));
     let buffer = Arc::new(DeliveryBuffer::with_defaults(clock.clone()));
     let env = env_with(rig, buffer.clone()).await;
@@ -2101,7 +2101,7 @@ async fn the_database_clock_decodes_on_every_engine(rig: &Rig) {
         .unwrap()
         .ts("now")
         .unwrap();
-    let skew = (Utc::now() - read).num_seconds().abs();
+    let skew = (Timestamp::now() - read).num_seconds().abs();
     assert!(
         skew < 300,
         "the database clock is {read}, {skew}s from this machine's"

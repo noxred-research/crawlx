@@ -7,11 +7,10 @@
 //! I5 each action reaches `perform` (intend) at most once per proposed/reconciled generation
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::{Duration, Utc};
+use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::counters::{ActionStatus, ReconcileResolution};
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::repo::*;
-use crawlx_core::time::ManualClock;
 use crawlx_core::{
     ActionId, Clock as _, CrawlRunId, SessionId, StateClusterId, SystemClock, TenantId, WorkerId,
 };
@@ -112,7 +111,7 @@ impl Backend for Pgb {
 
 impl Pgb {
     async fn crash(&self) {
-        self.0.reap(Utc::now() + Duration::seconds(600)).await.unwrap();
+        self.0.reap(Timestamp::now() + Duration::seconds(600)).await.unwrap();
     }
     async fn eligible(&self, run: CrawlRunId) -> Vec<ActionId> {
         self.0
@@ -296,7 +295,7 @@ proptest! {
     #[test]
     fn memory_store_follows_the_status_machine(cmds in proptest::collection::vec(cmd(), 1..40)) {
         let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-        let clock = ManualClock::new(Utc::now());
+        let clock = ManualClock::new(Timestamp::now());
         let b = Mem { store: Arc::new(MemoryStore::with_clock(Arc::new(clock.clone()))), clock };
         block_on(&rt, drive(&b, TenantId::new(), &cmds, async |b: &Mem| b.crash().await, async |b: &Mem, run| b.eligible(run)))?;
     }

@@ -11,7 +11,6 @@ use super::scoped_batch_id;
 use crate::delivery::{DeliveryAuthority, DeliveryDestination, DeliveryError};
 use async_trait::async_trait;
 use bytes::Bytes;
-use chrono::Utc;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::dataset::DeliveryBatchV1;
 use crawlx_core::repo::CrawlRun;
@@ -244,7 +243,9 @@ impl DeliveryDestination for KafkaDestination {
             key: Some(record_key.into_bytes()),
             value: Some(bytes.to_vec()),
             headers,
-            timestamp: Utc::now(),
+            // rskafka types the record time as a `chrono::DateTime<Utc>`; its `From<SystemTime>` builds
+            // it, so this crate names no chrono type.
+            timestamp: std::time::SystemTime::now().into(),
         };
         let offsets = partition_client
             .produce(vec![record], Compression::NoCompression)

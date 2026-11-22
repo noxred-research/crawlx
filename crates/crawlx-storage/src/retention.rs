@@ -18,7 +18,7 @@ use crate::error::db;
 use crate::repos::effects::settle_run;
 use crate::sql::{stmt, Sql, SqlRow, Stmt};
 use crate::store::{Pg, Store};
-use chrono::{Datelike, Duration, NaiveDate, TimeZone, Utc};
+use crawlx_core::time::{Duration, NaiveDate};
 use crawlx_core::archive_catalog::ArchiveRepo;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::hash::Digest;
@@ -899,7 +899,7 @@ pub(crate) async fn append_audit_in<B: Sql>(
 }
 
 fn first_of_month(ts: Timestamp, add_months: u32) -> Option<NaiveDate> {
-    let month0 = i32::try_from(ts.month0()).ok()?;
+    let month0 = i32::try_from(ts.month() - 1).ok()?;
     let months = i32::try_from(add_months).ok()?;
     let total = ts
         .year()
@@ -958,8 +958,8 @@ async fn move_and_create_partition(
     end: NaiveDate,
 ) -> Result<(), StoreError> {
     // Interpolated: `name` (built by `ensure_traffic_partitions` from integer year/month only)
-    // and `lo`/`hi` (chrono-formatted dates). No request or tenant data reaches these statements.
-    let (lo, hi) = (start.format("%Y-%m-%d"), end.format("%Y-%m-%d"));
+    // and `lo`/`hi` (ISO dates). No request or tenant data reaches these statements.
+    let (lo, hi) = (start, end);
     let stmts = [
         format!(
             "CREATE TEMP TABLE _tev_moved ON COMMIT DROP AS WITH d AS (DELETE FROM traffic_events_default \
@@ -986,7 +986,7 @@ async fn move_and_create_partition(
 #[must_use]
 pub fn next_month_start(ts: Timestamp) -> Option<Timestamp> {
     let d = first_of_month(ts, 1)?;
-    Utc.from_utc_datetime(&d.and_hms_opt(0, 0, 0)?).into()
+    d.and_hms_opt(0, 0, 0)?.and_utc().into()
 }
 
 #[cfg(test)]
@@ -995,7 +995,7 @@ mod tests {
     use super::*;
 
     fn ts(y: i32, m: u32, d: u32) -> Timestamp {
-        Utc.with_ymd_and_hms(y, m, d, 12, 0, 0).unwrap()
+        Timestamp::from_ymd_hms(y, m, d, 12, 0, 0).unwrap()
     }
 
     #[test]
@@ -1079,7 +1079,7 @@ mod tests {
         );
         assert_eq!(
             next_month_start(ts(2026, 10, 16)).unwrap(),
-            Utc.with_ymd_and_hms(2026, 11, 1, 0, 0, 0).unwrap()
+            Timestamp::from_ymd_hms(2026, 11, 1, 0, 0, 0).unwrap()
         );
     }
 }

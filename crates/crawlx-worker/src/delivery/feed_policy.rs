@@ -1,5 +1,6 @@
 //! Native declarative feed selection, parameters and bounded terminal fragment aggregation.
 
+use crawlx_core::time::Timestamp;
 use super::*;
 use crawlx_core::dataset::feed_key_component as key_component;
 use crawlx_core::dataset::{
@@ -779,7 +780,7 @@ async fn terminal_batches(
         .stores
         .iter()
         .any(|store| store.name == feed.source && store.schema_version == "document_v1");
-    let deadline = article_deadline(run, None).unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC);
+    let deadline = article_deadline(run, None).unwrap_or(Timestamp::MAX_UTC);
     let mut pending = accumulator(cpu, feed, deadline)?;
     let mut after = 0;
     loop {

@@ -1,5 +1,6 @@
 //! Offline archive codecs and isolated replay/QA dispatch. Codec operations never refetch live content.
 
+use crawlx_core::time::Duration;
 use anyhow::{anyhow, bail, Context as _};
 use clap::{Args, Subcommand, ValueEnum};
 use crawlx_core::archive::{
@@ -268,7 +269,7 @@ fn retention_gate(retention: &Retention, created: Timestamp, now: Timestamp) -> 
         _ => retention.days.clamp(1, 30),
     };
     let expiry = created
-        .checked_add_signed(chrono::Duration::days(i64::from(days)))
+        .checked_add_signed(Duration::days(i64::from(days)))
         .ok_or_else(|| anyhow!("retention expiry overflow"))?;
     if expiry <= now {
         bail!("retention_denied: source run has expired");

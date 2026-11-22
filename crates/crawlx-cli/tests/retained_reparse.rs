@@ -1,6 +1,7 @@
 //! CLI retained-source binding: real native parsing, scope, expiry and zero added acquisition.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crawlx_core::time::Duration;
 use async_trait::async_trait;
 use crawlx_core::acquisition::AcquisitionResultV1;
 use crawlx_core::captcha::CaptchaSecrets;
@@ -274,7 +275,7 @@ impl ArtifactStore for Expired<'_> {
     ) -> Result<crawlx_core::archive_catalog::ArchiveCustodyV1, StoreError> {
         let _ = self.0;
         Ok(crawlx_core::archive_catalog::ArchiveCustodyV1::content(Some(
-            SystemClock.now() - chrono::Duration::seconds(1),
+            SystemClock.now() - Duration::seconds(1),
         )))
     }
 }

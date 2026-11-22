@@ -9,6 +9,7 @@
 
 #![deny(clippy::disallowed_methods)]
 
+use crawlx_core::time::Duration;
 use crate::backend::strategy::Conn;
 use crate::backend::{BackendKind, Dialect as _, RowLock};
 use crate::codec::{conv, from_json, to_json};
@@ -113,7 +114,7 @@ impl ApprovalRequestV1 {
         if self.created_at > now
             || self.expires_at <= now
             || self.expires_at <= self.created_at
-            || self.expires_at.signed_duration_since(self.created_at) > chrono::Duration::hours(24)
+            || self.expires_at.signed_duration_since(self.created_at) > Duration::hours(24)
             || self.summary.len() > 16_384
         {
             return Err(conflict());

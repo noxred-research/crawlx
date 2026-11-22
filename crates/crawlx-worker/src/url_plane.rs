@@ -33,6 +33,7 @@ pub(crate) fn effective_crawl(crawl: CreateCrawl) -> CreateCrawl {
     scrape_plane::adapt(crawl)
 }
 
+use crawlx_core::time::Duration as SpanDuration;
 use crate::authorization::AuthorizationGuard;
 use crate::counters::{Attempt, Plane, RunCounters};
 use crate::error::WorkerError;
@@ -2745,7 +2746,7 @@ impl UrlPlaneRunner {
                     .await?
             };
             if !cooldown.is_zero() {
-                let delay = chrono::Duration::from_std(cooldown)
+                let delay = SpanDuration::from_std(cooldown)
                     .map_err(|_| WorkerError::Config("origin cooldown exceeds timestamp range".into()))?;
                 let not_before = self
                     .deps
@@ -2810,7 +2811,7 @@ impl UrlPlaneRunner {
             .governor()
             .cooldown_remaining(&crawlx_fetch::Origin::from_url(final_url))
             .max(Duration::from_millis(1));
-        let delay = chrono::Duration::from_std(cooldown)
+        let delay = SpanDuration::from_std(cooldown)
             .map_err(|_| WorkerError::Config("origin cooldown exceeds timestamp range".into()))?;
         let not_before = self
             .deps
@@ -6650,7 +6651,6 @@ mod tests {
     /// stop does not depend on how fast the machine runs.
     #[tokio::test]
     async fn the_idle_limit_follows_the_injected_run_clock() {
-        use crawlx_core::time::ManualClock;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         let now = "2026-11-11T00:00:00Z".parse().unwrap();

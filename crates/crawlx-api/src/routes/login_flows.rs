@@ -1,5 +1,6 @@
 //! Native uploads of immutable recorded login flows on existing source runs.
 
+use crawlx_core::time::Duration;
 use crate::auth::Principal;
 use crate::errors::{ApiResult, Detail, HttpError};
 use crate::routes::crawls::load_run_metadata;
@@ -56,7 +57,7 @@ pub async fn create(
     }
     let deadline = source
         .created_at
-        .checked_add_signed(chrono::Duration::days(i64::from(source.retention.days)))
+        .checked_add_signed(Duration::days(i64::from(source.retention.days)))
         .ok_or_else(HttpError::internal)?;
     if deadline <= state.clock.now() {
         return Err(HttpError::expired("source run expired"));
@@ -137,7 +138,7 @@ pub(crate) async fn validate_references(
         }
         let deadline = source
             .created_at
-            .checked_add_signed(chrono::Duration::days(i64::from(source.retention.days)))
+            .checked_add_signed(Duration::days(i64::from(source.retention.days)))
             .ok_or_else(HttpError::internal)?;
         if deadline <= state.clock.now() {
             return Err(HttpError::expired("source run expired"));

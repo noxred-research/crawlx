@@ -1,13 +1,13 @@
 //! Real recorder and codec regression: immutable generation sources survive publication recovery.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crawlx_core::time::{Duration, FixedDateTime, ManualClock, Timestamp};
 use super::*;
 use crawlx_core::counters::TerminalReason;
 use crawlx_core::orchestration::{OrchestrationConfigV1, RequestBatchV1, RequestCommitV1};
 use crawlx_core::repo::{FrontierStatus, PageRecord, Sensitivity};
 use crawlx_core::request::RequestEnvelopeV1;
 use crawlx_core::secret::{ArtifactSink, Redactor as ArtifactRedactor};
-use crawlx_core::time::ManualClock;
 use crawlx_core::traffic::TrustLane;
 use crawlx_core::{TenantId, WorkerId};
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};
@@ -29,7 +29,7 @@ async fn generations(
     policy.recrawl = Some(
         serde_json::from_value(serde_json::json!({
             "version":1,"minIntervalMs":1000,"maxIntervalMs":1000,"maxVisits":2,
-            "endAt":clock.now()+chrono::Duration::minutes(1)
+            "endAt":clock.now()+Duration::minutes(1)
         }))
         .unwrap(),
     );
@@ -154,7 +154,7 @@ async fn recovery(stores: &Stores, clock: Arc<ManualClock>, root: &Path) -> craw
         run.id,
         config.clone(),
         run.created_at,
-        Some(run.created_at + chrono::Duration::days(1)),
+        Some(run.created_at + Duration::days(1)),
         TerminalReason::FrontierExhausted,
     );
     stores.archives.begin(&pending).await.unwrap();
@@ -384,7 +384,7 @@ async fn recovery(stores: &Stores, clock: Arc<ManualClock>, root: &Path) -> craw
 #[tokio::test]
 async fn memory_archive_recorder_keeps_all_generations_through_publication_recovery() {
     let root = tempfile::tempdir().unwrap();
-    let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let memory = Arc::new(MemoryStore::with_clock(clock.clone()));
     let mut stores = Stores::over_memory(memory.clone(), root.path()).await.unwrap();
     stores.artifacts = Arc::new(
@@ -404,7 +404,7 @@ async fn postgres_archive_recorder_keeps_all_generations_through_publication_rec
         return;
     };
     let root = tempfile::tempdir().unwrap();
-    let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let pg = Pg::connect(
         &url,
         StoreConfig {
@@ -442,9 +442,9 @@ async fn postgres_archive_recorder_keeps_all_generations_through_publication_rec
 async fn live_wacz_rollover_refuses_oversized_member_without_publication() {
     let root = tempfile::tempdir().unwrap();
     let clock = Arc::new(ManualClock::new(
-        chrono::DateTime::parse_from_rfc3339("2026-11-06T00:00:00Z")
+        FixedDateTime::parse_rfc3339("2026-11-06T00:00:00Z")
             .unwrap()
-            .with_timezone(&chrono::Utc),
+            .to_utc(),
     ));
     let memory = Arc::new(MemoryStore::with_clock(clock.clone()));
     let mut stores = Stores::over_memory(memory.clone(), root.path()).await.unwrap();
@@ -488,9 +488,9 @@ async fn live_wacz_rollover_refuses_oversized_member_without_publication() {
 async fn conditional_history_rejects_partial_bodies_and_checks_every_vary_field() {
     let root = tempfile::tempdir().unwrap();
     let clock = Arc::new(ManualClock::new(
-        chrono::DateTime::parse_from_rfc3339("2026-11-06T00:00:00Z")
+        FixedDateTime::parse_rfc3339("2026-11-06T00:00:00Z")
             .unwrap()
-            .with_timezone(&chrono::Utc),
+            .to_utc(),
     ));
     let memory = Arc::new(MemoryStore::with_clock(clock.clone()));
     let stores = Stores::over_memory(memory, root.path()).await.unwrap();
@@ -600,9 +600,9 @@ fn anonymous_warc_package_retains_exact_member_and_adjacent_index() {
         Limits::default(),
     )
     .unwrap();
-    let at = chrono::DateTime::parse_from_rfc3339("2026-11-06T00:00:00Z")
+    let at = FixedDateTime::parse_rfc3339("2026-11-06T00:00:00Z")
         .unwrap()
-        .with_timezone(&chrono::Utc);
+        .to_utc();
     let manifest = ArchiveManifestV1::available(TenantId::new(), crawlx_core::CrawlRunId::new(), at);
     let record = ArchiveRecordV1::resource(
         uuid::Uuid::now_v7(),
@@ -671,7 +671,7 @@ async fn measured_revisits(
     policy.recrawl = Some(
         serde_json::from_value(serde_json::json!({
             "version":1,"minIntervalMs":1000,"maxIntervalMs":1000,"maxVisits":2,
-            "endAt":clock.now()+chrono::Duration::minutes(1)
+            "endAt":clock.now()+Duration::minutes(1)
         }))
         .unwrap(),
     );
@@ -816,7 +816,7 @@ async fn unchanged_html_with_a_changed_or_unmeasured_image_is_not_a_complete_rec
         ),
     ] {
         let root = tempfile::tempdir().unwrap();
-        let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+        let clock = Arc::new(ManualClock::new(Timestamp::now()));
         let stores = memory_stores(root.path(), &clock).await;
         let (run, pages) = measured_revisits(
             &stores,
@@ -841,14 +841,14 @@ async fn unchanged_html_with_a_changed_or_unmeasured_image_is_not_a_complete_rec
 #[tokio::test]
 async fn a_fully_measured_unchanged_recrawl_reports_nothing_and_a_document_only_one_says_so() {
     let root = tempfile::tempdir().unwrap();
-    let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let stores = memory_stores(root.path(), &clock).await;
     let both = Some(serde_json::json!([logo(b"v1")]));
     let (run, _) = measured_revisits(&stores, &clock, [both.clone(), both], None).await;
     assert!(recrawl_facts(&published_omissions(&stores, &run, &clock).await).is_empty());
 
     let root = tempfile::tempdir().unwrap();
-    let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let stores = memory_stores(root.path(), &clock).await;
     let (run, pages) = measured_revisits(&stores, &clock, [None, None], None).await;
     assert_eq!(
@@ -866,7 +866,7 @@ async fn every_resource_the_block_rules_blocked_carries_an_omission_with_its_rul
     use crate::browser_evidence::{BlockedEvent, BLOCKED_EVENT};
     use crawlx_core::block_rules::{BlockRuleKind, BlockRulesV1, BlockedResourceV1, BlockedResources};
     let root = tempfile::tempdir().unwrap();
-    let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let stores = memory_stores(root.path(), &clock).await;
     let mut rules = BlockRulesV1::default();
     rules.urls = vec!["*/ads/*".into()];
@@ -967,7 +967,7 @@ async fn every_resource_the_block_rules_blocked_carries_an_omission_with_its_rul
 
     // a run without block rules never reads blocked-resource events
     let root = tempfile::tempdir().unwrap();
-    let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let stores = memory_stores(root.path(), &clock).await;
     let (plain, _) = measured_revisits(&stores, &clock, [None, None], None).await;
     stores

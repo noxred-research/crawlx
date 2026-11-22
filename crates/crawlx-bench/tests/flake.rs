@@ -2,7 +2,7 @@
 //! filtersets, expiry and the history/quarantine file formats. Dates are explicit inputs.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::{Days, NaiveDate};
+use crawlx_core::time::{Days, NaiveDate};
 use crawlx_bench::flake::{
     in_window, issue_body, report_markdown, FlakeError, FlakeSummary, History, JunitReport, Outcome,
     Quarantine, QUARANTINE_HEADER,

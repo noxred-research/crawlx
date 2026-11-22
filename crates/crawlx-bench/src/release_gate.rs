@@ -29,7 +29,7 @@ use crate::gates::{ChaosEvidence, G1Report};
 use crate::gym::fixtures::catalog_row;
 use crate::scorecard::Scorecard;
 use crate::stats::{Direction, PairedComparison};
-use chrono::NaiveDate;
+use crawlx_core::time::NaiveDate;
 use crawlx_core::config::SafetyProfile;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};

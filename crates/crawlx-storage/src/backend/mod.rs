@@ -25,6 +25,7 @@ pub use sqlite::{SqliteBackend, WorkerLock};
 pub use strategy::{Concurrency, FenceSeq, LockMode, WriteTx};
 pub use url::DatabaseUrl;
 
+use crawlx_core::time::Timestamp;
 use crate::store::{Pg, Store, StoreConfig};
 use async_trait::async_trait;
 use crawlx_core::origin::OriginAdmission;
@@ -203,7 +204,7 @@ pub trait DurableAdmin: Send + Sync {
     ///
     /// # Errors
     /// Returns [`StoreError`] if the query fails.
-    async fn db_now(&self) -> Result<chrono::DateTime<chrono::Utc>, StoreError>;
+    async fn db_now(&self) -> Result<Timestamp, StoreError>;
 
     /// Apply the engine's embedded migrations.
     ///
@@ -430,7 +431,7 @@ impl Database {
     ///
     /// # Errors
     /// Returns [`StoreError`] if the query fails.
-    pub async fn db_now(&self) -> Result<chrono::DateTime<chrono::Utc>, StoreError> {
+    pub async fn db_now(&self) -> Result<Timestamp, StoreError> {
         match &self.inner {
             Inner::Postgres(pg) => pg.db_now().await,
             Inner::MariaDb(store) => mariadb::db_now(store).await,
@@ -504,7 +505,7 @@ impl DurableAdmin for Pg {
         BackendKind::Postgres
     }
 
-    async fn db_now(&self) -> Result<chrono::DateTime<chrono::Utc>, StoreError> {
+    async fn db_now(&self) -> Result<Timestamp, StoreError> {
         Self::db_now(self).await
     }
 

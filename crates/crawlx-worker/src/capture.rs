@@ -564,6 +564,7 @@ fn mask_captcha_event(event: &mut TrafficEvent, secrets: &CaptchaSecrets) {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crawlx_core::time::Timestamp;
     use super::*;
     use crawlx_browser::fake::{FakePage, FakeScript};
     use crawlx_browser::FakeBackend;
@@ -1041,7 +1042,7 @@ mod tests {
             ))
             .unwrap();
         let clock: Arc<dyn Clock> = Arc::new(crawlx_core::time::ManualClock::new(
-            chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+            Timestamp::from_timestamp(1_700_000_000, 0).unwrap(),
         ));
         let mut ctx = wrap_proxy(&capture, session, Arc::clone(&clock), raw, secrets);
         ctx.navigate(&seed()).await.unwrap();
@@ -1074,7 +1075,7 @@ mod tests {
         let (_tx, rx) = tokio::sync::mpsc::channel(8);
         let capture = ProxyCapture::new(ProxyTraffic::new(rx, Redactor::new([1; 32])));
         let clock: Arc<dyn Clock> = Arc::new(crawlx_core::time::ManualClock::new(
-            chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+            Timestamp::from_timestamp(1_700_000_000, 0).unwrap(),
         ));
         let mut contexts = Vec::new();
         for _ in 0..2 {
@@ -1147,7 +1148,7 @@ mod tests {
     async fn retained_body_sink_refuses_secret_registered_during_backend_upload() {
         const BODY: &[u8] = b"lateScopedCommitCanary528";
         let clock: Arc<dyn Clock> = Arc::new(crawlx_core::time::ManualClock::new(
-            chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+            Timestamp::from_timestamp(1_700_000_000, 0).unwrap(),
         ));
         let runs = Arc::new(crawlx_storage::MemoryStore::with_clock(clock.clone()));
         let run = crawlx_storage::testkit::crawl_run(

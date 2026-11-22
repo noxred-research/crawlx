@@ -18,7 +18,7 @@
 //! false when any state is unverifiable, including legitimate ZDR unavailability.
 
 use crate::BenchError;
-use chrono::Duration as ChronoDuration;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::counters::{ActionStatus, PlaneCounters};
 use crawlx_core::hash::Digest;
@@ -564,8 +564,8 @@ fn age_secs(now: Timestamp, at: Timestamp) -> i64 {
     (now - at).num_seconds()
 }
 
-fn chrono_dur(d: Duration) -> ChronoDuration {
-    ChronoDuration::milliseconds(i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+fn chrono_dur(d: Duration) -> SpanDuration {
+    SpanDuration::milliseconds(i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 /// Run every invariant over `s`. Pure: no I/O, no clock.
@@ -1294,7 +1294,7 @@ pub async fn verify_trail(run: CrawlRunId, store: TrailStore<'_>) -> Result<Trai
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
-    use chrono::{TimeZone as _, Utc};
+    use crawlx_core::time::Timestamp;
     use crawlx_core::counters::Counters;
     use crawlx_core::epoch::ObservationEpoch;
     use crawlx_core::traffic::Fidelity;
@@ -1306,7 +1306,7 @@ mod tests {
     }
 
     fn ts(secs: i64) -> Timestamp {
-        Utc.timestamp_opt(1_700_000_000 + secs, 0).unwrap()
+        Timestamp::from_timestamp(1_700_000_000 + secs, 0).unwrap()
     }
 
     fn action(session: SessionId, seq: u64, status: ActionStatus, before: StateId) -> ActionRecord {

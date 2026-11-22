@@ -7,6 +7,7 @@
 
 mod common;
 
+use crawlx_core::time::Duration;
 use common::authorization::run_authorized_local_with;
 use crawlx_core::archive::ArchiveConfigV1;
 use crawlx_core::archive_catalog::{ArchiveExportState, ArchiveReadV1};
@@ -115,7 +116,7 @@ async fn run() -> Option<Outcome> {
     orchestration.recrawl = Some(
         serde_json::from_value(serde_json::json!({
             "version": 1, "minIntervalMs": 50, "maxIntervalMs": 50, "maxVisits": VISITS,
-            "endAt": SystemClock.now() + chrono::Duration::minutes(10),
+            "endAt": SystemClock.now() + Duration::minutes(10),
         }))
         .unwrap(),
     );

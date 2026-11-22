@@ -5,6 +5,7 @@
 //! URLs are required; the tests report and return when either is absent.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crawlx_core::time::{Duration as SpanDuration, Timestamp};
 use crawlx_core::archive_catalog::ArchiveCustodyV1;
 use crawlx_core::counters::{RunStatus, TerminalReason};
 use crawlx_core::custody::{CustodyLease, FrozenArchiveSource, RunSecretAuthority, SecretEpoch};
@@ -82,8 +83,8 @@ async fn world() -> Option<World> {
 }
 
 /// PostgreSQL stores microseconds; exact proofs must be representable.
-fn micros(at: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
-    chrono::DateTime::from_timestamp_micros(at.timestamp_micros()).unwrap()
+fn micros(at: Timestamp) -> Timestamp {
+    Timestamp::from_timestamp_micros(at.timestamp_micros()).unwrap()
 }
 
 fn identity(seed: u8) -> CiphertextIdentity {
@@ -111,7 +112,7 @@ fn row(
             digest: Digest::of("crawlx/artifact/v1", &[seed; 64]),
             content_type: content_type.into(),
             sensitivity: class,
-            created_at: micros(chrono::Utc::now()),
+            created_at: micros(Timestamp::now()),
             expires_at: None,
         },
         cipher,
@@ -145,7 +146,7 @@ async fn terminal(w: &World, class: Sensitivity) -> (SecretEpoch, ArtifactRow) {
     let snapshot = w.authority.initialize(&w.session).await.unwrap();
     let (mut source, cipher) = row(w, "html", "text/html", class, 1);
     if class == Sensitivity::Sensitive {
-        source.expires_at = Some(micros(chrono::Utc::now() + chrono::Duration::hours(2)));
+        source.expires_at = Some(micros(Timestamp::now() + SpanDuration::hours(2)));
     }
     w.authority
         .publish(&w.session, snapshot.version, &source, &cipher, &envelope(&source))
@@ -437,7 +438,7 @@ async fn sensitive_sources_keep_the_grant_sensitive_and_bounded() {
         .await
         .is_err());
     let (mut late, cipher) = row(&w, "evidence", "application/warc", Sensitivity::Sensitive, 3);
-    late.expires_at = Some(deadline + chrono::Duration::hours(1));
+    late.expires_at = Some(deadline + SpanDuration::hours(1));
     assert!(w
         .authority
         .publish_frozen_archive(&grant, &lease, &late, &cipher, &envelope(&late))

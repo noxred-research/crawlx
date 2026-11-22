@@ -10,7 +10,7 @@
 
 use crawlx_core::config::Limits;
 use crawlx_core::counters::TerminalReason;
-use crawlx_core::time::Timestamp;
+use crawlx_core::time::{Duration as SpanDuration, Timestamp};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -82,7 +82,7 @@ impl Budget {
     #[must_use]
     pub fn new(limits: &Limits, started_at: Timestamp) -> Self {
         let deadline = started_at
-            .checked_add_signed(chrono::Duration::seconds(i64::from(limits.duration_seconds)))
+            .checked_add_signed(SpanDuration::seconds(i64::from(limits.duration_seconds)))
             .unwrap_or(started_at);
         Self {
             limit_urls: limits.urls,
@@ -145,8 +145,8 @@ impl Budget {
     /// Move the deadline out by `spent`: wall time that is not charged to
     /// `limits.durationSeconds` (compatibility flag `-crawl-duration` excludes login time). A negative
     /// `spent` is ignored.
-    pub fn credit_time(&mut self, spent: chrono::Duration) {
-        if spent > chrono::Duration::zero() {
+    pub fn credit_time(&mut self, spent: SpanDuration) {
+        if spent > SpanDuration::zero() {
             self.deadline = self.deadline.checked_add_signed(spent).unwrap_or(self.deadline);
         }
     }
@@ -233,11 +233,11 @@ impl Budget {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crawlx_core::time::Duration as SpanDuration;
     use super::*;
-    use chrono::TimeZone;
 
     fn t0() -> Timestamp {
-        chrono::Utc.with_ymd_and_hms(2026, 10, 20, 0, 0, 0).unwrap()
+        Timestamp::from_ymd_hms(2026, 10, 20, 0, 0, 0).unwrap()
     }
 
     fn limits(urls: u32, interactions: u32, states: u32, secs: u32) -> Limits {
@@ -289,10 +289,10 @@ mod tests {
     fn deadline_reached_wins_over_limit() {
         let mut b = Budget::new(&limits(1, 0, 0, 60), t0());
         b.try_consume(BudgetKind::Urls, 1).unwrap();
-        let late = t0() + chrono::Duration::seconds(60);
+        let late = t0() + SpanDuration::seconds(60);
         assert_eq!(b.exhausted(late), Some(TerminalReason::DeadlineReached));
         assert_eq!(
-            b.exhausted(t0() + chrono::Duration::seconds(59)),
+            b.exhausted(t0() + SpanDuration::seconds(59)),
             Some(TerminalReason::LimitReached)
         );
     }
@@ -300,23 +300,23 @@ mod tests {
     #[test]
     fn credited_time_moves_the_deadline_out_and_negative_credit_is_ignored() {
         let mut b = Budget::new(&limits(0, 0, 0, 60), t0());
-        let at_deadline = t0() + chrono::Duration::seconds(60);
+        let at_deadline = t0() + SpanDuration::seconds(60);
         assert_eq!(b.exhausted(at_deadline), Some(TerminalReason::DeadlineReached));
-        b.credit_time(chrono::Duration::seconds(30));
-        assert_eq!(b.deadline(), t0() + chrono::Duration::seconds(90));
+        b.credit_time(SpanDuration::seconds(30));
+        assert_eq!(b.deadline(), t0() + SpanDuration::seconds(90));
         assert_eq!(b.exhausted(at_deadline), None);
         assert_eq!(
-            b.exhausted(t0() + chrono::Duration::seconds(90)),
+            b.exhausted(t0() + SpanDuration::seconds(90)),
             Some(TerminalReason::DeadlineReached)
         );
-        b.credit_time(chrono::Duration::seconds(-500));
-        assert_eq!(b.deadline(), t0() + chrono::Duration::seconds(90));
+        b.credit_time(SpanDuration::seconds(-500));
+        assert_eq!(b.deadline(), t0() + SpanDuration::seconds(90));
     }
 
     #[test]
     fn remaining_reports_time_and_saturates() {
         let b = Budget::new(&limits(5, 6, 7, 120), t0());
-        let r = b.remaining(t0() + chrono::Duration::seconds(20));
+        let r = b.remaining(t0() + SpanDuration::seconds(20));
         assert_eq!(
             r,
             Remaining {
@@ -327,7 +327,7 @@ mod tests {
             }
         );
         assert_eq!(
-            b.remaining(t0() + chrono::Duration::seconds(500)).time,
+            b.remaining(t0() + SpanDuration::seconds(500)).time,
             Duration::ZERO
         );
     }

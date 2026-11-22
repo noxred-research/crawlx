@@ -6,7 +6,7 @@
 
 use super::support::{epoch, lease_all, new_run, open_sibling, sqlite_file, tenant, Raw, V};
 use crate::rig::Rig;
-use chrono::{DateTime, Duration, TimeZone as _, Utc};
+use crawlx_core::time::{Timestamp, Duration};
 use crawlx_core::counters::ActionStatus;
 use crawlx_core::repo::{ActionJournal, FrontierRepo, RunRepo, SessionStatus};
 use crawlx_core::{ActionId, CrawlRunId, SessionId, StateClusterId, WorkerId};
@@ -31,12 +31,12 @@ conformance! { databases:
 
 /// Instants far from now that every engine represents: the start of the Unix epoch and the
 /// year 9000 (inside `DATETIME(6)`, integer microseconds and `timestamptz` alike).
-fn long_ago() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap()
+fn long_ago() -> Timestamp {
+    Timestamp::from_ymd_hms(1970, 1, 1, 0, 0, 0).unwrap()
 }
 
-fn far_future() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(9000, 1, 1, 0, 0, 0).unwrap()
+fn far_future() -> Timestamp {
+    Timestamp::from_ymd_hms(9000, 1, 1, 0, 0, 0).unwrap()
 }
 
 db_case! {
@@ -224,7 +224,7 @@ struct LeasedRows {
     run: CrawlRunId,
     tenant: crawlx_core::TenantId,
     worker: WorkerId,
-    expires_at: DateTime<Utc>,
+    expires_at: Timestamp,
 }
 
 /// One batch of rows: ids `first..first + count`, each with `attempts` attempts.
@@ -363,7 +363,7 @@ async fn bulk_running_sessions(
     raw: &Raw<'_>,
     run: CrawlRunId,
     worker: WorkerId,
-    expires_at: DateTime<Utc>,
+    expires_at: Timestamp,
     first: usize,
     count: usize,
 ) {
@@ -479,7 +479,7 @@ db_case! {
 fn full_outcome(session: SessionId, cluster: StateClusterId) -> crawlx_core::repo::OutcomeRecord {
     use crawlx_core::observation::{ActionReceipt, SettleReport};
     use crawlx_core::traffic::{Fidelity, TrafficEvent, TrafficOrigin};
-    let now = Utc::now();
+    let now = Timestamp::now();
     let after = new_state(session, cluster, false, 2, epoch(1, 1, 5));
     crawlx_core::repo::OutcomeRecord {
         status: ActionStatus::Succeeded,

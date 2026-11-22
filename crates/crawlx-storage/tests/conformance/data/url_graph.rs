@@ -1,6 +1,7 @@
 //! Conformance cases (URL graph): persistence over the producer's custody lease, exact
 //! fencing and invalidation, restart, retention, ZDR and tenant isolation.
 
+use crawlx_core::time::{Duration, ManualClock};
 use super::reports::{exec, on_zdr_db, on_zdr_repo, scalar_i64, scalar_text, tenant_of, Bind};
 use crate::rig::Rig;
 use crawlx_core::config::RetentionMode;
@@ -9,7 +10,6 @@ use crawlx_core::hash::Digest;
 use crawlx_core::orchestration::{OrchestrationConfigV1, ProducerModeV1, RequestBatchV1};
 use crawlx_core::repo::{CrawlRun, FrontierRepo, FrontierStatus, RunRepo};
 use crawlx_core::request::RequestEnvelopeV1;
-use crawlx_core::time::ManualClock;
 use crawlx_core::url_graph::{
     UrlGraphBatchV1, UrlGraphEdgeV1, UrlGraphPolicyV1, UrlGraphRankStateV1, UrlGraphRepo, UrlGraphSnapshotV1,
     UrlHandleV1,
@@ -102,7 +102,7 @@ async fn graph_reuses_actual_lease_authority_and_invalidates_exactly(rig: &Rig) 
 }
 
 async fn authority<R: UrlGraphRepo + FrontierRepo + RunRepo>(repo: &R, tenant: TenantId) {
-    let (_, lease) = fixture(repo, tenant, chrono::Utc::now(), false).await;
+    let (_, lease) = fixture(repo, tenant, Timestamp::now(), false).await;
     contract(repo, &lease).await;
     // The producer lease is the only write authority: once its request completes, the fence
     // no longer holds.
@@ -208,7 +208,7 @@ async fn zdr_never_creates_a_graph(rig: &Rig) {
 }
 
 async fn zdr<R: UrlGraphRepo + FrontierRepo + RunRepo>(repo: &R, tenant: TenantId) {
-    let (_, lease) = fixture(repo, tenant, chrono::Utc::now(), true).await;
+    let (_, lease) = fixture(repo, tenant, Timestamp::now(), true).await;
     assert!(repo.configure(&lease, &policy()).await.is_err());
     assert!(repo.replace_source(&lease, &batch(), &policy()).await.is_err());
     assert!(repo.snapshot(lease.tenant, lease.run).await.is_err());
@@ -221,7 +221,7 @@ async fn cancelled_producer_cannot_change_graph_or_rank(rig: &Rig) {
 }
 
 async fn cancelled<R: UrlGraphRepo + FrontierRepo + RunRepo>(repo: &R, tenant: TenantId) {
-    let (_, lease) = fixture(repo, tenant, chrono::Utc::now(), false).await;
+    let (_, lease) = fixture(repo, tenant, Timestamp::now(), false).await;
     repo.configure(&lease, &policy()).await.unwrap();
     let ranks = repo
         .snapshot(lease.tenant, lease.run)
@@ -267,7 +267,7 @@ async fn written<R: UrlGraphRepo + FrontierRepo + RunRepo>(
     UrlGraphSnapshotV1,
     crawlx_core::url_graph::UrlGraphRanksV1,
 ) {
-    let (_, lease) = fixture(repo, tenant, chrono::Utc::now(), false).await;
+    let (_, lease) = fixture(repo, tenant, Timestamp::now(), false).await;
     contract(repo, &lease).await;
     let current_policy = repo.snapshot(lease.tenant, lease.run).await.unwrap().policy;
     repo.replace_source(&lease, &batch(), &current_policy)
@@ -286,7 +286,7 @@ async fn written<R: UrlGraphRepo + FrontierRepo + RunRepo>(
     assert!(!stored.contains("fixture.test"));
     assert!(!stored.contains("anchor-text"));
     // A ZDR run of another tenant never creates a graph row.
-    let (_, zdr) = fixture(repo, other, chrono::Utc::now(), true).await;
+    let (_, zdr) = fixture(repo, other, Timestamp::now(), true).await;
     assert!(repo.configure(&zdr, &policy()).await.is_err());
     assert_eq!(
         scalar_i64(
@@ -322,7 +322,7 @@ async fn retention_ends_expired_graphs_and_purge_erases_children(rig: &Rig) {
 }
 
 async fn retention<R: UrlGraphRepo + FrontierRepo + RunRepo + Purge>(rig: &Rig, repo: &R, tenant: TenantId) {
-    let (_, lease) = fixture(repo, tenant, chrono::Utc::now(), false).await;
+    let (_, lease) = fixture(repo, tenant, Timestamp::now(), false).await;
     repo.configure(&lease, &policy()).await.unwrap();
     repo.replace_source(&lease, &batch(), &policy()).await.unwrap();
     let ranks = repo
@@ -347,7 +347,7 @@ async fn retention<R: UrlGraphRepo + FrontierRepo + RunRepo + Purge>(rig: &Rig, 
             "{table}"
         );
     }
-    let expired = chrono::Utc::now() - chrono::Duration::days(1);
+    let expired = Timestamp::now() - Duration::days(1);
     exec(
         rig,
         "UPDATE url_graph_runs SET expires_at=$1 WHERE run_id=$2",

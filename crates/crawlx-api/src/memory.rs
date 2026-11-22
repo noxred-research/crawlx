@@ -13,7 +13,7 @@ use crate::store::{
     WebhookDelivery,
 };
 use async_trait::async_trait;
-use chrono::Duration as ChronoDuration;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::counters::ActionStatus;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{ActionJournal, ActionRecord, LedgerRepo};
@@ -321,7 +321,7 @@ impl ApiStore for MemoryApiStore {
         let mut g = self.inner.lock();
         let k = (tenant, key.to_owned());
         if let Some(row) = g.idem.get(&k) {
-            if row.created + ChronoDuration::hours(IDEMPOTENCY_RETENTION_HOURS) > now {
+            if row.created + SpanDuration::hours(IDEMPOTENCY_RETENTION_HOURS) > now {
                 if row.hash != request_hash {
                     return Ok(IdemBegin::Mismatch);
                 }
@@ -771,7 +771,7 @@ impl ApiStore for MemoryApiStore {
         for i in idx {
             let d = &mut g.deliveries[i];
             out.push(d.clone());
-            d.next_attempt_at = now + ChronoDuration::seconds(i64::from(lease_secs));
+            d.next_attempt_at = now + SpanDuration::seconds(i64::from(lease_secs));
         }
         Ok(out)
     }

@@ -12,7 +12,7 @@
 //! their sink requirement, including when invisible characters obfuscate exact-match labels.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::NaiveDate;
+use crawlx_core::time::NaiveDate;
 use crawlx_core::config::SafetyProfile;
 use crawlx_core::hash::Digest;
 use crawlx_core::identity::{ActionContextKey, ActionKind, ElementIdentityHash, InputClass, ResourceContext};

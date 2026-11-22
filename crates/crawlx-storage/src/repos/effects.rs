@@ -14,6 +14,7 @@
 //! and the feed finalization terminal updates (`feed_finalization.rs`). Pause and resume only
 //! move between the non-terminal `running` and `paused` states, which the triggers ignore.
 
+use crawlx_core::time::SecondsFormat;
 use crate::backend::strategy::{Conn, Timestamp};
 use crate::backend::{Backend, BackendKind, Dialect};
 use crate::sql::{db_clock, stmt, Sql, SqlRow, Stmt};
@@ -98,7 +99,7 @@ async fn expire_credentials<B: Sql>(conn: &mut Conn<B>, run: Uuid, now: Timestam
     .ts(now)
     .execute(conn)
     .await?;
-    let stamp = now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+    let stamp = now.to_rfc3339_opts(SecondsFormat::Micros, true);
     let binding = <B::Dialect as Dialect>::json_set(
         &<B::Dialect as Dialect>::json_set("binding", "state", "'retired'"),
         "expires_at",

@@ -19,6 +19,7 @@
 //! record (a partial line may be on disk) and the server refuses every call: it never runs
 //! unaudited.
 
+use crawlx_core::time::{SecondsFormat, Timestamp};
 use super::catalog::{self, Capability};
 use super::native::Native;
 use super::protocol::{RpcError, INVALID_PARAMS, METHOD_NOT_FOUND, SERVER_BUSY};
@@ -273,7 +274,7 @@ impl Audit {
         record.insert("seq".to_owned(), json!(seq));
         record.insert(
             "ts".to_owned(),
-            json!(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)),
+            json!(Timestamp::now().to_rfc3339_opts(SecondsFormat::Nanos, true)),
         );
         record.insert("prev".to_owned(), json!(chain.prev));
         record.insert("phase".to_owned(), json!(entry.phase.name()));

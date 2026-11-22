@@ -21,7 +21,7 @@ use uuid::Uuid;
 use super::Backend;
 
 /// Database time as the repositories carry it.
-pub type Timestamp = chrono::DateTime<chrono::Utc>;
+pub use crawlx_core::time::Timestamp;
 
 /// A driver row of backend `B`.
 pub type Row<B> = <<B as Backend>::Db as Database>::Row;

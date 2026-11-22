@@ -413,6 +413,7 @@ impl SessionBindingV1 {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crate::time::Duration;
     use super::*;
 
     fn binding() -> SessionBindingV1 {
@@ -430,14 +431,14 @@ mod tests {
                 profile: None,
             },
             7,
-            chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap(),
+            Timestamp::from_timestamp(2_000_000_000, 0).unwrap(),
         )
     }
 
     #[test]
     fn strict_role_and_fence_never_fall_back_to_another_identity() {
         let binding = binding();
-        let now = binding.expires_at - chrono::Duration::seconds(1);
+        let now = binding.expires_at - Duration::seconds(1);
         let mut wrong = binding.identity.clone();
         wrong.principal = PrincipalId("admin".into());
         assert_eq!(
@@ -480,7 +481,7 @@ mod tests {
     #[test]
     fn health_retirement_requires_confirmed_drain_before_replacement() {
         let mut binding = binding();
-        let now = binding.expires_at - chrono::Duration::seconds(1);
+        let now = binding.expires_at - Duration::seconds(1);
         binding
             .record_use(
                 false,
@@ -512,7 +513,7 @@ mod tests {
     fn successful_use_reduces_health_without_changing_identity_or_expiry() {
         let mut binding = binding();
         let original = binding.clone();
-        let now = binding.expires_at - chrono::Duration::seconds(1);
+        let now = binding.expires_at - Duration::seconds(1);
         binding.record_use(false, now, SessionLimits::default()).unwrap();
         assert_eq!(binding.health_errors, 1);
         binding.record_use(true, now, SessionLimits::default()).unwrap();
@@ -527,7 +528,7 @@ mod tests {
     #[test]
     fn failed_cleanup_keeps_health_generation_quarantined() {
         let mut binding = binding();
-        let now = binding.expires_at - chrono::Duration::seconds(1);
+        let now = binding.expires_at - Duration::seconds(1);
         let limits = SessionLimits {
             max_usage: 1,
             max_health_errors: 5,
@@ -546,7 +547,7 @@ mod tests {
     #[test]
     fn replacement_refuses_owner_policy_and_expiry_changes() {
         let mut binding = binding();
-        let now = binding.expires_at - chrono::Duration::seconds(1);
+        let now = binding.expires_at - Duration::seconds(1);
         let limits = SessionLimits {
             max_usage: 1,
             max_health_errors: 5,
@@ -588,7 +589,7 @@ mod tests {
             binding.replace(
                 binding.identity.clone(),
                 true,
-                binding.expires_at + chrono::Duration::seconds(1),
+                binding.expires_at + Duration::seconds(1),
             ),
             Err(SessionBindingError::GenerationConflict),
         );
@@ -619,7 +620,7 @@ mod tests {
         let mut binding = binding();
         binding.state_version = u64::MAX;
         let original = binding.clone();
-        let now = binding.expires_at - chrono::Duration::seconds(1);
+        let now = binding.expires_at - Duration::seconds(1);
         assert_eq!(
             binding.record_use(true, now, SessionLimits::default()),
             Err(SessionBindingError::Unavailable),

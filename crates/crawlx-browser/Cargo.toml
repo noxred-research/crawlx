@@ -37,7 +37,6 @@ zip.workspace = true
 [dev-dependencies]
 crawlx-fetch = { path = "../crawlx-fetch" }
 crawlx-observe = { path = "../crawlx-observe" }
-chrono.workspace = true
 bytes.workspace = true
 http.workspace = true
 http-body-util.workspace = true

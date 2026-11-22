@@ -3,6 +3,7 @@
 //! tracking, goal judging, search targets, webhooks, the ticker and retention. Everything runs
 //! in memory on a manual clock with mocked scrape, search, LLM and webhook transport.
 
+use crawlx_core::time::{Duration as SpanDuration, ManualClock, Timestamp};
 use async_trait::async_trait;
 use axum::body::Body;
 #[allow(
@@ -18,7 +19,6 @@ use crawlx_api::intel::tools::{MapLink, MockPageTools, ToolError};
 use crawlx_api::intel::webhook::{compat_signature, JobWebhookSink};
 use crawlx_api::webhooks::{TransportError, WebhookRequest, WebhookTransport};
 use crawlx_api::{ApiConfig, AppState, MemoryApiStore, Repos, Scope};
-use crawlx_core::time::ManualClock;
 use crawlx_core::{Clock, SystemClock, TenantId};
 use crawlx_model::llm::{LlmError, MockLlm};
 use crawlx_policy::AdmissionPolicy;
@@ -1811,7 +1811,7 @@ fn running_check(monitor: &str, tenant: TenantId, started_at: &str) -> CheckReco
         error: None,
         started_at: started,
         finished_at: None,
-        expires_at: started + chrono::Duration::days(30),
+        expires_at: started + SpanDuration::days(30),
     }
 }
 
@@ -1881,7 +1881,7 @@ async fn retention_hides_expired_checks_and_the_sweep_deletes_them() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(stored.expires_at, stored.started_at + chrono::Duration::days(2));
+    assert_eq!(stored.expires_at, stored.started_at + SpanDuration::days(2));
 
     // the default retention is 30 days
     let other = e.create(&scrape_monitor(&[url])).await["id"]
@@ -1899,7 +1899,7 @@ async fn retention_hides_expired_checks_and_the_sweep_deletes_them() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(kept.expires_at, kept.started_at + chrono::Duration::days(30));
+    assert_eq!(kept.expires_at, kept.started_at + SpanDuration::days(30));
 
     e.clock.advance_ms(24 * 3_600_000); // one day: still there
     let (_, v) = e.get(&format!("{BASE}/monitor/{id}/checks")).await;
@@ -1925,7 +1925,7 @@ async fn retention_hides_expired_checks_and_the_sweep_deletes_them() {
         .state
         .repos
         .intel
-        .purge_expired(e.clock.now(), chrono::DateTime::UNIX_EPOCH)
+        .purge_expired(e.clock.now(), Timestamp::UNIX_EPOCH)
         .await
         .unwrap();
     assert_eq!(report.checks, 1);

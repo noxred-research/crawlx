@@ -24,7 +24,7 @@ mod corpus_support;
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::TcpListener;
 
-use chrono::NaiveDate;
+use crawlx_core::time::NaiveDate;
 use corpus_support::*;
 use crawlx_core::extraction::{DiscoveryPurposeV1, ExtractionPolicyV1};
 use crawlx_extract::{Document, ExtractOptions, Extractor};

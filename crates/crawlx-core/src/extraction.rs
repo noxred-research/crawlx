@@ -4,7 +4,7 @@
 //! pass the same retention/redaction boundary as the document they describe.
 
 use crate::{hash::Digest, CoreError};
-use chrono::NaiveDate;
+use crate::time::NaiveDate;
 use serde::{Deserialize, Serialize};
 
 mod regex_admission;

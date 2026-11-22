@@ -3,7 +3,7 @@
 //! schema on `CRAWLX_TEST_DATABASE_URL`; without that variable every test returns early.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::{DateTime, Duration, Utc};
+use crawlx_core::time::{Timestamp, Duration};
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{PageRecord, PageRepo, RunRepo};
 use crawlx_core::{ArtifactId, ArtifactRef, CanonicalUrl, CrawlRunId, TenantId, TrustLane};
@@ -61,7 +61,7 @@ impl Env {
     }
 
     /// A page of `run` for `url`, fetched at `at`, carrying `marker` in its metadata.
-    async fn page(&self, run: CrawlRunId, url: &CanonicalUrl, at: DateTime<Utc>, marker: &str) {
+    async fn page(&self, run: CrawlRunId, url: &CanonicalUrl, at: Timestamp, marker: &str) {
         let (_, frontier) = crawlx_core::repo::FrontierRepo::discover(&self.pg, run, url, 0, None, None)
             .await
             .unwrap();
@@ -104,7 +104,7 @@ async fn recent_pages_of_a_url_come_newest_first_within_one_tenant() {
     let (a1, a2, b1) = (env.run(alpha).await, env.run(alpha).await, env.run(beta).await);
     let u = canonical_url("https://example.test/pricing");
     let other = canonical_url("https://example.test/other");
-    let t0 = chrono::DateTime::from_timestamp_millis(Utc::now().timestamp_millis()).unwrap();
+    let t0 = Timestamp::from_timestamp_millis(Timestamp::now().timestamp_millis()).unwrap();
     env.page(a1, &u, t0, "alpha-old").await;
     env.page(a2, &u, t0 + Duration::seconds(10), "alpha-new").await;
     env.page(b1, &u, t0 + Duration::seconds(20), "beta-newest").await;
@@ -143,7 +143,7 @@ async fn the_page_rows_come_back_whole_including_artifacts_and_metadata() {
     let tenant = env.tenant("alpha").await;
     let run = env.run(tenant).await;
     let u = canonical_url("https://example.test/whole");
-    let at = chrono::DateTime::from_timestamp_millis(Utc::now().timestamp_millis()).unwrap();
+    let at = Timestamp::from_timestamp_millis(Timestamp::now().timestamp_millis()).unwrap();
     env.page(run, &u, at, "whole").await;
     let rows = env.pg.recent_for_url(tenant, &u, 5).await.unwrap();
     assert_eq!(rows.len(), 1);

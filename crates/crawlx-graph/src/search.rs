@@ -378,7 +378,7 @@ mod tests {
     use super::*;
     use crate::edge::EdgeContext;
     use crate::testutil::{act, cluster, graph, hash, obs, t0};
-    use chrono::Duration;
+    use crawlx_core::time::Duration;
 
     fn safe(_: ActionContextId) -> bool {
         true

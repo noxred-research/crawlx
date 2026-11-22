@@ -5,7 +5,7 @@
 //! `unknown` flip and reconciliation, and the outcome counts.
 
 use super::support::{epoch, lease_all, new_run, tenant, Raw, V};
-use chrono::{Duration, Utc};
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::counters::{ActionStatus, ReconcileResolution};
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::hash::Digest;
@@ -44,7 +44,7 @@ fn outcome_failed() -> OutcomeRecord {
         after_state: None,
         traffic: Vec::new(),
         error: Some("boom".to_owned()),
-        finished_at: Utc::now(),
+        finished_at: Timestamp::now(),
     }
 }
 
@@ -53,7 +53,7 @@ fn succeeded_outcome(
     after: Option<crawlx_core::repo::NewState>,
     url: &str,
 ) -> OutcomeRecord {
-    let now = Utc::now();
+    let now = Timestamp::now();
     OutcomeRecord {
         status: ActionStatus::Succeeded,
         receipt: Some(ActionReceipt {
@@ -138,7 +138,7 @@ db_case! {
         ));
 
         let after = new_state(session, cluster, false, 2, epoch(1, 1, 5));
-        let now = Utc::now();
+        let now = Timestamp::now();
         let outcome = OutcomeRecord {
             status: ActionStatus::Succeeded,
             receipt: Some(ActionReceipt {
@@ -453,7 +453,7 @@ db_case! {
                 Reconciliation {
                     resolution: ReconcileResolution::NotApplied,
                     evidence: serde_json::json!({"probe": "absent"}),
-                    reconciled_at: Utc::now(),
+                    reconciled_at: Timestamp::now(),
                 },
             )
             .await
@@ -486,7 +486,7 @@ db_case! {
                         Reconciliation {
                             resolution: ReconcileResolution::Applied,
                             evidence: serde_json::json!({}),
-                            reconciled_at: Utc::now()
+                            reconciled_at: Timestamp::now()
                         }
                     )
                     .await,
@@ -518,7 +518,7 @@ db_case! {
                     Reconciliation {
                         resolution,
                         evidence: serde_json::json!({}),
-                        reconciled_at: Utc::now(),
+                        reconciled_at: Timestamp::now(),
                     },
                 )
                 .await
@@ -590,7 +590,7 @@ all_case! {
             after_state: None,
             traffic: Vec::new(),
             error: None,
-            finished_at: Utc::now(),
+            finished_at: Timestamp::now(),
         };
         let mut ids = Vec::new();
         for n in 1..=6 {
@@ -634,7 +634,7 @@ all_case! {
                     Reconciliation {
                         resolution,
                         evidence: serde_json::json!({}),
-                        reconciled_at: Utc::now(),
+                        reconciled_at: Timestamp::now(),
                     },
                 )
                 .await
@@ -909,7 +909,7 @@ db_case! {
                 assert_total(&ActionJournal::get(store, id).await.unwrap(), "proposed");
                 store.intend(id, session, epoch(1, 1, 0)).await.unwrap();
                 assert_total(&ActionJournal::get(store, id).await.unwrap(), "intended");
-                let now = Utc::now();
+                let now = Timestamp::now();
                 store
                     .finish(
                         id,

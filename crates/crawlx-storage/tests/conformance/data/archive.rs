@@ -4,6 +4,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crawlx_core::time::{Duration, FixedDateTime, ManualClock};
 use crate::data::raw::{Raw, V};
 use crate::rig::Rig;
 use crawlx_core::archive::{
@@ -16,7 +17,6 @@ use crawlx_core::archive_catalog::{
 };
 use crawlx_core::counters::TerminalReason;
 use crawlx_core::repo::{ArtifactStore, RunRepo, Sensitivity};
-use crawlx_core::time::ManualClock;
 use crawlx_core::{ArtifactRef, Clock, StoreError, TenantId, Timestamp};
 use crawlx_storage::archive::{cdxj, warc, Limits};
 use crawlx_storage::sql::Sql;
@@ -132,7 +132,7 @@ macro_rules! on_store {
 
 fn at() -> Timestamp {
     static START: std::sync::LazyLock<Timestamp> = std::sync::LazyLock::new(|| {
-        chrono::DateTime::from_timestamp_millis(chrono::Utc::now().timestamp_millis()).unwrap()
+        Timestamp::from_timestamp_millis(Timestamp::now().timestamp_millis()).unwrap()
     });
     *START
 }
@@ -172,7 +172,7 @@ fn pending(tenant: TenantId, run: &crawlx_core::repo::CrawlRun, config: ArchiveC
         run.id,
         config,
         at(),
-        Some(at() + chrono::Duration::days(7)),
+        Some(at() + Duration::days(7)),
         TerminalReason::FrontierExhausted,
     )
 }
@@ -369,7 +369,7 @@ async fn exercise(
         .await
         .is_err());
     // Object committed, writer died before the catalog row. Recovery owns a newer fence.
-    let recovery_time = at() + chrono::Duration::seconds(121);
+    let recovery_time = at() + Duration::seconds(121);
     let recovered = repo
         .claim(tenant, pending.id, recovery_time)
         .await
@@ -428,7 +428,7 @@ async fn exercise(
         "unpublished baseline must not escape"
     );
     // Record row committed, writer died before publishing the final manifest.
-    let publish_time = recovery_time + chrono::Duration::seconds(121);
+    let publish_time = recovery_time + Duration::seconds(121);
     let publisher = repo
         .claim(tenant, pending.id, publish_time)
         .await
@@ -683,7 +683,7 @@ where
         .unwrap()
         .is_none());
     // an expired export is not eligible
-    let expired = published.now + chrono::Duration::days(8);
+    let expired = published.now + Duration::days(8);
     assert!(repo
         .history(tenant, &published.key, expired)
         .await
@@ -788,7 +788,7 @@ where
     let run = source(repo.as_ref(), tenant).await;
     let export = pending(tenant, &run, config());
     repo.begin(&export).await.unwrap();
-    let soon = at() + chrono::Duration::seconds(1);
+    let soon = at() + Duration::seconds(1);
     let listed = repo.recoverable(soon, 64).await.unwrap();
     assert_eq!(
         listed.iter().map(|row| row.id).collect::<Vec<_>>(),
@@ -799,14 +799,14 @@ where
     // a writer holding the lease is not recoverable until the lease lapses
     repo.claim(tenant, export.id, soon).await.unwrap().unwrap();
     assert!(repo
-        .recoverable(soon + chrono::Duration::seconds(1), 64)
+        .recoverable(soon + Duration::seconds(1), 64)
         .await
         .unwrap()
         .is_empty());
-    let lapsed = soon + chrono::Duration::seconds(121);
+    let lapsed = soon + Duration::seconds(121);
     assert_eq!(repo.recoverable(lapsed, 64).await.unwrap().len(), 1);
     // an export past its expiry is not recoverable
-    let expired = at() + chrono::Duration::days(8);
+    let expired = at() + Duration::days(8);
     assert!(repo.recoverable(expired, 64).await.unwrap().is_empty());
     // a published export stays recoverable while the run is active, lease or not
     let staged = stage(
@@ -895,7 +895,7 @@ where
         run,
         config_with(ArchiveDedupe::Collection),
         at(),
-        Some(at() + chrono::Duration::days(7)),
+        Some(at() + Duration::days(7)),
         TerminalReason::FrontierExhausted,
     );
     assert!(repo.begin(&foreign).await.is_err());
@@ -929,7 +929,7 @@ where
     let mut run = crawl_run(tenant, config.clone());
     run.created_at = at();
     RunRepo::create(repo.as_ref(), &run, None).await.unwrap();
-    let expiry = at() + chrono::Duration::days(1);
+    let expiry = at() + Duration::days(1);
     let pending = ArchiveExportV1::pending(
         tenant,
         run.id,
@@ -985,7 +985,7 @@ where
     let mut run = crawl_run(tenant, cfg);
     run.created_at = now;
     RunRepo::create(repo.as_ref(), &run, None).await.unwrap();
-    let deadline = now + chrono::Duration::minutes(10);
+    let deadline = now + Duration::minutes(10);
     let body = vec![b'x'; 65_536];
     let source = artifacts
         .put_until(run.id, Sensitivity::Sensitive, "text/plain", &body, deadline)
@@ -1013,7 +1013,7 @@ where
             tenant,
             run.id,
             &source,
-            &ArchiveCustodyV1::sensitive(deadline + chrono::Duration::seconds(1)),
+            &ArchiveCustodyV1::sensitive(deadline + Duration::seconds(1)),
             65_536,
         )
         .await
@@ -1088,7 +1088,7 @@ where
             .await
             .unwrap()
             .unwrap();
-        let deadline = at() + chrono::Duration::minutes(10);
+        let deadline = at() + Duration::minutes(10);
         let source = artifacts
             .put_until(
                 run.id,
@@ -1145,7 +1145,7 @@ where
             if rig.engine() == Engine::Memory {
                 // the in-memory index replaces a row recorded again
                 match change {
-                    "shorten" => row.expires_at = Some(deadline - chrono::Duration::seconds(1)),
+                    "shorten" => row.expires_at = Some(deadline - Duration::seconds(1)),
                     "class" => row.sensitivity = Sensitivity::Content,
                     "digest" => row.digest = crawlx_core::hash::Digest::of("crawlx/test/source", b"changed"),
                     _ => unreachable!(),
@@ -1158,7 +1158,7 @@ where
                     "shorten" => {
                         raw.exec(
                             "UPDATE artifacts SET expires_at=$1 WHERE artifact_id=$2",
-                            &[V::Ts(deadline - chrono::Duration::seconds(1)), id],
+                            &[V::Ts(deadline - Duration::seconds(1)), id],
                         )
                         .await
                     }
@@ -1254,7 +1254,7 @@ async fn authority_contract<B: Sql>(rig: &Rig, pg: Store<B>, tenant: TenantId) {
         let pending = pending(tenant, &run, config());
         pg.begin(&pending).await.unwrap();
         let claim = pg.claim(tenant, pending.id, clock.now()).await.unwrap().unwrap();
-        let deadline = at() + chrono::Duration::minutes(10) + chrono::Duration::nanoseconds(123_456_789);
+        let deadline = at() + Duration::minutes(10) + Duration::nanoseconds(123_456_789);
         let evidence = artifacts
             .put_until(
                 run.id,
@@ -1350,7 +1350,7 @@ async fn authority_contract<B: Sql>(rig: &Rig, pg: Store<B>, tenant: TenantId) {
                 .exec(
                     "UPDATE artifacts SET expires_at=$1 WHERE artifact_id=$2",
                     &[
-                        V::Ts(deadline - chrono::Duration::seconds(1)),
+                        V::Ts(deadline - Duration::seconds(1)),
                         V::Uuid(evidence.id.0),
                     ],
                 )
@@ -1389,9 +1389,9 @@ async fn traffic_projection_preserves_chronology_and_never_adopts_foreign_artifa
 async fn traffic_contract<B: Sql>(rig: &Rig, pg: Store<B>, tenant: TenantId, other_tenant: TenantId) {
     use crawlx_storage::archive::{recorded, retained};
     let raw = Raw(rig);
-    let at = chrono::DateTime::parse_from_rfc3339("2026-11-04T12:34:56.789Z")
+    let at = FixedDateTime::parse_rfc3339("2026-11-04T12:34:56.789Z")
         .unwrap()
-        .with_timezone(&chrono::Utc);
+        .to_utc();
     let clock = Arc::new(ManualClock::new(at));
     let mut run = crawl_run(tenant, create_crawl("https://example.test/", &[], 1));
     run.created_at = at;

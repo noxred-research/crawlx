@@ -7,6 +7,7 @@
 //! `status_code`. The file is created even when nothing failed, as the reference tool creates it at
 //! start-up.
 
+use crawlx_core::time::Timestamp;
 use super::text_file::TextFile;
 use super::OutputError;
 use crate::run::UrlFailure;
@@ -38,7 +39,7 @@ pub fn write_error_log(
     no_clobber: bool,
 ) -> Result<PathBuf, OutputError> {
     let mut file = TextFile::create(path, no_clobber)?;
-    let timestamp = chrono::Utc::now();
+    let timestamp = Timestamp::now();
     for failure in failures {
         let line = Line {
             timestamp,

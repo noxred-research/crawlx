@@ -1,5 +1,6 @@
 //! Session binding metadata subordinate to the existing session lease, never a new lock service.
 
+use crawlx_core::time::Duration;
 use crate::backend::strategy::Conn;
 use crate::backend::{BackendKind, Dialect, RowLock};
 use crate::codec::{from_json, to_json};
@@ -174,13 +175,13 @@ pub(crate) async fn budget_clock_deadline<R: RunRepo + EventRepo + ?Sized>(
     let deadline = run
         .started_at
         .unwrap_or(run.created_at)
-        .checked_add_signed(chrono::Duration::seconds(i64::from(
+        .checked_add_signed(Duration::seconds(i64::from(
             run.config.limits.duration_seconds,
         )))
         .and_then(|deadline| {
             i64::try_from(millis)
                 .ok()
-                .and_then(|millis| deadline.checked_add_signed(chrono::Duration::milliseconds(millis)))
+                .and_then(|millis| deadline.checked_add_signed(Duration::milliseconds(millis)))
         })
         .ok_or_else(|| StoreError::Conflict("session binding clock overflow".into()))?;
     Ok((deadline, allowance))
@@ -326,7 +327,7 @@ impl<B: Sql> Store<B> {
             };
             let previous_ceiling = current
                 .expires_at
-                .checked_add_signed(chrono::Duration::milliseconds(recovery_allowance))
+                .checked_add_signed(Duration::milliseconds(recovery_allowance))
                 .unwrap_or(current.expires_at);
             current.lease_fence = lease.fencing_token;
             current.state = BindingState::Leased;

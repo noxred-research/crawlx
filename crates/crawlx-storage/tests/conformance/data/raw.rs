@@ -3,9 +3,8 @@
 //! (PostgreSQL casts allowed, each placeholder used once and in order) and expanded for the
 //! rig's engine.
 
+use crawlx_core::time::{NaiveDateTime, Timestamp};
 use crate::rig::Rig;
-use chrono::{DateTime, Utc};
-use crawlx_core::Timestamp;
 use crawlx_storage::backend::BackendKind;
 use crawlx_storage::sql::Built;
 use sqlx::Row as _;
@@ -50,7 +49,7 @@ impl Raw<'_> {
         let database = self.0.database();
         match self.0.kind().unwrap() {
             BackendKind::Sqlite => {
-                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .timestamp_micros())
                 .execute(database.sqlite_pool().unwrap())
                 .await
@@ -58,14 +57,14 @@ impl Raw<'_> {
                 .rows_affected()
             }
             BackendKind::MariaDb => {
-                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .naive_utc())
                 .execute(database.mariadb_pool().unwrap())
                 .await
                 .unwrap()
                 .rows_affected()
             }
-            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t)
+            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t)
                 .execute(database.postgres().unwrap().pool())
                 .await
                 .unwrap()
@@ -79,30 +78,30 @@ impl Raw<'_> {
         let database = self.0.database();
         match self.0.kind().unwrap() {
             BackendKind::Sqlite => {
-                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .timestamp_micros())
                 .fetch_one(database.sqlite_pool().unwrap())
                 .await
                 .unwrap()
                 .try_get::<Option<i64>, _>(0)
                 .unwrap()
-                .map(|micros| DateTime::from_timestamp_micros(micros).unwrap())
+                .map(|micros| Timestamp::from_timestamp_micros(micros).unwrap())
             }
             BackendKind::MariaDb => {
-                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .naive_utc())
                 .fetch_one(database.mariadb_pool().unwrap())
                 .await
                 .unwrap()
-                .try_get::<Option<chrono::NaiveDateTime>, _>(0)
+                .try_get::<Option<NaiveDateTime>, _>(0)
                 .unwrap()
                 .map(|naive| naive.and_utc())
             }
-            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t)
+            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t)
                 .fetch_one(database.postgres().unwrap().pool())
                 .await
                 .unwrap()
-                .try_get::<Option<DateTime<Utc>>, _>(0)
+                .try_get::<Option<Timestamp>, _>(0)
                 .unwrap(),
         }
     }

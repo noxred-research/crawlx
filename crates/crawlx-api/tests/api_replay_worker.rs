@@ -3,6 +3,7 @@
 
 mod common;
 
+use crawlx_core::time::Duration as SpanDuration;
 use async_trait::async_trait;
 use axum::http::StatusCode;
 use common::{env, Env};
@@ -646,7 +647,7 @@ async fn api_replay_worker_kill_reaps_lease_and_skips_the_committed_non_idempote
     recorded
         .env
         .store
-        .expire_session_lease(session.id, SystemClock.now() - chrono::Duration::hours(1));
+        .expire_session_lease(session.id, SystemClock.now() - SpanDuration::hours(1));
 
     let second = backend(site(false));
     recorded.dispatch(second.clone()).await;

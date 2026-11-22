@@ -1,7 +1,7 @@
 //! Small conversions between `crawlx-core` values and column representations.
 
+use crawlx_core::time::{Duration as SpanDuration, NaiveDateTime, Timestamp};
 use crate::error::db;
-use chrono::Duration as ChronoDuration;
 use crawlx_core::hash::Digest;
 use crawlx_core::traffic::TrafficOrigin;
 use crawlx_core::url::CanonicalUrl;
@@ -137,7 +137,7 @@ pub(crate) const SQLITE_POS_INFINITY: i64 = crate::backend::dialect::SQLITE_POS_
     dead_code,
     reason = "used by the SQLite and MariaDB repositories of later slices"
 )]
-pub(crate) fn ts_to_micros(ts: chrono::DateTime<chrono::Utc>) -> i64 {
+pub(crate) fn ts_to_micros(ts: Timestamp) -> i64 {
     ts.timestamp_micros()
 }
 
@@ -147,19 +147,19 @@ pub(crate) fn ts_to_micros(ts: chrono::DateTime<chrono::Utc>) -> i64 {
     dead_code,
     reason = "used by the SQLite and MariaDB repositories of later slices"
 )]
-pub(crate) fn ts_from_micros(micros: i64) -> Result<chrono::DateTime<chrono::Utc>, StoreError> {
-    chrono::DateTime::from_timestamp_micros(micros)
+pub(crate) fn ts_from_micros(micros: i64) -> Result<Timestamp, StoreError> {
+    Timestamp::from_timestamp_micros(micros)
         .ok_or_else(|| StoreError::Serialization(format!("timestamp {micros} out of range")))
 }
 
-/// The MariaDB bind form of a timestamp. `DateTime<Utc>` binds as `TIMESTAMP`, whose range
+/// The MariaDB bind form of a timestamp. `Timestamp` binds as `TIMESTAMP`, whose range
 /// ends in 2038 and silently stores out-of-range values as NULL; a naive UTC `DATETIME(6)`
 /// value keeps the full range (including the `1000-01-01` and `9999-12-31` sentinels).
 #[allow(
     dead_code,
     reason = "used by the SQLite and MariaDB repositories of later slices"
 )]
-pub(crate) fn ts_to_naive(ts: chrono::DateTime<chrono::Utc>) -> chrono::NaiveDateTime {
+pub(crate) fn ts_to_naive(ts: Timestamp) -> NaiveDateTime {
     ts.naive_utc()
 }
 
@@ -168,7 +168,7 @@ pub(crate) fn ts_to_naive(ts: chrono::DateTime<chrono::Utc>) -> chrono::NaiveDat
     dead_code,
     reason = "used by the SQLite and MariaDB repositories of later slices"
 )]
-pub(crate) fn ts_from_naive(naive: chrono::NaiveDateTime) -> chrono::DateTime<chrono::Utc> {
+pub(crate) fn ts_from_naive(naive: NaiveDateTime) -> Timestamp {
     naive.and_utc()
 }
 
@@ -193,13 +193,13 @@ pub(crate) fn from_json_text(text: &str) -> Result<serde_json::Value, StoreError
 
 /// Retention horizon of `days` days after `from`; `0` means no expiry.
 pub(crate) fn expiry(
-    from: chrono::DateTime<chrono::Utc>,
+    from: Timestamp,
     days: u32,
-) -> Option<chrono::DateTime<chrono::Utc>> {
+) -> Option<Timestamp> {
     if days == 0 {
         None
     } else {
-        Some(from + ChronoDuration::days(i64::from(days)))
+        Some(from + SpanDuration::days(i64::from(days)))
     }
 }
 
@@ -228,6 +228,7 @@ pub(crate) fn unpack_u64s(b: &[u8]) -> Result<Vec<u64>, StoreError> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crawlx_core::time::{NaiveDate, Timestamp};
     use super::*;
     use crawlx_core::traffic::TrustLane;
 
@@ -261,7 +262,7 @@ mod tests {
 
     #[test]
     fn timestamps_round_trip_on_every_representation() {
-        let ts = chrono::DateTime::from_timestamp_micros(1_700_000_000_123_456).unwrap();
+        let ts = Timestamp::from_timestamp_micros(1_700_000_000_123_456).unwrap();
         assert_eq!(ts_from_micros(ts_to_micros(ts)).unwrap(), ts);
         assert_eq!(ts_from_naive(ts_to_naive(ts)), ts);
         // the sentinels are year 1 and year 9999 on both new engines
@@ -271,7 +272,7 @@ mod tests {
         assert_eq!(always.to_rfc3339(), "0001-01-01T00:00:00+00:00");
         assert!(ts_from_micros(i64::MAX).is_err());
         // a naive value past the TIMESTAMP range survives the MariaDB form
-        let far = chrono::NaiveDate::from_ymd_opt(9999, 12, 31)
+        let far = NaiveDate::from_ymd_opt(9999, 12, 31)
             .unwrap()
             .and_hms_micro_opt(23, 59, 59, 999_999)
             .unwrap();
@@ -289,8 +290,8 @@ mod tests {
 
     #[test]
     fn zero_days_means_no_expiry() {
-        let now = chrono::Utc::now();
+        let now = Timestamp::now();
         assert!(expiry(now, 0).is_none());
-        assert_eq!(expiry(now, 2).unwrap() - now, ChronoDuration::days(2));
+        assert_eq!(expiry(now, 2).unwrap() - now, SpanDuration::days(2));
     }
 }

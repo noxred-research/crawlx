@@ -21,6 +21,7 @@
 //! transaction and [`Stmt::execute_write`] / [`Stmt::fetch_optional_write`] for a lone
 //! statement. A single-statement write on PostgreSQL and MariaDB runs on the pool directly.
 
+use crawlx_core::time::NaiveDateTime;
 use crate::backend::strategy::{Concurrency, Conn, Timestamp, WriteTx};
 use crate::backend::{Backend, BackendKind, MariaBackend, PgBackend, SqliteBackend};
 use crate::codec::{from_json_text, to_json_text, ts_from_micros};
@@ -411,7 +412,7 @@ macro_rules! direct_ints {
 /// functions (`SYSDATE(6)`) as `TIMESTAMP`, which sqlx only decodes as a zoned instant. Sessions
 /// run in UTC, so both are the same instant.
 fn maria_ts(row: &MySqlRow, col: &str) -> Result<Option<Timestamp>, StoreError> {
-    match row.try_get::<Option<chrono::NaiveDateTime>, _>(col) {
+    match row.try_get::<Option<NaiveDateTime>, _>(col) {
         Ok(naive) => Ok(naive.map(|naive| naive.and_utc())),
         Err(sqlx::Error::ColumnDecode { .. }) => row.try_get::<Option<Timestamp>, _>(col).map_err(db),
         Err(other) => Err(db(other)),

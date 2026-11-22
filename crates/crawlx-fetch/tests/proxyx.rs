@@ -9,6 +9,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod common;
 
+use crawlx_core::time::Timestamp;
 use base64::Engine as _;
 use common::{allow_private_policy, fast_config, url, LOOPBACK};
 use crawlx_core::hash::Digest;
@@ -227,7 +228,7 @@ fn session(route: &ProxyxRoute, name: &str) -> SessionBindingV1 {
     SessionBindingV1::new(
         identity,
         7,
-        chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap(),
+        Timestamp::from_timestamp(2_000_000_000, 0).unwrap(),
     )
 }
 

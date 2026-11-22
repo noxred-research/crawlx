@@ -6,7 +6,7 @@
 //! in isolation; this test runs it end to end through `ReplayValidator`).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::{Duration, TimeZone, Utc};
+use crawlx_core::time::Duration;
 use crawlx_core::hash::Digest;
 use crawlx_core::identity::ElementIdentityHash;
 use crawlx_core::{ActionContextId, CrawlRunId, RouteTemplate, StateClusterId, Timestamp, TrustLane};
@@ -17,7 +17,7 @@ use crawlx_graph::{
 use uuid::Uuid;
 
 fn t0() -> Timestamp {
-    Utc.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap()
+    Timestamp::from_ymd_hms(2026, 2, 1, 0, 0, 0).unwrap()
 }
 fn act(n: u8) -> ActionContextId {
     ActionContextId([n; 16])

@@ -1,5 +1,6 @@
 //! Crash-safe page files; every entry point is called from `spawn_blocking`.
 
+use crawlx_core::time::Duration;
 use super::{BufferLimits, BufferedPage, PageKey, PageMeta, Pages, DEFAULT_TTL};
 use crawlx_core::{CrawlRunId, StoreError, TenantId};
 use serde::Deserialize;
@@ -409,7 +410,7 @@ fn read_header_from(reader: &mut impl BufRead) -> Result<PageMeta, StoreError> {
 }
 
 fn validate_metadata(meta: &PageMeta) -> Result<(), StoreError> {
-    let ttl = chrono::Duration::from_std(DEFAULT_TTL).map_err(serialization_error)?;
+    let ttl = Duration::from_std(DEFAULT_TTL).map_err(serialization_error)?;
     let latest = meta
         .inserted_at
         .checked_add_signed(ttl)

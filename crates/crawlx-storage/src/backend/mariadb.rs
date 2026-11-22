@@ -4,6 +4,7 @@
 //! at connect; dropping it would turn `||` into a logical OR). The code never relies on
 //! `INSERT IGNORE`, which swallows foreign key, check and `NOT NULL` errors.
 
+use crawlx_core::time::Timestamp;
 use super::dialect::MariaDbDialect;
 use super::strategy::{
     AuditEntry, Concurrency, FenceSeq, FrontierClaim, LockMode, MonitorClaim, OutboxClaim, Query,
@@ -165,7 +166,7 @@ pub(crate) async fn migrate(store: &Store<MariaBackend>) -> Result<(), StoreErro
 }
 
 /// `NOW(6)` of the server, in UTC.
-pub(crate) async fn db_now(store: &Store<MariaBackend>) -> Result<chrono::DateTime<chrono::Utc>, StoreError> {
+pub(crate) async fn db_now(store: &Store<MariaBackend>) -> Result<Timestamp, StoreError> {
     sqlx::query_scalar("SELECT NOW(6)")
         .fetch_one(&store.pool)
         .await

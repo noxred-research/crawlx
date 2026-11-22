@@ -4,6 +4,7 @@
 //! created.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crawlx_core::time::{Duration, Timestamp};
 use super::amqp::{connection_uri, AmqpDestination, AmqpSettings};
 use super::clickhouse::ClickHouseDestination;
 use super::http::InfraHttp;
@@ -51,12 +52,12 @@ fn batch(key: &str, bytes: &[u8]) -> DeliveryBatchV1 {
             },
         },
         bytes.len() as u64,
-        chrono::Utc::now() + chrono::Duration::hours(1),
+        Timestamp::now() + Duration::hours(1),
     )
 }
 
 fn standard_run() -> CrawlRun {
-    run(RetentionMode::Standard, chrono::Utc::now(), &["json"])
+    run(RetentionMode::Standard, Timestamp::now(), &["json"])
 }
 
 fn projection(id: &str, deleted: bool, title: &str) -> Bytes {
@@ -245,7 +246,7 @@ async fn search_cycle(url: &str, engine: SearchEngine, other_engine: SearchEngin
 }
 
 fn run_zdr() -> CrawlRun {
-    run(RetentionMode::Zdr, chrono::Utc::now(), &["json"])
+    run(RetentionMode::Zdr, Timestamp::now(), &["json"])
 }
 
 #[tokio::test]

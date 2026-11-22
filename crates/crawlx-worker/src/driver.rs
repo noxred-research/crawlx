@@ -6,6 +6,7 @@
 //! Recovery repairs both journal-derived interaction counters and committed browser URL counters
 //! before the session resumes; a dynamic-only run has no HTTP runner to repair its URL projection.
 
+use crawlx_core::time::Duration as SpanDuration;
 use crate::actor::{under, ActionOutcome, DropReason, SessionHandle, SessionState};
 use crate::analysis::StateAnalyzer;
 use crate::counters::{Attempt, Plane};
@@ -1772,7 +1773,7 @@ impl ExplorationDriver {
         // time (read from the run's clock); `limits.durationSeconds` still bounds the whole run
         let interaction_deadline = (self.rc.crawl.dynamic.interaction_duration_seconds > 0).then(|| {
             self.rc.clock.now()
-                + chrono::Duration::seconds(i64::from(self.rc.crawl.dynamic.interaction_duration_seconds))
+                + SpanDuration::seconds(i64::from(self.rc.crawl.dynamic.interaction_duration_seconds))
         });
         let mut halts = 0u32;
         let mut storage_halt = None;

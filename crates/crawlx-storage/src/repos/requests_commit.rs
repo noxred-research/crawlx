@@ -1,5 +1,6 @@
 //! `RequestCommitRepo`: observed-request leases, request commits, feed finalization hooks and
 //! extension attempts over the authoritative URL frontier.
+use crawlx_core::time::{Duration, Timestamp};
 use super::requests::*;
 use crate::backend::strategy::{Conn, FenceSeq};
 use crate::backend::{BackendKind, Dialect, RowLock};
@@ -398,7 +399,7 @@ impl<B: Sql> Store<B> {
             }
             if run.config.retention.mode != crawlx_core::config::RetentionMode::Zdr
                 && run.config.retention.days != 0
-                && run.created_at + chrono::Duration::days(i64::from(run.config.retention.days)) <= now
+                && run.created_at + Duration::days(i64::from(run.config.retention.days)) <= now
             {
                 return Err(StoreError::RetentionDenied(
                     "committed HEAD source expired".into(),
@@ -420,7 +421,7 @@ impl<B: Sql> Store<B> {
             }
         }
         if commit.content_dedupe.is_some() {
-            crate::digest_registry::check_source(&run, chrono::Utc::now())?;
+            crate::digest_registry::check_source(&run, Timestamp::now())?;
         }
         crate::digest_registry::validate_commit(&commit, tenant)?;
         let digest_outcome = if let Some(claim) = &commit.content_dedupe {
@@ -457,7 +458,7 @@ impl<B: Sql> Store<B> {
             )
             .await?;
             let deadline = run.started_at.unwrap_or(run.created_at)
-                + chrono::Duration::seconds(i64::from(run.config.limits.duration_seconds));
+                + Duration::seconds(i64::from(run.config.limits.duration_seconds));
             if allowed {
                 if let Some(decision) =
                     policy.next_visit_after_commit(&current.envelope, &commit, now, deadline, None)?
@@ -681,7 +682,7 @@ async fn authorization_live<B: Sql>(
     .uuid(run.0)
     .fetch_optional(conn)
     .await?;
-    let now = chrono::Utc::now();
+    let now = Timestamp::now();
     let allowed = match authority {
         Some(row) => {
             row.opt_ts("revoked_at")?.is_none()

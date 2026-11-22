@@ -4,7 +4,7 @@
 //! memory and in PostgreSQL (the latter skips without `CRAWLX_TEST_DATABASE_URL`).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::Utc;
+use crawlx_core::time::Timestamp;
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::identity::ActionContextKey;
 use crawlx_core::repo::*;
@@ -79,7 +79,7 @@ async fn split_conserves_action_contexts(store: &dyn SplitStore, run: CrawlRunId
 
     // ledger rows keyed to the source cluster with known counters
     let keys: Vec<ActionContextKey> = (1..=4).map(|n| proposal("anonymous", source, n).key).collect();
-    let now = Utc::now();
+    let now = Timestamp::now();
     for (n, key) in keys.iter().enumerate() {
         let n = u32::try_from(n).unwrap();
         LedgerRepo::upsert(

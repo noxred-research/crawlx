@@ -1,5 +1,6 @@
 //! Authenticated structural descriptor capture and offline relocation over retained page HTML.
 //! Scope authority comes from the caller and source run, never from a submitted descriptor.
+use crawlx_core::time::Duration;
 use crate::auth::Principal;
 use crate::errors::{ApiResult, HttpError};
 use crate::routes::crawls::load_run;
@@ -168,9 +169,9 @@ pub async fn put(
     spec.validate().map_err(invalid)?;
     let horizon = run.created_at
         + if run.config.retention.mode == RetentionMode::Zdr {
-            chrono::Duration::hours(1)
+            Duration::hours(1)
         } else {
-            chrono::Duration::days(i64::from(run.config.retention.days))
+            Duration::days(i64::from(run.config.retention.days))
         };
     let record = AdaptiveSelectorRecordV1::new(run.id, spec, input.expires_at.unwrap_or(horizon));
     state.repos.adaptive_selectors.put(&record).await?;

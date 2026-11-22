@@ -4,7 +4,7 @@
 //! behavior is in `s3_profiles.rs`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::Utc;
+use crawlx_core::time::{Duration as SpanDuration, Timestamp};
 use crawlx_core::config::RetentionMode;
 use crawlx_core::repo::{ArtifactStore, RunRepo, Sensitivity};
 use crawlx_core::{Clock, SystemClock, TenantId};
@@ -78,7 +78,7 @@ async fn backend_contract(b: &S3Blobs) {
     let all = b.list("").await.unwrap();
     assert_eq!(all.len(), 5, "pagination follows continuation tokens: {all:?}");
     assert!(all.windows(2).all(|w| w[0].key < w[1].key), "sorted by key");
-    let recent = Utc::now() - chrono::Duration::minutes(5);
+    let recent = Timestamp::now() - SpanDuration::minutes(5);
     assert!(
         all.iter().all(|e| e.modified > recent),
         "last-modified is populated: {all:?}"
@@ -310,7 +310,7 @@ async fn fake_s3_orphans_are_collected_after_the_grace_period() {
     // inside the grace period nothing moves
     assert_eq!(
         store
-            .collect_orphans(&live, Utc::now() - chrono::Duration::hours(1))
+            .collect_orphans(&live, Timestamp::now() - SpanDuration::hours(1))
             .await
             .unwrap(),
         0
@@ -319,7 +319,7 @@ async fn fake_s3_orphans_are_collected_after_the_grace_period() {
     // after it, the orphan goes and the referenced object stays
     assert_eq!(
         store
-            .collect_orphans(&live, Utc::now() + chrono::Duration::hours(1))
+            .collect_orphans(&live, Timestamp::now() + SpanDuration::hours(1))
             .await
             .unwrap(),
         1
@@ -594,7 +594,7 @@ async fn the_orphan_sweep_neither_lists_nor_deletes_the_marker_and_foreign_sweep
         ids: Default::default(),
         object_keys: Default::default(),
     };
-    let later = Utc::now() + chrono::Duration::hours(1);
+    let later = Timestamp::now() + SpanDuration::hours(1);
 
     // the other deployment's sweep (grace 0) is refused before it removes anything
     let intruder = ObjectArtifactStore::new(

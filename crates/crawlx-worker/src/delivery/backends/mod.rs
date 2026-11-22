@@ -51,6 +51,7 @@ pub(super) use search::{SearchDestination, SearchEngine, DEFAULT_INDEX_PREFIX};
 #[cfg(test)]
 mod scope_tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crawlx_core::time::{Duration, Timestamp};
     use super::scoped_batch_id;
     use crate::delivery::tests::run;
     use crawlx_core::config::RetentionMode;
@@ -69,14 +70,14 @@ mod scope_tests {
                 },
             },
             1,
-            chrono::Utc::now() + chrono::Duration::hours(1),
+            Timestamp::now() + Duration::hours(1),
         )
     }
 
     #[test]
     fn identity_separates_runs_tenants_and_keys_but_not_retries() {
-        let first = run(RetentionMode::Standard, chrono::Utc::now(), &["json"]);
-        let second = run(RetentionMode::Standard, chrono::Utc::now(), &["json"]);
+        let first = run(RetentionMode::Standard, Timestamp::now(), &["json"]);
+        let second = run(RetentionMode::Standard, Timestamp::now(), &["json"]);
         let id = scoped_batch_id(&first, &batch("request.1.f"));
         assert_eq!(id.len(), 64);
         assert!(id.bytes().all(|b| b.is_ascii_hexdigit()));

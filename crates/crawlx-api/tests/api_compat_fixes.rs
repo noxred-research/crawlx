@@ -10,6 +10,7 @@ mod common;
 #[path = "common/scrape_rig.rs"]
 mod scrape_rig;
 
+use crawlx_core::time::Duration as SpanDuration;
 use axum::http::{header, Method, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
@@ -66,10 +67,10 @@ fn record(tenant: crawlx_core::TenantId, prefix: &str, acknowledged: bool) -> Au
     let now = SystemClock.now();
     AuthorizationRecord {
         url_prefixes: vec![prefix.to_owned()],
-        valid_from: now - chrono::Duration::days(1),
-        valid_to: now + chrono::Duration::days(1),
+        valid_from: now - SpanDuration::days(1),
+        valid_to: now + SpanDuration::days(1),
         robots_override_acknowledged: acknowledged,
-        verified_at: Some(now - chrono::Duration::days(1)),
+        verified_at: Some(now - SpanDuration::days(1)),
         ..sample_record(tenant, now, &[])
     }
 }

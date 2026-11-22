@@ -17,7 +17,7 @@ pub mod view;
 
 use crate::state::AppState;
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use crawlx_core::time::Timestamp;
 use crawlx_scheduler::monitor::{
     MonitorRunner, MonitorScheduler, MonitorSchedulerConfig, DEFAULT_TICK_INTERVAL,
 };
@@ -101,7 +101,7 @@ pub fn spawn_monitor_loop_every(state: AppState, interval: Duration) -> JoinHand
 /// Delete expired checks (and the other expiring intel rows) every [`PURGE_INTERVAL`].
 async fn purge_loop(state: &AppState, stop: CancellationToken) {
     // the ledger is kept: only rows older than the epoch would go
-    let keep_ledger: DateTime<Utc> = DateTime::UNIX_EPOCH;
+    let keep_ledger: Timestamp = Timestamp::UNIX_EPOCH;
     loop {
         tokio::select! {
             biased;

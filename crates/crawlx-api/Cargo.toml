@@ -9,7 +9,7 @@ repository.workspace = true
 description = "crawlx: Axum REST/SSE API, auth, idempotency, webhooks, compat facade"
 
 [dependencies]
-crawlx-core = { path = "../crawlx-core" }
+crawlx-core = { path = "../crawlx-core", features = ["sqlx"] }
 crawlx-scheduler = { path = "../crawlx-scheduler" }
 crawlx-storage = { path = "../crawlx-storage" }
 crawlx-model = { path = "../crawlx-model" }
@@ -24,7 +24,6 @@ axum.workspace = true
 base64.workspace = true
 blake3.workspace = true
 bytes.workspace = true
-chrono.workspace = true
 futures.workspace = true
 http-body.workspace = true
 hex.workspace = true

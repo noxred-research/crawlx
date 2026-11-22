@@ -646,7 +646,6 @@ fn event_frames(raw: &[u8]) -> Vec<Value> {
 #[tokio::test]
 async fn shared_zdr_sse_preserves_live_events_and_replays_only_metadata_after_expiry() {
     use crawlx_core::counters::TerminalReason;
-    use crawlx_core::time::ManualClock;
     use crawlx_core::StoreError;
     use crawlx_storage::{BufferLimits, DeliveryBuffer};
 
@@ -774,7 +773,6 @@ async fn shared_zdr_sse_preserves_live_events_and_replays_only_metadata_after_ex
 #[tokio::test]
 async fn shared_zdr_sse_hydrates_live_neighbors_of_expired_events() {
     use crawlx_core::counters::TerminalReason;
-    use crawlx_core::time::ManualClock;
     use crawlx_storage::{BufferLimits, DeliveryBuffer};
 
     let clock = Arc::new(ManualClock::new("2026-11-04T00:00:00Z".parse().unwrap()));
@@ -886,7 +884,6 @@ async fn authenticated_zdr_auditor_event_does_not_block_webhooks_for_other_runs(
     use crawlx_core::epoch::ObservationEpoch;
     use crawlx_core::hash::Digest;
     use crawlx_core::repo::ActionJournal;
-    use crawlx_core::time::ManualClock;
     use crawlx_core::{StateClusterId, WorkerId};
     use crawlx_storage::testkit::{allow_verdict, proposal};
     use crawlx_storage::{BufferLimits, DeliveryBuffer, LeaseRepo};

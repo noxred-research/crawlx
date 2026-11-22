@@ -15,7 +15,6 @@ thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-chrono.workspace = true
 criterion.workspace = true
 proptest.workspace = true
 rand.workspace = true

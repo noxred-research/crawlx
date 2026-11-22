@@ -1,6 +1,7 @@
 //! Operator-only encrypted profile lifecycle. Database credentials and the existing
 //! live session lease authenticate access; no API request can self-grant retention.
 
+use crawlx_core::time::Timestamp;
 use anyhow::{anyhow, bail, Context as _};
 use clap::{Args, Subcommand};
 use crawlx_core::hash::Digest;
@@ -147,7 +148,7 @@ async fn run_on<B: Sql>(
         session,
         worker: args.worker,
         fencing_token: args.fence,
-        expires_at: chrono::Utc::now(),
+        expires_at: Timestamp::now(),
     };
     let resolver = crawlx_worker::ChainResolver::from_env(Arc::new(crawlx_core::SystemClock)).await;
     let secret = resolver

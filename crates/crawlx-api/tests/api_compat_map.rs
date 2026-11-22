@@ -9,7 +9,7 @@ mod common;
 mod scrape_rig;
 
 use axum::http::{Method, StatusCode};
-use chrono::{Duration as ChronoDuration, Utc};
+use crawlx_core::time::{Duration as SpanDuration, Timestamp};
 use crawlx_api::Scope;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::counters::{RunStatus, TerminalReason};
@@ -103,7 +103,7 @@ async fn stored_run(
     tenant: TenantId,
     mode: RetentionMode,
     days: u16,
-    age: ChronoDuration,
+    age: SpanDuration,
     pages: &[(String, u16, bool)],
 ) -> CrawlRunId {
     let store = rig.env.store.as_ref();
@@ -114,7 +114,7 @@ async fn stored_run(
     // finished, so the worker's lease loop leaves it alone
     run.status = RunStatus::Completed;
     run.terminal_reason = Some(TerminalReason::FrontierExhausted);
-    run.created_at = Utc::now() - age;
+    run.created_at = Timestamp::now() - age;
     run.finished_at = Some(run.created_at);
     RunRepo::create(store, &run, None).await.unwrap();
     for (url, status, cacheable) in pages {
@@ -305,7 +305,7 @@ async fn stored_urls_never_cross_tenants_or_come_from_zdr_expired_error_or_forei
     // acme, by hand: a good page, a ZDR run's cacheable page, an expired run, an error page, a
     // page flagged not cacheable and a page of another site
     let acme = rig.env.tenant;
-    let now = ChronoDuration::zero();
+    let now = SpanDuration::zero();
     stored_run(
         &rig,
         acme,
@@ -334,7 +334,7 @@ async fn stored_urls_never_cross_tenants_or_come_from_zdr_expired_error_or_forei
         acme,
         RetentionMode::Standard,
         1,
-        ChronoDuration::days(3),
+        SpanDuration::days(3),
         &[(rig.url("/expired-page"), 200, true)],
     )
     .await;
@@ -405,7 +405,7 @@ async fn include_subdomains_picks_the_registrable_domain_or_the_host_of_the_stor
         acme,
         RetentionMode::Standard,
         7,
-        ChronoDuration::zero(),
+        SpanDuration::zero(),
         &[
             (rig.url("/own-page"), 200, true),
             (sub.clone(), 200, true),

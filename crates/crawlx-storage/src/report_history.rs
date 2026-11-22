@@ -4,6 +4,7 @@
 //! volatile delivery buffer; their durable rows carry only opaque receipts and bounds.
 //! Keyset filters run before the finite page limit. No whole-run aggregate is implied.
 
+use crawlx_core::time::Duration;
 use crate::backend::strategy::Conn;
 use crate::backend::{Dialect, RowLock};
 use crate::sql::{db_clock, stmt, Sql, SqlRow, Stmt};
@@ -80,13 +81,13 @@ pub(crate) fn source_deadline(
     let policy = if zdr {
         Some(
             created
-                .checked_add_signed(chrono::Duration::hours(1))
+                .checked_add_signed(Duration::hours(1))
                 .ok_or_else(|| conflict("report volatile deadline overflow"))?,
         )
     } else if days > 0 {
         Some(
             created
-                .checked_add_signed(chrono::Duration::days(i64::from(days)))
+                .checked_add_signed(Duration::days(i64::from(days)))
                 .ok_or_else(|| conflict("report source deadline overflow"))?,
         )
     } else {

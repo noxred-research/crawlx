@@ -5,7 +5,7 @@
 //! proximity and orphans).
 #![allow(missing_docs, clippy::unwrap_used, clippy::expect_used)]
 
-use chrono::NaiveDate;
+use crawlx_core::time::NaiveDate;
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::hash::Digest;
 use crawlx_core::identity::{ActionContextKey, ActionKind, ElementIdentityHash, InputClass, ResourceContext};

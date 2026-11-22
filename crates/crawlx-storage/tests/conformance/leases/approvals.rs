@@ -11,7 +11,7 @@
 
 use super::support::{tenant, Raw, StoreOf, V};
 use crate::rig::Rig;
-use chrono::Duration;
+use crawlx_core::time::Duration;
 use crawlx_core::repo::{ActionJournal, RunRepo};
 use crawlx_core::safety::{RiskClass, SafetyDecision, SafetyVerdict};
 use crawlx_core::{

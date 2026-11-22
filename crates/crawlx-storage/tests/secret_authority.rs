@@ -1,6 +1,7 @@
 //! Real PostgreSQL/volatile Redis custody regressions. Both backend URLs are required.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crawlx_core::time::Timestamp;
 use crawlx_core::counters::{RunStatus, TerminalReason};
 use crawlx_core::custody::{ArtifactReadState, CustodyLease, RunSecretAuthority, SecretEpoch};
 use crawlx_core::hash::Digest;
@@ -511,7 +512,7 @@ async fn finalization_refuses_a_historical_artifact_secret_epoch() {
         .read_state(row.tenant, row.run, row.id)
         .await
         .is_err());
-    let sealed: Option<chrono::DateTime<chrono::Utc>> =
+    let sealed: Option<Timestamp> =
         sqlx::query_scalar("SELECT sealed_at FROM run_secret_authority")
             .fetch_one(f.pg.pool())
             .await
@@ -622,7 +623,7 @@ async fn native_deadline_is_absolute_and_earlier_than_the_frozen_retention_ceili
         return;
     };
     f.first.initialize(&f.lease).await.unwrap();
-    let deadline: chrono::DateTime<chrono::Utc> =
+    let deadline: Timestamp =
         sqlx::query_scalar("SELECT retention_ceiling FROM run_secret_authority")
             .fetch_one(f.pg.pool())
             .await
@@ -633,7 +634,7 @@ async fn native_deadline_is_absolute_and_earlier_than_the_frozen_retention_ceili
         .await
         .unwrap();
     assert_eq!(native, deadline.timestamp_millis() - 2000);
-    let use_deadline: chrono::DateTime<chrono::Utc> =
+    let use_deadline: Timestamp =
         sqlx::query_scalar("SELECT expires_at FROM run_secret_authority")
             .fetch_one(f.pg.pool())
             .await

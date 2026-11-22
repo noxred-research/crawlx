@@ -2,7 +2,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use async_trait::async_trait;
-use chrono::Duration;
+use crawlx_core::time::Duration;
 use crawlx_core::counters::ActionStatus;
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::repo::{ActionJournal, RunRepo, SessionStatus};

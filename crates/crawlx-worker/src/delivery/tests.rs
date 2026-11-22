@@ -1,5 +1,6 @@
 //! Real native parsing, retained article feeds and approved local sink regressions.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+use crawlx_core::time::Timestamp;
 use super::*;
 use crawlx_core::{
     config::RetentionMode,
@@ -233,7 +234,7 @@ impl ArticleConsumer {
 
 async fn article_reservation_survives_real_put(holder: ArticleConsumer) {
     let clock = Arc::new(ManualClock::new(
-        chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+        Timestamp::from_timestamp(1_700_000_000, 0).unwrap(),
     ));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     let dir = tempfile::tempdir().unwrap();
@@ -389,7 +390,7 @@ async fn feed_reservation_spans_real_put_and_rejected_dataset_cache_and_feed_rec
 
 #[tokio::test]
 async fn actual_parser_projection_flows_through_atomic_dataset_outbox_and_all_article_serializers() {
-    let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let buffer = Arc::new(DeliveryBuffer::new(clock.clone(), BufferLimits::default()));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     repo.set_dataset_delivery(buffer.clone());
@@ -483,7 +484,7 @@ async fn actual_parser_projection_flows_through_atomic_dataset_outbox_and_all_ar
 
 #[tokio::test]
 async fn report_only_error_pages_and_partial_articles_never_become_dataset_items() {
-    let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     let dir = tempfile::tempdir().unwrap();
     let artifacts = FsArtifactStore::open(dir.path(), repo.clone(), clock.clone())
@@ -509,7 +510,7 @@ async fn report_only_error_pages_and_partial_articles_never_become_dataset_items
 
 #[tokio::test]
 async fn secret_registered_while_article_waits_for_cpu_refuses_dataset_and_feed_publication() {
-    let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     let dir = tempfile::tempdir().unwrap();
     let artifacts = FsArtifactStore::open(dir.path(), repo.clone(), clock.clone())
@@ -553,7 +554,7 @@ async fn secret_registered_while_article_waits_for_cpu_refuses_dataset_and_feed_
 #[tokio::test]
 async fn excluded_author_stays_rejected_after_secret_projection_and_never_enters_feeds_or_cache() {
     use crawlx_core::extraction::{ExtractionPolicyV1, QualityReasonV1, QualityStatusV1};
-    let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     let dir = tempfile::tempdir().unwrap();
     let artifacts = FsArtifactStore::open(dir.path(), repo.clone(), clock.clone())
@@ -620,7 +621,7 @@ async fn excluded_author_stays_rejected_after_secret_projection_and_never_enters
 
 #[tokio::test]
 async fn retained_article_cache_preserves_real_text_formats_identity_and_original_physical_deadline() {
-    let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     let dir = tempfile::tempdir().unwrap();
     let artifacts = FsArtifactStore::open(dir.path(), repo.clone(), clock.clone())
@@ -705,7 +706,7 @@ async fn retained_article_cache_preserves_real_text_formats_identity_and_origina
 
 #[tokio::test]
 async fn approved_local_sink_retries_same_batch_without_overwrite_or_duplicate_file() {
-    let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     let artifacts_dir = tempfile::tempdir().unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -846,7 +847,7 @@ impl DeliveryOutboxRepo for CrashBeforeReceipt {
 
 #[tokio::test]
 async fn real_registry_drain_retries_after_local_send_receipt_crash_without_losing_accepted_item() {
-    let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     let artifacts_dir = tempfile::tempdir().unwrap();
     let output_dir = tempfile::tempdir().unwrap();

@@ -4,7 +4,7 @@
 //! only with an owner and a reason.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::NaiveDate;
+use crawlx_core::time::NaiveDate;
 use crawlx_bench::gates::CHAOS_SUITES;
 use crawlx_bench::release_gate::{
     check_runbook_links, evaluate, exported_metric_names, item_ids, parse_libtest, parse_waivers,

@@ -2,7 +2,7 @@
 //! the run binding. Ported from the PostgreSQL-only `pg_authorization.rs`.
 
 use crate::rig::Rig;
-use chrono::{DateTime, Duration, Utc};
+use crawlx_core::time::{Timestamp, Duration};
 use crawlx_core::hash::Digest;
 use crawlx_core::{AuthorizationRecordId, CrawlRunId, StoreError, TenantId};
 use crawlx_policy::testkit::sample_record;
@@ -23,8 +23,8 @@ conformance! { databases:
     a_run_is_bound_to_the_body_digest_it_was_admitted_under,
 }
 
-fn now() -> DateTime<Utc> {
-    DateTime::from_timestamp_micros(Utc::now().timestamp_micros()).unwrap()
+fn now() -> Timestamp {
+    Timestamp::from_timestamp_micros(Timestamp::now().timestamp_micros()).unwrap()
 }
 
 /// A record of `tenant` with a DNS TXT proof, as the API stores it (no lifecycle state).
@@ -61,7 +61,7 @@ fn new_row<'a>(
     digest: &'a Digest,
     by: Uuid,
     verification: &'a Value,
-    verified_at: DateTime<Utc>,
+    verified_at: Timestamp,
 ) -> NewAuthorization<'a> {
     NewAuthorization {
         tenant: r.tenant,
@@ -82,7 +82,7 @@ async fn create<B: Tenancy>(
     repo: &ApiRepo<B>,
     r: &AuthorizationRecord,
     by: Uuid,
-    at: DateTime<Utc>,
+    at: Timestamp,
 ) -> Digest {
     let body = serde_json::to_value(r).unwrap();
     let digest = r.body_digest().unwrap();

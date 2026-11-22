@@ -22,7 +22,6 @@ base64.workspace = true
 bytes.workspace = true
 blake3.workspace = true
 encoding_rs.workspace = true
-chrono.workspace = true
 hickory-resolver.workspace = true
 http.workspace = true
 hex.workspace = true

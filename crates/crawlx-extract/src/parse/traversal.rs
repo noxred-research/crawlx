@@ -4,6 +4,7 @@
 //! acquires links, resolves DNS, runs scripts, submits forms, or downloads external entities.
 //! Native parser results are not claims of upstream parser/algorithm equivalence.
 
+use crawlx_core::time::FixedDateTime;
 use crawlx_core::hash::Digest;
 use url::Url;
 
@@ -518,8 +519,8 @@ pub fn feed_with_freshness(
             }
             Ev::End(_) => in_update = false,
             Ev::Text(text) if in_update => {
-                let parsed = chrono::DateTime::parse_from_rfc3339(text.trim())
-                    .or_else(|_| chrono::DateTime::parse_from_rfc2822(text.trim()))
+                let parsed = FixedDateTime::parse_rfc3339(text.trim())
+                    .or_else(|_| FixedDateTime::parse_rfc2822(text.trim()))
                     .ok()
                     .map(|date| date.timestamp_millis());
                 if let Some(parsed) = parsed {

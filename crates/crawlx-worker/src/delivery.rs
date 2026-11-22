@@ -4,6 +4,7 @@
 //! object keys and logical search IDs make retries idempotent where the destination supports it.
 //! Stdout, FTP gateways and generic HTTP endpoints may duplicate after an acknowledged-send crash.
 
+use crawlx_core::time::{Duration as SpanDuration, Timestamp};
 use crate::runtime::CpuPool;
 use crate::stores::Stores;
 use async_trait::async_trait;
@@ -316,7 +317,7 @@ impl DeliveryRegistry {
                         DeliveryError::ProviderBackoff(delay) => *delay,
                         _ => Duration::from_secs(30),
                     };
-                    let delay = chrono::Duration::from_std(
+                    let delay = SpanDuration::from_std(
                         delay
                             .max(Duration::from_secs(30))
                             .min(Duration::from_secs(86_400)),
@@ -1163,7 +1164,7 @@ impl DeliveryDestination for HttpDestination {
         if response.remote_addr().is_none_or(|peer| !sockets.contains(&peer)) {
             return Err(DeliveryError::Rejected("provider_peer_not_pinned"));
         }
-        let retry_after = crawlx_fetch::retry::parse_retry_after(response.headers(), chrono::Utc::now());
+        let retry_after = crawlx_fetch::retry::parse_retry_after(response.headers(), Timestamp::now());
         authority
             .governor
             .on_response_with_latency(
@@ -1253,7 +1254,7 @@ fn article_deadline(
     }
     let horizon = run
         .created_at
-        .checked_add_signed(chrono::Duration::days(i64::from(run.config.retention.days)));
+        .checked_add_signed(SpanDuration::days(i64::from(run.config.retention.days)));
     match (source, horizon) {
         (Some(source), Some(horizon)) => Some(source.min(horizon)),
         (source, horizon) => source.or(horizon),

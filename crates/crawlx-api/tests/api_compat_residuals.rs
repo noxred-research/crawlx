@@ -10,16 +10,15 @@ mod crawl_rig;
 #[path = "common/scrape_rig.rs"]
 mod scrape_rig;
 
+use crawlx_core::time::{FixedDateTime, ManualClock, Timestamp};
 use async_trait::async_trait;
 use axum::http::{header, HeaderMap, Method, StatusCode};
-use chrono::Utc;
 use common::env_with;
 use crawlx_api::intel::webhook::{compat_signature, SIGNATURE_HEADER};
 use crawlx_api::webhooks::{TransportError, WebhookRequest, WebhookSender, WebhookTransport};
 use crawlx_api::{ApiConfig, CompatConfig, CompatMode, Settings};
 use crawlx_core::config::QueryPolicy;
 use crawlx_core::repo::{EventRepo, RunRepo};
-use crawlx_core::time::ManualClock;
 use crawlx_core::CrawlRunId;
 use parking_lot::Mutex;
 use scrape_rig::RigConfig;
@@ -142,8 +141,8 @@ async fn a_running_crawl_has_an_expiry_but_no_next_without_stored_pages() {
     let (s, _, status) = rig.env.get(&format!("{V2}/crawl/{id}")).await;
     assert_eq!(s, StatusCode::OK, "{status}");
     assert_eq!(status["status"], "scraping", "{status}");
-    let created = chrono::DateTime::parse_from_rfc3339(status["createdAt"].as_str().unwrap()).unwrap();
-    let expires = chrono::DateTime::parse_from_rfc3339(
+    let created = FixedDateTime::parse_rfc3339(status["createdAt"].as_str().unwrap()).unwrap();
+    let expires = FixedDateTime::parse_rfc3339(
         status["expiresAt"].as_str().unwrap_or_else(|| panic!("{status}")),
     )
     .unwrap();
@@ -170,8 +169,8 @@ async fn a_finished_crawl_expires_after_retention_and_has_no_next() {
     let status = wait_crawl(&rig, v["id"].as_str().unwrap()).await;
     assert_eq!(status["status"], "completed", "{status}");
     assert_eq!(status["next"], Value::Null, "{status}");
-    let completed = chrono::DateTime::parse_from_rfc3339(status["completedAt"].as_str().unwrap()).unwrap();
-    let expires = chrono::DateTime::parse_from_rfc3339(status["expiresAt"].as_str().unwrap()).unwrap();
+    let completed = FixedDateTime::parse_rfc3339(status["completedAt"].as_str().unwrap()).unwrap();
+    let expires = FixedDateTime::parse_rfc3339(status["expiresAt"].as_str().unwrap()).unwrap();
     assert!(expires > completed, "{status}");
     rig.stop().await;
 }
@@ -591,7 +590,7 @@ impl WebhookTransport for Script {
 }
 
 async fn native_delivery(dual: bool) -> WebhookRequest {
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let cfg = ApiConfig {
         rate_limit_per_minute: 0,
         webhook_secret: SECRET.to_owned(),

@@ -10,6 +10,7 @@
 //! reply fails closed before any effect, and cancellation or expiry shuts the actor down without
 //! a profile commit.
 
+use crawlx_core::time::Duration;
 use super::*;
 use crate::durable::DurableAuthority;
 use crate::interactive_profiles::{
@@ -171,7 +172,7 @@ impl ExplorationDriver {
         let now = self.rc.clock.now();
         let expires_at = binding
             .expires_at
-            .min(now + chrono::Duration::seconds(i64::from(request.ttl_seconds)));
+            .min(now + Duration::seconds(i64::from(request.ttl_seconds)));
         if expires_at <= now {
             return refused();
         }

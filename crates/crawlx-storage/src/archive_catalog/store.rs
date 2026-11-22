@@ -10,6 +10,7 @@
 use super::{
     decode, export_json, history_key, invalid, json, live, publish_bounds, record_bounds, scope, writer,
 };
+use crawlx_core::time::Duration;
 use crate::backend::strategy::Conn;
 use crate::backend::{Dialect, LockMode, RowLock};
 use crate::sql::{in_ids, stmt, Sql, SqlRow, Stmt};
@@ -488,7 +489,7 @@ impl<B: Sql> ArchiveRepo for Store<B> {
             .fence
             .checked_add(1)
             .ok_or_else(|| invalid("archive fence exhausted"))?;
-        row.lease_until = now + chrono::Duration::seconds(120);
+        row.lease_until = now + Duration::seconds(120);
         save::<B>(tx.conn(), &row).await?;
         tx.commit().await?;
         Ok(Some(row))
@@ -695,7 +696,7 @@ impl<B: Sql> ArchiveRepo for Store<B> {
         }
         export.records += 1;
         export.bytes += record.length;
-        export.lease_until = now + chrono::Duration::seconds(120);
+        export.lease_until = now + Duration::seconds(120);
         save::<B>(tx.conn(), &export).await?;
         tx.commit().await
     }
@@ -988,7 +989,7 @@ impl<B: Sql> ArchiveRepo for Store<B> {
         let mut tx = self.begin_write().await?;
         let mut row = locked::<B>(tx.conn(), tenant, export).await?;
         writer(&row, fence, now)?;
-        row.lease_until = now + chrono::Duration::seconds(120);
+        row.lease_until = now + Duration::seconds(120);
         save::<B>(tx.conn(), &row).await?;
         tx.commit().await
     }

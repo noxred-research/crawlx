@@ -60,13 +60,13 @@ impl ReportState {
 
 fn retention_deadline(run: &CrawlRun, now: Timestamp) -> Result<Timestamp, StoreError> {
     let duration = if run.config.retention.mode == RetentionMode::Zdr {
-        ChronoDuration::seconds(VOLATILE_SECONDS)
+        SpanDuration::seconds(VOLATILE_SECONDS)
     } else {
         let days = run.config.retention.days;
         if !(1..=365).contains(&days) {
             return Err(StoreError::RetentionDenied("report retention is invalid".into()));
         }
-        ChronoDuration::days(i64::from(days))
+        SpanDuration::days(i64::from(days))
     };
     let origin = if run.config.retention.mode == RetentionMode::Zdr {
         now
@@ -683,7 +683,7 @@ mod tests {
         assert_eq!(sequence, 1);
         assert_eq!(store.append_fact(&lease, &original).await.unwrap(), sequence);
         let mut changed = original.clone();
-        changed.at += ChronoDuration::microseconds(1);
+        changed.at += SpanDuration::microseconds(1);
         assert!(matches!(
             store.append_fact(&lease, &changed).await,
             Err(StoreError::Conflict(_))
@@ -823,7 +823,7 @@ mod tests {
             panic!("session fixture")
         };
         store.inner.lock().sessions.get_mut(&session).unwrap().expires =
-            Some(clock.now() + ChronoDuration::hours(2));
+            Some(clock.now() + SpanDuration::hours(2));
         clock.advance_ms(1_800_000);
         assert_eq!(store.append_fact(&lease, &original).await.unwrap(), 1);
         store
@@ -859,7 +859,7 @@ mod tests {
             .append_fact(&lease, &fact(&lease, clock.now(), 1))
             .await
             .unwrap();
-        let deadline = run.created_at + ChronoDuration::days(1);
+        let deadline = run.created_at + SpanDuration::days(1);
         assert_eq!(store.report_history.lock().runs[&run.id].expires_at, deadline);
         clock.advance_ms(86_400_000);
         assert!(store
@@ -1088,7 +1088,7 @@ mod tests {
                 format!("request.7.{feed}"),
                 content.clone(),
                 3,
-                clock.now() + ChronoDuration::hours(1),
+                clock.now() + SpanDuration::hours(1),
             )
         });
         {

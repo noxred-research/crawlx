@@ -1,6 +1,7 @@
 //! Scale and metadata contracts share the real repository/artifact fixtures in the parent harness.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crawlx_core::time::Timestamp;
 use super::*;
 use crawlx_core::dataset::{DatasetConfigV1, MAX_BATCH_ITEMS};
 
@@ -218,7 +219,7 @@ async fn exact_page_range<R: DatasetRepo>(
 
 #[tokio::test]
 async fn memory_100k_committed_items_have_bounded_exact_repeatable_keysets() {
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     let dir = tempfile::tempdir().unwrap();
     let artifacts = FsArtifactStore::open(dir.path(), repo.clone(), clock.clone())
@@ -259,7 +260,7 @@ async fn postgres_100k_keyset_resumes_after_reconnect_without_loss_or_duplicate(
     pg.migrate().await.unwrap();
     let tenant = TenantId::new();
     pg.ensure_tenant(tenant, "dataset-scale").await.unwrap();
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let dir = tempfile::tempdir().unwrap();
     let artifacts = FsArtifactStore::open(dir.path(), Arc::new(pg.clone()), clock.clone())
         .await
@@ -499,7 +500,7 @@ async fn expired_continuation<R: KvRepo>(repo: &R, owner: &CrawlRun) {
 
 #[tokio::test]
 async fn memory_kv_metadata_continuation_exact_expiry_mime_and_quotas() {
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     let dir = tempfile::tempdir().unwrap();
     let artifacts = FsArtifactStore::open(dir.path(), repo.clone(), clock.clone())
@@ -533,7 +534,7 @@ async fn postgres_kv_metadata_continuation_expiry_mime_and_quotas() {
     pg.migrate().await.unwrap();
     let tenant = TenantId::new();
     pg.ensure_tenant(tenant, "dataset-kv-contract").await.unwrap();
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let dir = tempfile::tempdir().unwrap();
     let artifacts = FsArtifactStore::open(dir.path(), Arc::new(pg.clone()), clock.clone())
         .await

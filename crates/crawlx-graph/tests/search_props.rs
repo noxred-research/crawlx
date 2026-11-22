@@ -9,7 +9,7 @@
 //! is strictly positive (`p < 1`) and every step lowers the reliability.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::{Duration, TimeZone, Utc};
+use crawlx_core::time::Duration;
 use crawlx_core::hash::Digest;
 use crawlx_core::identity::ElementIdentityHash;
 use crawlx_core::{ActionContextId, CrawlRunId, RouteTemplate, StateClusterId, Timestamp};
@@ -28,7 +28,7 @@ const ACTIONS: u8 = 5;
 const IDENTITIES: u8 = 3;
 
 fn t0() -> Timestamp {
-    Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
+    Timestamp::from_ymd_hms(2026, 1, 1, 0, 0, 0).unwrap()
 }
 fn act(n: u8) -> ActionContextId {
     ActionContextId([n; 16])

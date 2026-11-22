@@ -598,7 +598,7 @@ mod tests {
             failures: 0,
             denied,
             unknown: 0,
-            first_seen: chrono::DateTime::UNIX_EPOCH,
+            first_seen: Timestamp::UNIX_EPOCH,
             last_exercised: None,
         }
     }
@@ -648,7 +648,7 @@ mod tests {
             "settle": { "settle_timeout": false, "waited_ms": 120 },
             "blockedByEgress": false,
         });
-        let row = navigation_row(4, chrono::DateTime::UNIX_EPOCH, &payload);
+        let row = navigation_row(4, Timestamp::UNIX_EPOCH, &payload);
         assert_eq!(row["kind"], "navigation");
         assert_eq!(row["seq"], 4);
         assert_eq!(row["epoch"], "3.1.7");
@@ -659,7 +659,7 @@ mod tests {
         // a navigation that never settled (the waiter failed) prints nulls, not an error
         let row = navigation_row(
             5,
-            chrono::DateTime::UNIX_EPOCH,
+            Timestamp::UNIX_EPOCH,
             &json!({ "url": "https://example.test/" }),
         );
         assert_eq!(row["epoch"], "null.null.null");

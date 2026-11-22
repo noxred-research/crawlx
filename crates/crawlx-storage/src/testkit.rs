@@ -11,7 +11,7 @@ pub mod tenancy;
 
 pub use rig::{Engine, Rig};
 
-use chrono::Utc;
+use crawlx_core::time::Timestamp;
 use crawlx_core::action::BrowserAction;
 use crawlx_core::counters::{PlaneCounters, RunStatus};
 use crawlx_core::epoch::ObservationEpoch;
@@ -78,7 +78,7 @@ pub fn crawl_run(tenant: TenantId, cfg: CreateCrawl) -> CrawlRun {
         policy_version: 1,
         counters: PlaneCounters::default(),
         // millisecond precision: what PostgreSQL round-trips
-        created_at: chrono::DateTime::from_timestamp_millis(Utc::now().timestamp_millis())
+        created_at: Timestamp::from_timestamp_millis(Timestamp::now().timestamp_millis())
             .unwrap_or_default(),
         started_at: None,
         finished_at: None,
@@ -226,7 +226,7 @@ pub fn new_state(
         cluster_is_new: new_cluster,
         artifacts: Vec::new(),
         // millisecond precision: what PostgreSQL round-trips
-        observed_at: chrono::DateTime::from_timestamp_millis(Utc::now().timestamp_millis())
+        observed_at: Timestamp::from_timestamp_millis(Timestamp::now().timestamp_millis())
             .unwrap_or_default(),
     }
 }

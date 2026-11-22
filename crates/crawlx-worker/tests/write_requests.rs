@@ -7,6 +7,7 @@
 
 mod common;
 
+use crawlx_core::time::Duration as SpanDuration;
 use axum::body::Body;
 use axum::extract::Request;
 use axum::http::{header, HeaderValue, StatusCode};
@@ -825,7 +826,7 @@ async fn a_crawl_killed_mid_send_never_replays_the_write() {
 
     // The dead holder's sessions and URL leases run out; the fleet reaper returns the row.
     for session in rig.stores.runs.list_sessions(rig.run).await.unwrap() {
-        store.expire_session_lease(session.id, SystemClock.now() - chrono::Duration::hours(1));
+        store.expire_session_lease(session.id, SystemClock.now() - SpanDuration::hours(1));
     }
     let reaper = crawlx_scheduler::Reaper::new(
         Arc::clone(&rig.stores.leases),

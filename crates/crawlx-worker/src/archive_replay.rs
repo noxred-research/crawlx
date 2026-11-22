@@ -4,6 +4,7 @@
 //! origin is reachable through the checked proxy. Archived headers, profiles and
 //! credentials are never installed. The clean-room URL mapper uses no replay engine.
 
+use crawlx_core::time::Timestamp;
 use crawlx_core::browser::{BrowserContext, BrowserError, ContextConfig, NavigationGuard, NavigationVerdict};
 use crawlx_core::observation::{BrowserBuildInfo, QuiescencePolicy};
 use crawlx_core::page_op::{PageOp, PageOpResult, ShotSpec};
@@ -183,7 +184,7 @@ struct Asset {
     target: String,
     mime: String,
     status: Option<u16>,
-    captured_at: chrono::DateTime<chrono::Utc>,
+    captured_at: Timestamp,
     body: Vec<u8>,
 }
 

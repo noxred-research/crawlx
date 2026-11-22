@@ -12,12 +12,12 @@
 //! `window`, and `version` is also accepted as `recordVersion`. Unknown fields are rejected, so a
 //! record file never loses a field silently.
 
+use crawlx_core::time::{Duration, Timestamp};
 use crate::error::PolicyError;
 use crawlx_core::config::SafetyProfile;
 use crawlx_core::hash::Digest;
 use crawlx_core::ids::{ArtifactId, AuthorizationRecordId, TenantId};
 use crawlx_core::safety::RiskClass;
-use crawlx_core::time::Timestamp;
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -408,7 +408,7 @@ impl AuthorizationRecord {
         if self.valid_to <= self.valid_from {
             return bad("validTo must be after validFrom");
         }
-        if self.valid_to.signed_duration_since(self.valid_from) > chrono::Duration::days(MAX_WINDOW_DAYS) {
+        if self.valid_to.signed_duration_since(self.valid_from) > Duration::days(MAX_WINDOW_DAYS) {
             return bad("validity window exceeds 90 days");
         }
         if self.evidence.kind.trim().is_empty() {
@@ -538,10 +538,9 @@ impl AuthorizationRecord {
 pub(crate) mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
-    use chrono::TimeZone;
 
     pub fn ts(day: u32) -> Timestamp {
-        chrono::Utc.with_ymd_and_hms(2026, 10, day, 0, 0, 0).unwrap()
+        Timestamp::from_ymd_hms(2026, 10, day, 0, 0, 0).unwrap()
     }
 
     pub fn authorizer() -> Authorizer {
@@ -720,10 +719,10 @@ pub(crate) mod tests {
         r.valid_to = r.valid_from;
         assert!(r.validate().is_err());
         let mut r = record();
-        r.valid_to = r.valid_from + chrono::Duration::days(91);
+        r.valid_to = r.valid_from + Duration::days(91);
         assert!(r.validate().is_err());
         let mut r = record();
-        r.valid_to = r.valid_from + chrono::Duration::days(90);
+        r.valid_to = r.valid_from + Duration::days(90);
         assert!(r.validate().is_ok());
     }
 

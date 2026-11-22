@@ -27,7 +27,7 @@
 //! processing instructions, declarations and CDATA (whose content is skipped, so captured test
 //! output cannot forge a result).
 
-use chrono::NaiveDate;
+use crawlx_core::time::{Days, NaiveDate};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -846,7 +846,7 @@ pub fn issue_body(id: &str, events: &[NaiveDate], quarantine: &Quarantine, today
         Some(entry) => {
             let deadline = entry
                 .since
-                .checked_add_days(chrono::Days::new(u64::from(QUARANTINE_DEADLINE_DAYS)));
+                .checked_add_days(Days::new(u64::from(QUARANTINE_DEADLINE_DAYS)));
             let _ = writeln!(
                 out,
                 "Quarantined since {} ({}); it runs only in the nightly suite. Fix or delete it by {}.",

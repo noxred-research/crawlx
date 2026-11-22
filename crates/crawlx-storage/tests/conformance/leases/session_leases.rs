@@ -5,7 +5,7 @@
 
 use super::support::{epoch, lease_all, new_run, tenant, Raw, V};
 use crate::rig::Rig;
-use chrono::Duration;
+use crawlx_core::time::Duration;
 use crawlx_core::counters::ActionStatus;
 use crawlx_core::observation::BrowserBuildInfo;
 use crawlx_core::repo::{ActionJournal, RunRepo, SessionKind, SessionStatus};

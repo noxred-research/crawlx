@@ -19,7 +19,7 @@
 //! them (the nightly run). `check` exits 1 for a test quarantined for more than 14 days. Exit
 //! status 2 is a usage or input error. See `docs/ops/flaky-tests.md`.
 
-use chrono::NaiveDate;
+use crawlx_core::time::{NaiveDate, Timestamp};
 use clap::{Parser, Subcommand};
 use crawlx_bench::flake::{
     report_markdown, FlakeError, History, JunitReport, Outcome, Quarantine, QUARANTINE_DEADLINE_DAYS,
@@ -112,7 +112,7 @@ enum Command {
 }
 
 fn today(date: Option<NaiveDate>) -> NaiveDate {
-    date.unwrap_or_else(|| chrono::Utc::now().date_naive())
+    date.unwrap_or_else(|| Timestamp::now().date_naive())
 }
 
 fn record(junit: &[PathBuf], history: &Path, date: NaiveDate, suite: &str) -> Result<bool, FlakeError> {

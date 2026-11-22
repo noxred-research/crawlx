@@ -1,5 +1,6 @@
 //! Opt-in, run-scoped browser evidence retention and observation provenance.
 
+use crawlx_core::time::Duration;
 use crate::{RunContext, SessionHandle, WorkerError};
 use async_trait::async_trait;
 use crawlx_core::browser_capture::{
@@ -226,7 +227,7 @@ impl BrowserCaptureSink for EvidenceSink {
         };
         let expires_at = run
             .created_at
-            .checked_add_signed(chrono::Duration::days(i64::from(days)))
+            .checked_add_signed(Duration::days(i64::from(days)))
             .ok_or_else(|| StoreError::RetentionDenied("browser evidence deadline unavailable".into()))?;
         if !self.permits(descriptor.kind)? {
             return Ok(None);

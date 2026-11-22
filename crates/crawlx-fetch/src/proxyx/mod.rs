@@ -35,6 +35,7 @@ pub use signals::{
     is_challenge, target_of, BlockReporter, BlockSignal, SignalKind, SignalStats, QUEUE_CAPACITY,
 };
 
+use crawlx_core::time::Timestamp;
 use crate::resolver::Resolver;
 use crate::upstream::UpstreamProxy;
 use crawlx_core::hash::Digest;
@@ -552,7 +553,7 @@ impl PoolBinding {
             exit_ip: tunnel.exit_ip,
             target,
             kind,
-            time: chrono::Utc::now().timestamp(),
+            time: Timestamp::now().timestamp(),
         });
     }
 }
@@ -594,7 +595,7 @@ mod tests {
         SessionBindingV1::new(
             identity,
             7,
-            chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap(),
+            Timestamp::from_timestamp(2_000_000_000, 0).unwrap(),
         )
     }
 

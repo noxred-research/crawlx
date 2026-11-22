@@ -1128,6 +1128,7 @@ impl Scorecard {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crawlx_core::time::Timestamp;
     use super::*;
     use crate::gym::manifest::FixtureManifest;
     use crawlx_core::hash::Digest;
@@ -1300,7 +1301,7 @@ mod tests {
             trusted_exercised: 1,
             diagnostic_exercised: 0,
             failures: 0,
-            first_seen: chrono::DateTime::UNIX_EPOCH,
+            first_seen: Timestamp::UNIX_EPOCH,
             last_exercised: None,
         };
         let mut r = rows();
@@ -1386,7 +1387,7 @@ mod tests {
             failures: 0,
             latency_ms_ewma: 0.0,
             risk: 0.0,
-            last_observed_at: chrono::DateTime::UNIX_EPOCH,
+            last_observed_at: Timestamp::UNIX_EPOCH,
             last_verified_build: None,
         };
         let (a, unlabelled) = (key("a"), key("z"));
@@ -1396,7 +1397,7 @@ mod tests {
             trusted_exercised: 1,
             diagnostic_exercised: 0,
             failures: 0,
-            first_seen: chrono::DateTime::UNIX_EPOCH,
+            first_seen: Timestamp::UNIX_EPOCH,
             last_exercised: None,
         }];
         r.edges = vec![

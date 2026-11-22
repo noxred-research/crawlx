@@ -8,12 +8,11 @@
 //! The store is synchronous and must never hide blocking database I/O. Durable
 //! adapters consume asynchronously before constructing [`VerifiedApproval`].
 
-use chrono::Duration;
+use crawlx_core::time::{Clock, Duration, Timestamp};
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::hash::Digest;
 use crawlx_core::ids::{ActionContextId, ApprovalId};
 use crawlx_core::safety::RiskClass;
-use crawlx_core::time::{Clock, Timestamp};
 use crawlx_core::{ActionId, CrawlRunId, SessionId, TenantId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -473,11 +472,10 @@ impl ApprovalStore for InMemoryApprovalStore {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
-    use chrono::TimeZone as _;
     use crawlx_core::time::ManualClock;
 
     fn setup() -> (ManualClock, InMemoryApprovalStore) {
-        let c = ManualClock::new(chrono::Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap());
+        let c = ManualClock::new(Timestamp::from_ymd_hms(2026, 3, 1, 0, 0, 0).unwrap());
         let s = InMemoryApprovalStore::new(Arc::new(c.clone()));
         (c, s)
     }
@@ -595,7 +593,7 @@ mod tests {
 
     #[test]
     fn expiry_is_capped_by_run_deadline() {
-        let now = chrono::Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap();
+        let now = Timestamp::from_ymd_hms(2026, 3, 1, 0, 0, 0).unwrap();
         let deadline = now + Duration::hours(2);
         let r = ApprovalRequest::new(
             key(1),

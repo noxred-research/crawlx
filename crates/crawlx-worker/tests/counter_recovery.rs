@@ -15,6 +15,7 @@
 //! The PostgreSQL variants skip without `CRAWLX_TEST_DATABASE_URL`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_browser::fake::{FakeAxSpec, FakeEffect, FakePage, FakeScript};
 use crawlx_browser::FakeBackend;
 use crawlx_core::config::CrawlMode;
@@ -133,7 +134,7 @@ impl Backing {
         match self {
             Self::Memory(store) => {
                 for s in sessions {
-                    store.expire_session_lease(*s, SystemClock.now() - chrono::Duration::hours(1));
+                    store.expire_session_lease(*s, SystemClock.now() - SpanDuration::hours(1));
                 }
             }
             Self::Pg { admin, .. } => {

@@ -8,6 +8,7 @@
 //! `Host` and SNI keep the original name because the URL is unchanged. After
 //! the response the connected peer is asserted against the checked set.
 
+use crawlx_core::time::Timestamp;
 use crate::body_limits::DEFAULT_MAX_BODY_BYTES;
 use crate::certificate::{
     CertificateEvidence, CertificateExport, CertificateUnavailable, PEER_CERTIFICATE_HEADER,
@@ -1261,7 +1262,7 @@ impl Fetcher {
             flow.response_body = body
                 .filter(|b| !b.is_empty())
                 .map(|b| BodyDigest::of_prefix(b, u64::try_from(b.len()).unwrap_or(u64::MAX)));
-            flow.finished_at = chrono::Utc::now();
+            flow.finished_at = Timestamp::now();
             if tx.try_send(flow).is_err() {
                 tracing::debug!("fetch-plane capture channel full; flow dropped");
             }
@@ -1762,7 +1763,7 @@ impl Fetcher {
                 }
             }
             *attempts += 1;
-            let started_at = chrono::Utc::now();
+            let started_at = Timestamp::now();
             let captured_request = self
                 .capture
                 .as_ref()
@@ -1861,7 +1862,7 @@ impl Fetcher {
                 started_at,
                 finished_at: started_at,
             });
-            let retry_after = parse_retry_after(&resp_headers, chrono::Utc::now());
+            let retry_after = parse_retry_after(&resp_headers, Timestamp::now());
             self.governor
                 .on_response_with_latency(
                     &origin,
@@ -2287,7 +2288,7 @@ mod capture_tests {
         assert_eq!(stored[0].0.as_slice(), body.as_ref());
         assert!(!stored[0].1);
         drop(stored);
-        let at = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let at = Timestamp::from_timestamp(1_700_000_000, 0).unwrap();
         fetcher.emit_flow(
             Some(ProxyFlow {
                 source: ProxyFlowSource::FetchPlane,

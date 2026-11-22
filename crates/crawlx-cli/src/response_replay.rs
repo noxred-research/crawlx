@@ -1,6 +1,7 @@
 //! Development response replay, distinct from journalled browser action replay.
 //! Reads one committed retention-approved artifact with an exact saved request identity.
 //! No fetcher, browser, provider, secret resolver, action executor or telemetry is initialized.
+use crawlx_core::time::Timestamp;
 use anyhow::Context;
 use base64::Engine;
 use clap::Args;
@@ -85,7 +86,7 @@ async fn replay_on<B: Sql>(
             args.frontier,
             identity,
             args.principal,
-            chrono::Utc::now(),
+            Timestamp::now(),
             args.max_bytes,
         )
         .await?;

@@ -12,7 +12,7 @@ use axum::http::{header, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
-use chrono::SecondsFormat;
+use crawlx_core::time::SecondsFormat;
 use common::authorization::run_authorized_local_with as run_local_with;
 use crawlx_core::config::{CrawlMode, HostScope, RetentionMode, SitemapMode};
 use crawlx_core::repo::{FrontierEntry, FrontierStatus, PageRecord};

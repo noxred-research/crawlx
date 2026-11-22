@@ -14,6 +14,7 @@
 //! Counts come from the run's own counters and the idle clock from the injected run clock, so a
 //! manual clock replays the same stops.
 
+use crawlx_core::time::Duration;
 use super::*;
 
 /// Progress the idle criterion measures: the newest kept-page count and when it last grew.
@@ -78,7 +79,7 @@ impl UrlPlaneRunner {
             let now = self.deps.clock.now();
             idle.observe(urls.succeeded, now);
             if now.signed_duration_since(idle.since)
-                >= chrono::Duration::seconds(i64::from(limits.idle_seconds))
+                >= Duration::seconds(i64::from(limits.idle_seconds))
             {
                 return Some(TerminalDetail::IdleTimeout);
             }

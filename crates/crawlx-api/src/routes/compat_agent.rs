@@ -19,7 +19,7 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::routing::get;
 use axum::{Extension, Router};
-use chrono::{DateTime, Utc};
+use crawlx_core::time::Timestamp;
 use crawlx_core::TenantId;
 use crawlx_storage::{JobKind, JobPatch, JobRecord, JobStatus};
 use serde_json::{json, Value};
@@ -161,7 +161,7 @@ pub async fn start(
     Ok(json_response(StatusCode::OK, &out))
 }
 
-fn cursor_from(params: &Params) -> ApiResult<Option<(DateTime<Utc>, Uuid)>> {
+fn cursor_from(params: &Params) -> ApiResult<Option<(Timestamp, Uuid)>> {
     let Some(raw) = params.get("before") else {
         return Ok(None);
     };
@@ -170,7 +170,7 @@ fn cursor_from(params: &Params) -> ApiResult<Option<(DateTime<Utc>, Uuid)>> {
     if ms < 0 {
         return Err(bad());
     }
-    let at = DateTime::<Utc>::from_timestamp_millis(ms).ok_or_else(bad)?;
+    let at = Timestamp::from_timestamp_millis(ms).ok_or_else(bad)?;
     let id = match params.get("beforeId") {
         Some(s) => Uuid::parse_str(s).map_err(|_| bad())?,
         None => Uuid::nil(),

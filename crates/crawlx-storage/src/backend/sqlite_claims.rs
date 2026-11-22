@@ -6,6 +6,7 @@
 //! database clock is the process clock (one host). `RETURNING` yields rows in scan order,
 //! so callers that need an order sort the returned rows.
 
+use crawlx_core::time::Timestamp;
 use super::dialect::{Dialect, SqliteDialect, SQLITE_NEG_INFINITY_MICROS};
 use super::sqlite::{SqliteBackend, SqliteHandle};
 use super::strategy::{
@@ -23,7 +24,7 @@ use uuid::Uuid;
 
 /// Microseconds since the epoch on the host clock.
 fn now_micros() -> i64 {
-    chrono::Utc::now().timestamp_micros()
+    Timestamp::now().timestamp_micros()
 }
 
 fn json_column(row: &SqliteRow, column: &str) -> Result<Value, StoreError> {

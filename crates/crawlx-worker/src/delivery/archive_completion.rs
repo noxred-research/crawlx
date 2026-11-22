@@ -92,6 +92,7 @@ pub(crate) async fn archive_completion_notice(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crawlx_core::time::{Duration, FixedDateTime, ManualClock, Timestamp};
     use super::*;
     use crate::archive_recorder::{finalize, Finalization};
     use crawlx_core::counters::TerminalReason;
@@ -100,7 +101,6 @@ mod tests {
     use crawlx_core::repo::{FrontierStatus, PageRecord, Sensitivity};
     use crawlx_core::request::RequestEnvelopeV1;
     use crawlx_core::secret::{ArtifactSink, Redactor};
-    use crawlx_core::time::ManualClock;
     use crawlx_core::traffic::TrustLane;
     use crawlx_core::WorkerId;
     use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};
@@ -205,9 +205,9 @@ mod tests {
     async fn notice_names_only_a_committed_export_and_is_identical_on_every_retry() {
         let root = tempfile::tempdir().unwrap();
         let clock = Arc::new(ManualClock::new(
-            chrono::DateTime::parse_from_rfc3339("2026-11-08T00:00:00Z")
+            FixedDateTime::parse_rfc3339("2026-11-08T00:00:00Z")
                 .unwrap()
-                .with_timezone(&chrono::Utc),
+                .to_utc(),
         ));
         let memory = Arc::new(MemoryStore::with_clock(clock.clone()));
         let mut stores = Stores::over_memory(memory.clone(), root.path()).await.unwrap();
@@ -245,7 +245,7 @@ mod tests {
             run.id,
             run.config.output.archive.clone().unwrap(),
             run.created_at,
-            Some(run.created_at + chrono::Duration::days(1)),
+            Some(run.created_at + Duration::days(1)),
             TerminalReason::FrontierExhausted,
         );
         stores.archives.begin(&pending).await.unwrap();
@@ -335,7 +335,7 @@ mod tests {
     #[tokio::test]
     async fn run_without_archive_output_announces_nothing_committed() {
         let root = tempfile::tempdir().unwrap();
-        let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+        let clock = Arc::new(ManualClock::new(Timestamp::now()));
         let memory = Arc::new(MemoryStore::with_clock(clock.clone()));
         let mut stores = Stores::over_memory(memory.clone(), root.path()).await.unwrap();
         stores.artifacts = Arc::new(

@@ -6,6 +6,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod common;
 
+use crawlx_core::time::Timestamp;
 use common::LOOPBACK;
 use crawlx_fetch::{EgressProxy, EgressProxyHandle, StaticResolver, DENIED_HEADER};
 use crawlx_policy::egress::{DenyRule, EgressPolicy};
@@ -29,7 +30,7 @@ fn scoped_policy(server: &MockServer) -> EgressPolicy {
     let port = server.address().port();
     let record = sample_record(
         crawlx_core::TenantId::new(),
-        chrono::Utc::now(),
+        Timestamp::now(),
         &[format!("http://in.test:{port}").as_str()],
     );
     let mut policy = EgressPolicy::new(true).with_record_scope(record.scope());

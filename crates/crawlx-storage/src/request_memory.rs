@@ -301,7 +301,7 @@ pub(super) fn append(
         (
             now,
             run.started_at.unwrap_or(run.created_at)
-                + ChronoDuration::seconds(i64::from(run.config.limits.duration_seconds)),
+                + SpanDuration::seconds(i64::from(run.config.limits.duration_seconds)),
         )
     });
     if !matches!(
@@ -474,7 +474,7 @@ impl MemoryStore {
         Ok(registry.rows.get(&worker).is_some_and(|(row, backends)| {
             !row.draining
                 && row.last_heartbeat_at <= now
-                && row.last_heartbeat_at >= now - ChronoDuration::seconds(90)
+                && row.last_heartbeat_at >= now - SpanDuration::seconds(90)
                 && (row.capacity.get("acceptsQueued") == Some(&serde_json::Value::Bool(true))
                     || row
                         .capacity
@@ -598,7 +598,7 @@ impl MemoryStore {
         let cfg = config(run)?;
         let created = g.requests.created.get(&id).copied().unwrap_or(run.created_at);
         let deadline = created
-            + ChronoDuration::milliseconds(i64::try_from(cfg.attempts.max_elapsed_ms).unwrap_or(i64::MAX));
+            + SpanDuration::milliseconds(i64::try_from(cfg.attempts.max_elapsed_ms).unwrap_or(i64::MAX));
         let native_exhausted = run
             .config
             .acquisition
@@ -654,7 +654,7 @@ impl MemoryStore {
         let cfg = config(record)?;
         let created = g.requests.created.get(&id).copied().unwrap_or(record.created_at);
         if created
-            + ChronoDuration::milliseconds(i64::try_from(cfg.attempts.max_elapsed_ms).unwrap_or(i64::MAX))
+            + SpanDuration::milliseconds(i64::try_from(cfg.attempts.max_elapsed_ms).unwrap_or(i64::MAX))
             <= now
         {
             return Err(StoreError::Conflict("request deadline exhausted".into()));
@@ -754,13 +754,13 @@ impl MemoryStore {
                 .as_ref()
                 .map_or(policy.max_elapsed_ms, |job| job.options.timeout_ms),
         );
-        let absolute = (now + ChronoDuration::milliseconds(i64::from(elapsed)))
+        let absolute = (now + SpanDuration::milliseconds(i64::from(elapsed)))
             .min(
-                request_created + ChronoDuration::milliseconds(i64::try_from(request_ms).unwrap_or(i64::MAX)),
+                request_created + SpanDuration::milliseconds(i64::try_from(request_ms).unwrap_or(i64::MAX)),
             )
             .min(
                 record.started_at.unwrap_or(record.created_at)
-                    + ChronoDuration::seconds(i64::from(record.config.limits.duration_seconds)),
+                    + SpanDuration::seconds(i64::from(record.config.limits.duration_seconds)),
             );
         let (deadline, previous) = match g.requests.acquisition.get(&id) {
             Some(escrow) if escrow.fence == fence => {
@@ -1586,7 +1586,7 @@ impl RequestCommitRepo for MemoryStore {
             if head_receipt.is_some()
                 && run.config.retention.mode != crawlx_core::config::RetentionMode::Zdr
                 && run.config.retention.days != 0
-                && run.created_at + ChronoDuration::days(i64::from(run.config.retention.days)) <= now
+                && run.created_at + SpanDuration::days(i64::from(run.config.retention.days)) <= now
             {
                 return Err(StoreError::RetentionDenied(
                     "committed HEAD source expired".into(),
@@ -1605,7 +1605,7 @@ impl RequestCommitRepo for MemoryStore {
                 }
                 if run.config.retention.mode != crawlx_core::config::RetentionMode::Zdr
                     && run.config.retention.days != 0
-                    && run.created_at + ChronoDuration::days(i64::from(run.config.retention.days)) <= now
+                    && run.created_at + SpanDuration::days(i64::from(run.config.retention.days)) <= now
                 {
                     return Err(StoreError::RetentionDenied(
                         "committed page source expired".into(),
@@ -1699,7 +1699,7 @@ impl RequestCommitRepo for MemoryStore {
                         })
                         .ok_or_else(|| nf("frontier row", commit.request_id))?;
                     let deadline = run.started_at.unwrap_or(run.created_at)
-                        + ChronoDuration::seconds(i64::from(run.config.limits.duration_seconds));
+                        + SpanDuration::seconds(i64::from(run.config.limits.duration_seconds));
                     if let Some(decision) =
                         policy.next_visit_after_commit(&current, &commit, now, deadline, None)?
                     {

@@ -9,6 +9,7 @@
 //! PostgreSQL variants use `CRAWLX_TEST_DATABASE_URL` and skip without it.
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crawlx_core::time::Duration as SpanDuration;
 use crate::common::authorization as authorization_fixture;
 
 use axum::extract::{Path as UrlPath, State};
@@ -291,7 +292,7 @@ impl Rig {
         match &self.backing {
             Backing::Memory(store) => {
                 for s in stores.runs.list_sessions(run).await.unwrap() {
-                    store.expire_session_lease(s.id, SystemClock.now() - chrono::Duration::hours(1));
+                    store.expire_session_lease(s.id, SystemClock.now() - SpanDuration::hours(1));
                 }
             }
             Backing::Pg { admin, .. } => {
@@ -327,8 +328,8 @@ fn loopback_record(tenant: TenantId) -> AuthorizationRecord {
     AuthorizationRecord {
         url_prefixes: vec!["http://127.0.0.1".to_owned()],
         authorized_networks: vec!["127.0.0.0/8".parse().unwrap()],
-        valid_from: now - chrono::Duration::days(1),
-        valid_to: now + chrono::Duration::days(1),
+        valid_from: now - SpanDuration::days(1),
+        valid_to: now + SpanDuration::days(1),
         verified_at: Some(now),
         ..sample_record(tenant, now, &[])
     }

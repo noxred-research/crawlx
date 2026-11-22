@@ -538,7 +538,7 @@ pub struct SessionConfig {
         crawlx_storage::leases::SessionLease,
     )>,
     /// Bounded initial-login reservation, settled before exploration starts.
-    pub(crate) login_allowance: chrono::Duration,
+    pub(crate) login_allowance: SpanDuration,
     /// Absolute admitted execution ceiling, recovered from the durable role allocation.
     /// This may narrow but never extend the browser binding's independent lifetime.
     pub execution_deadline: Option<Timestamp>,
@@ -582,7 +582,7 @@ impl SessionConfig {
             binding_owner: None,
             pool_pin: None,
             local_lease_owner: None,
-            login_allowance: chrono::Duration::zero(),
+            login_allowance: SpanDuration::zero(),
             execution_deadline: None,
         }
     }
@@ -3650,6 +3650,7 @@ fn effect_markers(
 #[cfg(test)]
 mod exit_tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crawlx_core::time::Duration as SpanDuration;
 
     use super::*;
 
@@ -3686,12 +3687,12 @@ mod exit_tests {
             digest,
             None,
         );
-        let expiry = chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap();
+        let expiry = Timestamp::from_timestamp(2_000_000_000, 0).unwrap();
         let mut limits = SessionLimits::default();
         limits.max_usage = 1;
         let mut binding = SessionBindingV1::new(identity, 7, expiry);
         binding
-            .record_use(true, expiry - chrono::Duration::seconds(1), limits)
+            .record_use(true, expiry - SpanDuration::seconds(1), limits)
             .unwrap();
         binding.finish_cleanup(true).unwrap();
         let failure = Arc::new(SessionError::Binding(SessionBindingError::Draining {
@@ -3805,7 +3806,7 @@ mod exit_tests {
         use crawlx_fetch::proxyx::{PoolSelector, PoolTier, ProxyxRoute};
 
         let fixture =
-            crate::run::login_lifecycle_tests::fixture_with_bounds(chrono::Duration::minutes(5), None, None)
+            crate::run::login_lifecycle_tests::fixture_with_bounds(SpanDuration::minutes(5), None, None)
                 .await;
         fixture.handle.shutdown(ShutdownReason::Completed).await.unwrap();
         let mut config = fixture.rc.session_config(&fixture.lease.session);
@@ -3830,7 +3831,7 @@ mod exit_tests {
         let mut binding = SessionBindingV1::new(
             identity,
             fixture.lease.fencing_token,
-            fixture.rc.clock.now() + chrono::Duration::minutes(5),
+            fixture.rc.clock.now() + SpanDuration::minutes(5),
         );
         config.pool_pin = Some(route.bind(PoolTier::Basic, &binding, None).unwrap());
         binding.identity.profile = Some(digest);

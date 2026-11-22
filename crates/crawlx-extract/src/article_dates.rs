@@ -1,16 +1,17 @@
 //! Bounded Gregorian date rules using only caller-supplied locale, zone and reference date.
 //! Month names and digit ranges are independently authored facts, not a downloaded lexicon.
 
-use chrono::{DateTime, Datelike, FixedOffset, LocalResult, NaiveDate, NaiveDateTime, TimeZone};
 use crawlx_core::extraction::{ArticleDateV1, ExtractionPolicyV1};
+use crawlx_core::time::{Duration, FixedDateTime, NaiveDate, NaiveDateTime};
 
 enum Zone {
-    Fixed(FixedOffset),
-    Named(chrono_tz::Tz),
+    /// Seconds east of UTC.
+    Fixed(i32),
+    Named(jiff::tz::TimeZone),
 }
 fn zone(raw: &str) -> Option<Zone> {
     if matches!(raw, "Z" | "UTC") {
-        return FixedOffset::east_opt(0).map(Zone::Fixed);
+        return Some(Zone::Fixed(0));
     }
     let bytes = raw.as_bytes();
     if bytes.len() == 6 && matches!(bytes[0], b'+' | b'-') && bytes[3] == b':' {
@@ -23,9 +24,13 @@ fn zone(raw: &str) -> Option<Zone> {
             return None;
         }
         let seconds = (hours * 3600 + minutes * 60) * if bytes[0] == b'-' { -1 } else { 1 };
-        return FixedOffset::east_opt(seconds).map(Zone::Fixed);
+        return Some(Zone::Fixed(seconds));
     }
-    raw.parse().ok().map(Zone::Named)
+    // Canonical spelling only (`Europe/Berlin`, not `europe/berlin`), from the bundled database.
+    jiff::tz::TimeZone::get(raw)
+        .ok()
+        .filter(|zone| zone.iana_name() == Some(raw))
+        .map(Zone::Named)
 }
 pub(crate) fn validate_timezone(policy: &ExtractionPolicyV1) -> Result<(), crate::ExtractError> {
     if policy
@@ -134,7 +139,7 @@ pub(crate) fn parse(raw: &str, policy: &ExtractionPolicyV1) -> Option<(ArticleDa
     }
     let normalized = digits(raw.trim());
     let raw = normalized.as_str();
-    if let Ok(value) = DateTime::parse_from_rfc3339(raw).or_else(|_| DateTime::parse_from_rfc2822(raw)) {
+    if let Ok(value) = FixedDateTime::parse_rfc3339(raw).or_else(|_| FixedDateTime::parse_rfc2822(raw)) {
         return finish(value.date_naive(), Some(value.to_rfc3339()), false, policy);
     }
     for format in [
@@ -148,14 +153,24 @@ pub(crate) fn parse(raw: &str, policy: &ExtractionPolicyV1) -> Option<(ArticleDa
             .flatten()
         {
             let utc = match zone(policy.date_timezone.as_deref()?)? {
-                Zone::Fixed(zone) => match zone.from_local_datetime(&local) {
-                    LocalResult::Single(value) => value.to_rfc3339(),
-                    _ => return None,
-                },
-                Zone::Named(zone) => match zone.from_local_datetime(&local) {
-                    LocalResult::Single(value) => value.to_rfc3339(),
-                    _ => return None,
-                },
+                Zone::Fixed(seconds) => FixedDateTime::from_local(local, seconds).ok()?.to_rfc3339(),
+                Zone::Named(zone) => {
+                    // A wall time inside a spring-forward gap or a fall-back overlap names no single
+                    // instant: reject it instead of inventing one.
+                    let date = local.date();
+                    let civil = jiff::civil::DateTime::new(
+                        i16::try_from(date.year()).ok()?,
+                        i8::try_from(date.month()).ok()?,
+                        i8::try_from(date.day()).ok()?,
+                        i8::try_from(local.hour()).ok()?,
+                        i8::try_from(local.minute()).ok()?,
+                        i8::try_from(local.second()).ok()?,
+                        0,
+                    )
+                    .ok()?;
+                    let instant = zone.to_ambiguous_timestamp(civil).unambiguous().ok()?;
+                    FixedDateTime::from_local(local, zone.to_offset(instant).seconds()).ok()?.to_rfc3339()
+                }
             };
             return finish(local.date(), Some(utc), false, policy);
         }
@@ -179,7 +194,7 @@ pub(crate) fn parse(raw: &str, policy: &ExtractionPolicyV1) -> Option<(ArticleDa
         return finish(
             policy
                 .reference_date?
-                .checked_sub_signed(chrono::Duration::days(days))?,
+                .checked_sub_signed(Duration::days(days))?,
             None,
             true,
             policy,

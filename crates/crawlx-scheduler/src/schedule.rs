@@ -62,8 +62,8 @@
 //!
 //! This module never reads the wall clock: every instant is an argument.
 
-use chrono::{DateTime, Utc};
-use chrono_tz::Tz;
+use crawlx_core::time::Timestamp;
+use jiff::tz::TimeZone;
 use croner::parser::{CronParser, Seconds, Year};
 use croner::Cron;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -166,13 +166,13 @@ pub struct ScheduleSpec {
 pub struct Schedule {
     cron: Cron,
     expression: String,
-    zone: Tz,
+    zone: TimeZone,
     spec: ScheduleSpec,
 }
 
 impl PartialEq for Schedule {
     fn eq(&self, other: &Self) -> bool {
-        self.expression == other.expression && self.zone == other.zone
+        self.expression == other.expression && self.spec.timezone == other.spec.timezone
     }
 }
 
@@ -191,13 +191,17 @@ impl<'de> Deserialize<'de> for Schedule {
     }
 }
 
-fn reference() -> DateTime<Utc> {
-    DateTime::from_timestamp(REFERENCE_UNIX, 0).unwrap_or_default()
+fn reference() -> Timestamp {
+    Timestamp::from_timestamp(REFERENCE_UNIX, 0).unwrap_or_default()
 }
 
-fn zone_of(name: &str) -> Result<Tz, ScheduleError> {
-    name.parse::<Tz>()
-        .map_err(|_| ScheduleError::UnknownTimezone(name.to_owned()))
+/// The zone of an IANA name, spelled exactly as the database spells it, with that name.
+fn zone_of(name: &str) -> Result<(TimeZone, String), ScheduleError> {
+    TimeZone::get(name)
+        .ok()
+        .filter(|zone| zone.iana_name() == Some(name))
+        .map(|zone| (zone, name.to_owned()))
+        .ok_or_else(|| ScheduleError::UnknownTimezone(name.to_owned()))
 }
 
 fn parse_cron(expression: &str) -> Result<(Cron, String), ScheduleError> {
@@ -248,7 +252,7 @@ impl Schedule {
 
     fn build(spec: &ScheduleSpec) -> Result<Self, ScheduleError> {
         let zone_name = spec.timezone.as_deref().unwrap_or(DEFAULT_TIMEZONE);
-        let zone = zone_of(zone_name)?;
+        let (zone, zone_name) = zone_of(zone_name)?;
         let (cron, expression, kept_cron, kept_text) = match (&spec.cron, &spec.text) {
             (None, None) => return Err(ScheduleError::Missing),
             (Some(_), Some(_)) => return Err(ScheduleError::Ambiguous),
@@ -272,7 +276,7 @@ impl Schedule {
             spec: ScheduleSpec {
                 cron: kept_cron,
                 text: kept_text,
-                timezone: Some(zone.name().to_owned()),
+                timezone: Some(zone_name),
             },
         })
     }
@@ -286,7 +290,7 @@ impl Schedule {
     /// The IANA zone name the cron is evaluated in.
     #[must_use]
     pub fn timezone(&self) -> &str {
-        self.zone.name()
+        self.spec.timezone.as_deref().unwrap_or(DEFAULT_TIMEZONE)
     }
 
     /// The request form (`cron` or `text`, and the zone) this schedule serializes to.
@@ -300,12 +304,11 @@ impl Schedule {
     /// Deterministic: the same schedule and instant always give the same answer. Feed the
     /// returned instant back in to walk the series.
     #[must_use]
-    pub fn next_after(&self, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
-        let local = after.with_timezone(&self.zone);
-        self.cron
-            .find_next_occurrence(&local, false)
-            .ok()
-            .map(|t| t.with_timezone(&Utc))
+    pub fn next_after(&self, after: Timestamp) -> Option<Timestamp> {
+        let instant = jiff::Timestamp::new(after.timestamp(), i32::try_from(after.timestamp_subsec_nanos()).ok()?).ok()?;
+        let local = instant.to_zoned_datetime(self.zone.clone());
+        let next = self.cron.find_next_occurrence(&local, false).ok()?.timestamp();
+        Timestamp::from_timestamp(next.as_second(), u32::try_from(next.subsec_nanosecond()).ok()?)
     }
 
     /// How many runs fall in 30 days, estimated from the schedule's first occurrences after a
@@ -339,7 +342,7 @@ impl Schedule {
     fn check_interval(&self) -> Result<(), ScheduleError> {
         let start = reference();
         let mut at = start;
-        let mut previous: Option<DateTime<Utc>> = None;
+        let mut previous: Option<Timestamp> = None;
         let mut shortest: Option<i64> = None;
         for _ in 0..SAMPLE_OCCURRENCES {
             let Some(next) = self.next_after(at) else { break };

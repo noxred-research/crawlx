@@ -42,6 +42,7 @@
 //! already-enqueued commands or COMMIT may execute after cancellation. Errors
 //! never authorize credential delivery; durable pending intents remain barriers.
 
+use crawlx_core::time::Duration as SpanDuration;
 use crate::backend::strategy::Conn;
 use crate::backend::{LockMode, PgBackend};
 use crate::sql::{stmt, Sql, SqlRow, Stmt};
@@ -1623,7 +1624,7 @@ async fn insert_producer<B: Sql>(
         .uuid(tenant.0).uuid(run.0).uuid(key).fetch_one(conn).await?;
     let now = database_now::<B>(conn).await?;
     let mut expires_at = now
-        .checked_add_signed(chrono::Duration::milliseconds(ttl_ms))
+        .checked_add_signed(SpanDuration::milliseconds(ttl_ms))
         .ok_or_else(|| denied("producer deadline overflow"))?;
     for bound in [bounds.opt_ts("key_expires")?, bounds.opt_ts("run_expires")?]
         .into_iter()

@@ -1,6 +1,7 @@
 //! Independent auditor integration coverage; uses isolated schemas and real limited logins.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crawlx_core::time::{Duration, Timestamp};
 use crawlx_core::counters::RunStatus;
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::hash::Digest;
@@ -56,7 +57,7 @@ fn login_url(base: &str, role: &str, password: &str, schema: &str) -> String {
 }
 
 async fn opted_in_zdr_action(pg: &Pg, tenant: TenantId) -> (CrawlRunId, ActionId, Arc<DeliveryBuffer>) {
-    let now = chrono::Utc::now();
+    let now = Timestamp::now();
     let mut record = crawlx_policy::testkit::sample_record(tenant, now, &["https://example.test"]);
     record
         .test_sinks
@@ -305,7 +306,7 @@ async fn privileged_bypass_pauses_only_affected_run_with_independent_identities(
     assert!(!durable.to_string().contains("private-zdr-sink-canary"));
     assert!(auditor.audit().await.unwrap().violations.is_empty());
     buffer
-        .sweep(chrono::Utc::now() + chrono::Duration::hours(2))
+        .sweep(Timestamp::now() + Duration::hours(2))
         .await
         .unwrap();
     assert!(auditor.audit().await.unwrap().violations.is_empty());

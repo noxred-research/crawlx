@@ -179,7 +179,7 @@ impl Checkpointer {
         let ciphertext: Ciphertext = self.keys.seal(&context, bytes).await?;
         let now = self.clock.now();
         let expires_at = self.binding.as_ref().map_or(
-            now + chrono::Duration::days(i64::from(self.retention_days.max(1))),
+            now + Duration::days(i64::from(self.retention_days.max(1))),
             |binding| binding.expires_at,
         );
         let artifact = ArtifactSink::over(self.artifacts.as_ref())
@@ -272,6 +272,7 @@ impl Checkpointer {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crawlx_core::time::Duration;
     use super::*;
 
     #[test]
@@ -313,7 +314,7 @@ mod tests {
         let now = crawlx_core::SystemClock.now();
         let digest = Digest::of("checkpoint-fixture", b"policy");
         let identity = SessionIdentityV1::new(stores.tenant, &session, digest, digest, digest, digest, None);
-        let binding = SessionBindingV1::new(identity, 5, now + chrono::Duration::minutes(10));
+        let binding = SessionBindingV1::new(identity, 5, now + Duration::minutes(10));
         let payload = CheckpointPayload {
             version: CheckpointPayload::VERSION,
             binding: Some(binding.clone()),

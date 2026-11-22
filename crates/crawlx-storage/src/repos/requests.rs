@@ -1,4 +1,5 @@
 //! Request extensions of the authoritative URL frontier.
+use crawlx_core::time::Duration;
 use super::*;
 use crate::backend::strategy::Conn;
 use crate::backend::{Backend, BackendKind, Dialect, RowLock};
@@ -876,7 +877,7 @@ impl<B: Sql> Store<B> {
         .ok_or(StoreError::LeaseLost)?;
         let usage = held.opt_json("acquisition_usage")?;
         let discovered = held.ts("discovered_at")?;
-        let elapsed_end = chrono::Duration::from_std(limits.elapsed)
+        let elapsed_end = Duration::from_std(limits.elapsed)
             .ok()
             .and_then(|elapsed| discovered.checked_add_signed(elapsed));
         let exhausted = i64::from(held.i16("attempts")?) >= limits.effects
@@ -1084,11 +1085,11 @@ impl<B: Sql> Store<B> {
                 .map_or(policy.max_elapsed_ms, |job| job.options.timeout_ms),
         );
         let deadline = row.opt_ts("acquisition_deadline_at")?.unwrap_or_else(|| {
-            (now + chrono::Duration::milliseconds(i64::from(elapsed)))
-                .min(created + chrono::Duration::milliseconds(i64::try_from(request_ms).unwrap_or(i64::MAX)))
+            (now + Duration::milliseconds(i64::from(elapsed)))
+                .min(created + Duration::milliseconds(i64::try_from(request_ms).unwrap_or(i64::MAX)))
                 .min(
                     record.started_at.unwrap_or(record.created_at)
-                        + chrono::Duration::seconds(i64::from(record.config.limits.duration_seconds)),
+                        + Duration::seconds(i64::from(record.config.limits.duration_seconds)),
                 )
         });
         let previous = row

@@ -4,6 +4,7 @@
 //! privacy gate before any archive spool. Each gzip shard commits before its catalog row;
 //! the final package commits before manifest publication. Stable ordinals permit recovery.
 
+use crawlx_core::time::Duration;
 use crate::{Stores, WorkerError};
 use crawlx_core::archive::{
     ArchiveCapture, ArchiveCaptureFactsV1, ArchiveFormat, ArchiveManifestV1, ArchiveOmissionV1,
@@ -127,7 +128,7 @@ pub(crate) async fn finalize(
         ));
     }
     let expires = (run.config.retention.days != 0)
-        .then(|| run.created_at + chrono::Duration::days(i64::from(run.config.retention.days)));
+        .then(|| run.created_at + Duration::days(i64::from(run.config.retention.days)));
     if expires.is_some_and(|expiry| expiry <= clock.now()) {
         return Err(WorkerError::PolicyDenied("archive source expired".into()));
     }

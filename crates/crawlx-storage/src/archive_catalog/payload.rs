@@ -1,5 +1,6 @@
 //! Exact payload-reuse custody checks shared by both catalog implementations.
 
+use crawlx_core::time::Duration;
 use super::{expires_before, live};
 use crawlx_core::archive::{ArchiveDedupe, ArchiveRepresentation};
 use crawlx_core::archive_catalog::{
@@ -138,7 +139,7 @@ pub(super) fn candidate(
     digest: &str,
     now: Timestamp,
 ) -> Option<(uuid::Uuid, u64)> {
-    let active = now.checked_add_signed(chrono::Duration::nanoseconds(1))?;
+    let active = now.checked_add_signed(Duration::nanoseconds(1))?;
     let floor = export.expires_at.unwrap_or(Timestamp::MAX_UTC).max(active);
     let (_, _, source, ordinal) = rows
         .get(digest)?

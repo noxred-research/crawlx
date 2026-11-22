@@ -348,6 +348,7 @@ impl ReparseServices<'_> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crawlx_core::time::Timestamp;
     use super::*;
     use crawlx_core::{
         acquisition::BackendCapabilitiesV1, archive_catalog::ArchiveCustodyV1, custody::RunSecretSnapshot,
@@ -399,7 +400,7 @@ mod tests {
             source_from_acquisition(&acquisition, &intent),
             Err(ReparseError::Scope)
         ));
-        let expiry = chrono::DateTime::from_timestamp(100, 0).unwrap();
+        let expiry = Timestamp::from_timestamp(100, 0).unwrap();
         assert!(ArchiveCustodyV1::sensitive(expiry).validate(expiry).is_err());
     }
 
@@ -417,7 +418,7 @@ mod tests {
             seed: crawlx_core::seed::CrawlSeed(1),
             policy_version: 1,
             counters: Default::default(),
-            created_at: chrono::DateTime::from_timestamp(0, 0).unwrap(),
+            created_at: Timestamp::from_timestamp(0, 0).unwrap(),
             started_at: None,
             finished_at: None,
             trace_id: None,

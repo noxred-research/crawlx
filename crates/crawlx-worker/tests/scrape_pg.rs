@@ -7,12 +7,12 @@
 #[path = "common/authorization.rs"]
 mod authorization_fixture;
 
+use crawlx_core::time::{Duration as SpanDuration, SecondsFormat};
 use axum::extract::State;
 use axum::http::{header, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
-use chrono::SecondsFormat;
 use crawlx_core::config::{CrawlMode, HostScope, SitemapMode};
 use crawlx_core::counters::{PlaneCounters, RunStatus};
 use crawlx_core::repo::{CrawlRun, FrontierStatus, PageRecord, RunRepo};
@@ -142,8 +142,8 @@ async fn rig() -> Option<Rig> {
     let auth = AuthorizationRecord {
         url_prefixes: vec!["http://127.0.0.1".to_owned()],
         authorized_networks: vec!["127.0.0.0/8".parse().unwrap()],
-        valid_from: now - chrono::Duration::days(1),
-        valid_to: now + chrono::Duration::days(1),
+        valid_from: now - SpanDuration::days(1),
+        valid_to: now + SpanDuration::days(1),
         verified_at: Some(now),
         ..sample_record(stores.tenant, now, &[])
     };

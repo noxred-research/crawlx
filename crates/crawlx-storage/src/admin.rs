@@ -6,6 +6,7 @@
 //! (`actor = "admin:<operator>"`). Containment (`pause`, `freeze`, `drain`) stays expressible
 //! in plain SQL (RB-11) because an emergency stop must not depend on this binary.
 
+use crawlx_core::time::Duration as SpanDuration;
 use crate::artifacts::ArtifactBlobs;
 use crate::backend::{Backend, BackendKind, Dialect, MariaBackend, PgBackend, RowLock, SqliteBackend};
 use crate::codec::get;
@@ -495,6 +496,7 @@ mod registry {
     use crawlx_core::acquisition::{BackendCapabilitiesV1, WorkerCapabilitiesV1};
     use crawlx_core::data_capabilities::{WorkerDataCapabilitiesV1, WorkerDataRequirementsV1};
     use crawlx_core::{CrawlRunId, StoreError, Timestamp, WorkerId};
+    use crawlx_core::time::Duration as SpanDuration;
     use serde_json::{Map, Value};
     use std::time::Duration;
 
@@ -643,7 +645,7 @@ mod registry {
     ) -> Result<Vec<(WorkerId, Timestamp, Value, bool)>, StoreError> {
         let milliseconds = i64::try_from(max_age.as_millis().min(90_000)).unwrap_or(90_000);
         let now = super::db_now_of(store).await?;
-        let since = now - chrono::Duration::milliseconds(milliseconds);
+        let since = now - SpanDuration::milliseconds(milliseconds);
         let rows = stmt!(
             B,
             "SELECT worker_id, last_heartbeat_at, capacity, draining FROM workers \
@@ -944,7 +946,7 @@ impl WorkerRegistry for crate::MemoryStore {
         }
         let now = self.worker_registry_now();
         let cutoff = now
-            - chrono::Duration::milliseconds(
+            - SpanDuration::milliseconds(
                 i64::try_from(max_age.as_millis().min(90_000)).unwrap_or(90_000),
             );
         let registry = self.worker_registry.lock();
@@ -983,7 +985,7 @@ impl WorkerRegistry for crate::MemoryStore {
         }
         let now = self.worker_registry_now();
         let age =
-            chrono::Duration::milliseconds(i64::try_from(max_age.as_millis().min(90_000)).unwrap_or(90_000));
+            SpanDuration::milliseconds(i64::try_from(max_age.as_millis().min(90_000)).unwrap_or(90_000));
         let cutoff = now - age;
         let registry = self.worker_registry.lock();
         registry
@@ -1041,7 +1043,7 @@ impl crate::MemoryStore {
             row.capacity["acceptsQueued"] == true || row.capacity["localRun"] == serde_json::json!(run);
         Ok(in_scope
             && !row.draining
-            && row.last_heartbeat_at >= now - chrono::Duration::seconds(90)
+            && row.last_heartbeat_at >= now - SpanDuration::seconds(90)
             && row.last_heartbeat_at <= now
             && registry
                 .data

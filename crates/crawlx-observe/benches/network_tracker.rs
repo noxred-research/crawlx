@@ -8,9 +8,8 @@
 //! [`EpochTracker`].
 #![allow(missing_docs, clippy::unwrap_used, clippy::expect_used)]
 
-use chrono::{DateTime, Utc};
-use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::time::Timestamp;
+use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::traffic::TrafficOrigin;
 use crawlx_observe::epoch::{EpochEvent, EpochTracker};
 use crawlx_observe::network::{NetworkEpochTracker, RequestEvent, ResponseEvent};
@@ -22,7 +21,7 @@ const EVENTS: usize = 10_000;
 const POLL_EVERY: usize = 100;
 
 fn t(ms: i64) -> Timestamp {
-    DateTime::<Utc>::from_timestamp_millis(1_700_000_000_000 + ms).unwrap()
+    Timestamp::from_timestamp_millis(1_700_000_000_000 + ms).unwrap()
 }
 
 /// One browser event of the settle loop, in arrival order.

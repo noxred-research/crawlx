@@ -932,7 +932,7 @@ pub async fn store_candidate(
         .expires_at()
         .or_else(|| {
             run.created_at
-                .checked_add_signed(chrono::Duration::days(i64::from(run.config.retention.days)))
+                .checked_add_signed(Duration::days(i64::from(run.config.retention.days)))
         })
         .ok_or_else(|| StoreError::RetentionDenied("item expiry unavailable".into()))?;
     let mut item = AcceptedItemV1::new(

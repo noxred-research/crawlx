@@ -5,7 +5,7 @@
 //! partitions are PostgreSQL machinery (plain tables elsewhere) and stay in `tests/pg.rs`.
 
 use crate::rig::Rig;
-use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
+use crawlx_core::time::{Timestamp, Duration, NaiveDate};
 use crawlx_core::acquisition::{BackendCapabilitiesV1, WORKER_CAPABILITY_SNAPSHOT_LIMIT};
 use crawlx_core::config::{LaunchProfile, RetentionMode};
 use crawlx_core::counters::{ActionStatus, RunStatus, TerminalReason};
@@ -110,7 +110,7 @@ enum V {
     Uuid(Uuid),
     Text(String),
     Int(i64),
-    Ts(DateTime<Utc>),
+    Ts(Timestamp),
     Bytes(Vec<u8>),
 }
 
@@ -149,17 +149,17 @@ macro_rules! bind_all {
 /// Run a statement; the rows it affected.
 async fn exec(db: &Database, sql: &str, args: &[V]) -> Result<u64, sqlx::Error> {
     match db.kind() {
-        BackendKind::Postgres => bind_all!(sqlx::query(sqlx::AssertSqlSafe(pg_sql(sql))), args, ts: |t: DateTime<Utc>| t)
+        BackendKind::Postgres => bind_all!(sqlx::query(sqlx::AssertSqlSafe(pg_sql(sql))), args, ts: |t: Timestamp| t)
             .execute(db.postgres().unwrap().pool())
             .await
             .map(|done| done.rows_affected()),
         BackendKind::Sqlite => {
-            bind_all!(sqlx::query(sqlx::AssertSqlSafe(sql.to_owned())), args, ts: |t: DateTime<Utc>| t.timestamp_micros())
+            bind_all!(sqlx::query(sqlx::AssertSqlSafe(sql.to_owned())), args, ts: |t: Timestamp| t.timestamp_micros())
                 .execute(db.sqlite_pool().unwrap())
                 .await
                 .map(|done| done.rows_affected())
         }
-        _ => bind_all!(sqlx::query(sqlx::AssertSqlSafe(sql.to_owned())), args, ts: |t: DateTime<Utc>| t.naive_utc())
+        _ => bind_all!(sqlx::query(sqlx::AssertSqlSafe(sql.to_owned())), args, ts: |t: Timestamp| t.naive_utc())
             .execute(db.mariadb_pool().unwrap())
             .await
             .map(|done| done.rows_affected()),
@@ -170,7 +170,7 @@ async fn exec(db: &Database, sql: &str, args: &[V]) -> Result<u64, sqlx::Error> 
 macro_rules! read_rows {
     ($db:expr, $sql:expr, $args:expr, |$row:ident| $body:expr) => {{
         match $db.kind() {
-            BackendKind::Postgres => bind_all!(sqlx::query(sqlx::AssertSqlSafe(pg_sql($sql))), $args, ts: |t: DateTime<Utc>| t)
+            BackendKind::Postgres => bind_all!(sqlx::query(sqlx::AssertSqlSafe(pg_sql($sql))), $args, ts: |t: Timestamp| t)
                 .fetch_all($db.postgres().unwrap().pool())
                 .await
                 .unwrap()
@@ -178,7 +178,7 @@ macro_rules! read_rows {
                 .map(|$row| $body)
                 .collect::<Vec<_>>(),
             BackendKind::Sqlite => {
-                bind_all!(sqlx::query(sqlx::AssertSqlSafe(($sql).to_owned())), $args, ts: |t: DateTime<Utc>| t.timestamp_micros())
+                bind_all!(sqlx::query(sqlx::AssertSqlSafe(($sql).to_owned())), $args, ts: |t: Timestamp| t.timestamp_micros())
                     .fetch_all($db.sqlite_pool().unwrap())
                     .await
                     .unwrap()
@@ -186,7 +186,7 @@ macro_rules! read_rows {
                     .map(|$row| $body)
                     .collect::<Vec<_>>()
             }
-            _ => bind_all!(sqlx::query(sqlx::AssertSqlSafe(($sql).to_owned())), $args, ts: |t: DateTime<Utc>| t.naive_utc())
+            _ => bind_all!(sqlx::query(sqlx::AssertSqlSafe(($sql).to_owned())), $args, ts: |t: Timestamp| t.naive_utc())
                 .fetch_all($db.mariadb_pool().unwrap())
                 .await
                 .unwrap()
@@ -437,7 +437,7 @@ async fn merkle_export_folds_the_days_leaves_in_time_order(rig: &Rig) {
     let tenant = tenant(rig).await;
     let other = TenantId::new();
     let day = NaiveDate::from_ymd_opt(2026, 1, 15).unwrap();
-    let at = |d: NaiveDate, h: u32| Utc.from_utc_datetime(&d.and_hms_opt(h, 0, 0).unwrap());
+    let at = |d: NaiveDate, h: u32| d.and_hms_opt(h, 0, 0).unwrap().and_utc();
     let next = day.succ_opt().unwrap();
     // inserted out of time order so the export must sort by occurred_at, not audit_id
     for (owner, when, fill) in [
@@ -1177,7 +1177,7 @@ async fn overdue_artifacts_count_until_the_sweeper_runs_then_zero(rig: &Rig) {
     let db = rig.database();
     let tenant = tenant(rig).await;
     on_db!(rig, |store| {
-        let t0 = Utc.with_ymd_and_hms(2026, 10, 20, 12, 0, 0).unwrap();
+        let t0 = Timestamp::from_ymd_hms(2026, 10, 20, 12, 0, 0).unwrap();
         let clock = Arc::new(crawlx_core::time::ManualClock::new(t0));
         let run = running_run(store, tenant).await;
         let days = i64::from(RunRepo::get(store, run).await.unwrap().config.retention.days);
@@ -1261,7 +1261,7 @@ async fn sweeper_counts_each_zdr_artifact_row_once(rig: &Rig) {
         assert_eq!(violations.get(&[]), before + 1, "the gate counts its refusal");
 
         let sweeper = RetentionSweeper::new(store.clone());
-        sweeper.sweep(Utc::now()).await.unwrap();
+        sweeper.sweep(Timestamp::now()).await.unwrap();
         assert_eq!(
             violations.get(&[]),
             before + 1,
@@ -1285,17 +1285,17 @@ async fn sweeper_counts_each_zdr_artifact_row_once(rig: &Rig) {
         .await
         .unwrap();
         assert_eq!(sweeper.zdr_violations().await.unwrap(), vec![rogue]);
-        sweeper.sweep(Utc::now()).await.unwrap();
+        sweeper.sweep(Timestamp::now()).await.unwrap();
         assert_eq!(
             violations.get(&[]),
             before + 2,
             "the row is counted on first sight"
         );
-        sweeper.sweep(Utc::now()).await.unwrap();
+        sweeper.sweep(Timestamp::now()).await.unwrap();
         assert_eq!(violations.get(&[]), before + 2, "and not again while it lingers");
         // a fresh sweeper has no memory of it
         RetentionSweeper::new(store.clone())
-            .sweep(Utc::now())
+            .sweep(Timestamp::now())
             .await
             .unwrap();
         assert_eq!(violations.get(&[]), before + 3);
@@ -1308,7 +1308,7 @@ async fn sweeper_purges_expired_runs_and_chains_the_audit_log(rig: &Rig) {
     let tenant = tenant(rig).await;
     on_db!(rig, |store| {
         let mut run = crawl_run(tenant, create_crawl("https://example.test/", &[], 1));
-        run.created_at = Utc::now() - Duration::days(30);
+        run.created_at = Timestamp::now() - Duration::days(30);
         run.status = RunStatus::Completed;
         run.terminal_reason = Some(TerminalReason::FrontierExhausted);
         RunRepo::create(store, &run, None).await.unwrap();
@@ -1327,14 +1327,14 @@ async fn sweeper_purges_expired_runs_and_chains_the_audit_log(rig: &Rig) {
                 V::Uuid(tenant.0),
                 V::Bytes(vec![1; 32]),
                 V::Uuid(run.id.0),
-                V::Ts(Utc::now() + Duration::days(1)),
+                V::Ts(Timestamp::now() + Duration::days(1)),
             ],
         )
         .await
         .unwrap();
         let fresh = running_run(store, tenant).await; // not expired: must survive
         let report = RetentionSweeper::new(store.clone())
-            .sweep(Utc::now())
+            .sweep(Timestamp::now())
             .await
             .unwrap();
         assert_eq!(report.runs_purged, 1);
@@ -1369,7 +1369,7 @@ async fn sweeper_purges_expired_runs_and_chains_the_audit_log(rig: &Rig) {
         );
         // a second pass has nothing left to purge and appends nothing
         let again = RetentionSweeper::new(store.clone())
-            .sweep(Utc::now())
+            .sweep(Timestamp::now())
             .await
             .unwrap();
         assert_eq!(again.runs_purged, 0);
@@ -1385,7 +1385,7 @@ async fn sweeper_deletes_the_settings_rows_a_run_owns(rig: &Rig) {
     let tenant = tenant(rig).await;
     on_db!(rig, |store| {
         let mut run = crawl_run(tenant, create_crawl("https://example.test/", &[], 1));
-        run.created_at = Utc::now() - Duration::days(30);
+        run.created_at = Timestamp::now() - Duration::days(30);
         run.status = RunStatus::Completed;
         run.terminal_reason = Some(TerminalReason::FrontierExhausted);
         RunRepo::create(store, &run, None).await.unwrap();
@@ -1396,17 +1396,17 @@ async fn sweeper_deletes_the_settings_rows_a_run_owns(rig: &Rig) {
                     tenant,
                     &run_setting_key(kind, run.id),
                     serde_json::json!({"k": kind}),
-                    Utc::now(),
+                    Timestamp::now(),
                 )
                 .await
                 .unwrap();
         }
         store
-            .setting_put(tenant, &kept, serde_json::json!(1), Utc::now())
+            .setting_put(tenant, &kept, serde_json::json!(1), Timestamp::now())
             .await
             .unwrap();
         let report = RetentionSweeper::new(store.clone())
-            .sweep(Utc::now())
+            .sweep(Timestamp::now())
             .await
             .unwrap();
         assert_eq!(report.runs_purged, 1);
@@ -1434,7 +1434,7 @@ async fn settings_claim_delete_and_list_by_prefix(rig: &Rig) {
     rig.migrate().await;
     let tenant = tenant(rig).await;
     on_db!(rig, |store| {
-        let now = Utc::now();
+        let now = Timestamp::now();
         assert!(store
             .setting_put_if_absent(tenant, "claim:a", serde_json::json!(1), now)
             .await
@@ -1452,7 +1452,7 @@ async fn settings_claim_delete_and_list_by_prefix(rig: &Rig) {
             let store = store.clone();
             async move {
                 store
-                    .setting_put_if_absent(tenant, "claim:race", serde_json::json!(n), Utc::now())
+                    .setting_put_if_absent(tenant, "claim:race", serde_json::json!(n), Timestamp::now())
                     .await
                     .unwrap()
             }
@@ -1554,7 +1554,7 @@ async fn authorization_records_are_removed_after_the_audit_horizon(rig: &Rig) {
     )
     .await
     .unwrap();
-    let now = Utc::now();
+    let now = Timestamp::now();
     let old = now - Duration::days(1_200);
     let recent = now - Duration::days(10);
     let mut ids = Vec::new();
@@ -1722,7 +1722,7 @@ async fn artifact_index_records_reads_retention_and_marks_deleted_once(rig: &Rig
         let tenant = TenantId::new();
         (tenant, running_run(rig.store().as_ref(), tenant).await)
     };
-    let micros = |value: i64| DateTime::from_timestamp_micros(value).unwrap();
+    let micros = |value: i64| Timestamp::from_timestamp_micros(value).unwrap();
     let created = micros(1_800_000_000_123_456);
     let expires = micros(1_900_000_000_654_321);
     let row = |object: &str| ArtifactRow {

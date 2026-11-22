@@ -4,6 +4,7 @@ mod memory;
 mod payload;
 mod store;
 
+use crawlx_core::time::SecondsFormat;
 use crawlx_core::archive::ArchiveManifestV1;
 use crawlx_core::archive_catalog::{
     ArchiveCustodyV1, ArchiveExportState, ArchiveExportV1, ArchiveHistoryKeyV1, ArchiveRecordV1,
@@ -171,7 +172,7 @@ fn export_json(export: &ArchiveExportV1) -> Result<serde_json::Value, StoreError
     let mut value = json(export)?;
     if let (Some(expiry), Some(custody)) = (export.custody.expires_at, value.get_mut("custody")) {
         custody["expiresAt"] =
-            serde_json::Value::String(expiry.to_rfc3339_opts(chrono::SecondsFormat::Micros, true));
+            serde_json::Value::String(expiry.to_rfc3339_opts(SecondsFormat::Micros, true));
     }
     Ok(value)
 }

@@ -1,5 +1,6 @@
 //! Hash-only first-commit arbitration. No independent claim API can outlive a failed page commit.
 
+use crawlx_core::time::Duration;
 use crate::backend::strategy::Conn;
 use crate::backend::{BackendKind, Dialect};
 use crate::sql::{stmt, Sql, SqlRow};
@@ -293,7 +294,7 @@ impl<B: Sql> DigestRegistryRepo for Store<B> {
         frontier_id: i64,
     ) -> Result<Option<DigestOutcomeV1>, StoreError> {
         let source = self.get(run).await?;
-        check_source(&source, chrono::Utc::now())?;
+        check_source(&source, Timestamp::now())?;
         let row = stmt!(
             B,
             "SELECT f.content_dedupe_outcome,r.purge_requested_at IS NULL AS available FROM url_frontier f JOIN crawl_runs r ON r.tenant_id=f.tenant_id AND r.run_id=f.run_id WHERE f.tenant_id=$1 AND f.run_id=$2 AND f.frontier_id=$3"
@@ -325,7 +326,7 @@ pub(crate) fn check_source(run: &crawlx_core::repo::CrawlRun, now: Timestamp) ->
     }
     if run.config.retention.mode != crawlx_core::config::RetentionMode::Zdr
         && run.config.retention.days != 0
-        && run.created_at + chrono::Duration::days(i64::from(run.config.retention.days)) <= now
+        && run.created_at + Duration::days(i64::from(run.config.retention.days)) <= now
     {
         return Err(StoreError::RetentionDenied(
             "content digest source expired".into(),

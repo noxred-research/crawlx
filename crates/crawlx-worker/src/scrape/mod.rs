@@ -120,7 +120,7 @@ use crate::runtime::CpuPool;
 use crate::url_plane::{header_pairs, UrlPlaneDeps};
 use crate::WorkerConfig;
 use bytes::Bytes;
-use chrono::SecondsFormat;
+use crawlx_core::time::SecondsFormat;
 use compose::{BodyKind, ComposeInput, Composed};
 use crawlx_core::config::{CreateCrawl, RetentionMode};
 use crawlx_core::hash::Digest;

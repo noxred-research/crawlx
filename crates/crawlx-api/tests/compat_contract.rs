@@ -14,7 +14,7 @@
 mod common;
 
 use axum::http::StatusCode;
-use chrono::Utc;
+use crawlx_core::time::Timestamp;
 use common::env;
 use crawlx_core::counters::{RunStatus, TerminalReason};
 use crawlx_core::hash::Digest;
@@ -199,7 +199,7 @@ async fn facade_endpoints_and_responses_match_the_sdk_shapes() {
                 html: None,
                 metadata: json!({"description": "d", "language": "en"}),
                 links: vec![format!("https://docs.example.test/{}", n + 1)],
-                fetched_at: Utc::now(),
+                fetched_at: Timestamp::now(),
                 lane: TrustLane::Diagnostic,
             })
             .await

@@ -4,6 +4,7 @@
 
 mod common;
 
+use crawlx_core::time::Timestamp;
 use crawlx_browser::fake::{FakeAxSpec, FakeEffect, FakePage, FakeScript};
 use crawlx_browser::FakeBackend;
 use crawlx_core::archive_behaviors::{RecipeStepV1, RecipeV1};
@@ -174,7 +175,7 @@ async fn fixture_with(
         config: crawl.clone(),
         policy_version: 1,
         counters: PlaneCounters::default(),
-        created_at: chrono::Utc::now(),
+        created_at: Timestamp::now(),
         started_at: None,
         finished_at: None,
         trace_id: None,

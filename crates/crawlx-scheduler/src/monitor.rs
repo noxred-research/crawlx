@@ -20,7 +20,7 @@
 use crate::error::SchedulerError;
 use crate::schedule::Schedule;
 use async_trait::async_trait;
-use chrono::Duration as ChronoDuration;
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_core::{Clock, Timestamp};
 use crawlx_storage::{IntelRepo, MonitorRecord};
 use std::sync::Arc;
@@ -136,7 +136,7 @@ impl MonitorScheduler {
     /// [`SchedulerError::Store`] when claiming fails; per-monitor failures are reported in the
     /// [`TickReport`].
     pub async fn tick(&self, now: Timestamp) -> Result<TickReport, SchedulerError> {
-        let lease = ChronoDuration::from_std(self.cfg.lease).unwrap_or_else(|_| ChronoDuration::minutes(15));
+        let lease = SpanDuration::from_std(self.cfg.lease).unwrap_or_else(|_| SpanDuration::minutes(15));
         let claimed = self
             .repo
             .monitor_claim_due(now, now + lease, self.cfg.claim_batch)

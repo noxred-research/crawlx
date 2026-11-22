@@ -1,6 +1,7 @@
 //! Real retained-run archive CLI fixtures. No live network and no fake origin response bytes.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crawlx_core::time::{Duration as SpanDuration, FixedDateTime, ManualClock};
 use clap::Parser;
 use crawlx_cli::archive::{
     execute_with_clock, ArchiveArgs, ArchiveCommand, ArchiveExportArgs, ArchiveImportArgs,
@@ -9,7 +10,6 @@ use crawlx_cli::archive::{
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{PageRecord, RunRepo, Sensitivity};
 use crawlx_core::secret::ArtifactSink;
-use crawlx_core::time::ManualClock;
 use crawlx_core::{TenantId, TrustLane};
 use crawlx_storage::archive::{wacz, warc, Limits};
 use crawlx_storage::testkit::{crawl_run, create_crawl};
@@ -44,9 +44,9 @@ impl Fixture {
     }
 }
 async fn fixture() -> Fixture {
-    let now = chrono::DateTime::parse_from_rfc3339("2026-11-04T12:34:56.789Z")
+    let now = FixedDateTime::parse_rfc3339("2026-11-04T12:34:56.789Z")
         .unwrap()
-        .with_timezone(&chrono::Utc);
+        .to_utc();
     let clock = ManualClock::new(now);
     let dir = tempfile::tempdir().unwrap();
     let tenant: TenantId = "00000000-0000-8000-8000-000000000001".parse().unwrap();
@@ -947,9 +947,9 @@ mod manage {
     }
 
     async fn rig() -> Rig {
-        let now = chrono::DateTime::parse_from_rfc3339("2026-11-08T12:00:00Z")
+        let now = FixedDateTime::parse_rfc3339("2026-11-08T12:00:00Z")
             .unwrap()
-            .with_timezone(&chrono::Utc);
+            .to_utc();
         let clock = Arc::new(ManualClock::new(now));
         let store = Arc::new(MemoryStore::with_clock(clock.clone()));
         let dir = tempfile::tempdir().unwrap();
@@ -994,7 +994,7 @@ mod manage {
             run.id,
             config(),
             rig.now,
-            Some(rig.now + chrono::Duration::days(7)),
+            Some(rig.now + SpanDuration::days(7)),
             TerminalReason::FrontierExhausted,
         );
         rig.store.begin(&pending).await.unwrap();

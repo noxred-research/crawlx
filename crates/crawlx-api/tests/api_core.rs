@@ -2,6 +2,7 @@
 //! Auth, scopes, rate limits, idempotency, envelope shape and run lifecycle verbs.
 mod common;
 
+use crawlx_core::time::Timestamp;
 use axum::http::{Method, StatusCode};
 use common::{env, env_with, simple_body};
 use crawlx_api::{ApiConfig, Scope, Settings};
@@ -524,7 +525,7 @@ async fn idempotency_replays_and_detects_mismatch() {
 
     // an in-flight key answers 409 idempotency_in_progress
     let hash = crawlx_api::util::request_hash("POST", "/v1/crawls", &simple_body());
-    crawlx_api::ApiStore::idem_begin(e.api.as_ref(), e.tenant, "busy", hash, chrono::Utc::now())
+    crawlx_api::ApiStore::idem_begin(e.api.as_ref(), e.tenant, "busy", hash, Timestamp::now())
         .await
         .unwrap();
     let (s, _, v) = e

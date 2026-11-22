@@ -1,6 +1,7 @@
 //! Small shared helpers: timestamps, canonical JSON, cursors, query and body extractors,
 //! the request-id/error-envelope middleware.
 
+use crawlx_core::time::SecondsFormat;
 use crate::config::Settings;
 use crate::errors::{ErrorParts, HttpError};
 use crate::state::AppState;
@@ -26,7 +27,7 @@ use uuid::Uuid;
 /// RFC 3339 UTC with milliseconds.
 #[must_use]
 pub fn ts(t: Timestamp) -> String {
-    t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    t.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 /// Optional timestamp as JSON.

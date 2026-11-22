@@ -7,6 +7,7 @@ use crate::artifacts::{object_key, ArtifactRow};
 use crate::custody::encrypted_object_key;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::Sensitivity;
+use crawlx_core::time::FixedDateTime;
 use crawlx_core::{ArtifactRef, CrawlRunId, StoreError, TenantId, Timestamp};
 use std::fs::File;
 use std::io::Read;
@@ -282,9 +283,9 @@ mod tests {
         let root = directory.path();
         let tenant: TenantId = "00000000-0000-8000-8000-000000000001".parse().unwrap();
         let run: CrawlRunId = "00000000-0000-8000-8000-000000000002".parse().unwrap();
-        let now = chrono::DateTime::parse_from_rfc3339("2026-11-04T12:34:56Z")
+        let now = FixedDateTime::parse_rfc3339("2026-11-04T12:34:56Z")
             .unwrap()
-            .with_timezone(&chrono::Utc);
+            .to_utc();
         let body = b"approved retained payload";
         let artifact = ArtifactRef {
             id: "00000000-0000-8000-8000-000000000003".parse().unwrap(),

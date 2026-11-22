@@ -630,6 +630,7 @@ async fn artifact_store<B: Sql>(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crawlx_core::time::Timestamp;
     use super::*;
     use crate::decision_dataset::{Hindsight, SCHEMA};
     use crawlx_core::hash::Digest;
@@ -693,7 +694,7 @@ mod tests {
             prompt_digest: Digest::of("test", b"x"),
             latency_ms: Some(7),
             breaker_state: None,
-            created_at: chrono::Utc::now(),
+            created_at: Timestamp::now(),
         }
     }
 

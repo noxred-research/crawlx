@@ -1,5 +1,6 @@
 //! In-process mirror of the durable archive transaction boundary.
 
+use crawlx_core::time::Duration;
 use super::{history_key, invalid, live, publish_bounds, record_bounds, scope, writer};
 use crate::MemoryStore;
 use async_trait::async_trait;
@@ -356,7 +357,7 @@ impl ArchiveRepo for MemoryStore {
             ));
         }
         let expiry = (run.config.retention.days != 0)
-            .then(|| run.created_at + chrono::Duration::days(i64::from(run.config.retention.days)));
+            .then(|| run.created_at + Duration::days(i64::from(run.config.retention.days)));
         if run.config.output.archive.as_ref() != Some(&export.config)
             || expiry.is_some_and(|expiry| expiry <= self.worker_registry_now())
         {
@@ -424,7 +425,7 @@ impl ArchiveRepo for MemoryStore {
             .fence
             .checked_add(1)
             .ok_or_else(|| invalid("archive fence exhausted"))?;
-        row.lease_until = now + chrono::Duration::seconds(120);
+        row.lease_until = now + Duration::seconds(120);
         Ok(Some(row.clone()))
     }
 
@@ -547,7 +548,7 @@ impl ArchiveRepo for MemoryStore {
             .ok_or(StoreError::LeaseLost)?;
         row.records += 1;
         row.bytes += record.length;
-        row.lease_until = now + chrono::Duration::seconds(120);
+        row.lease_until = now + Duration::seconds(120);
         state
             .records
             .insert((tenant, record.export, record.ordinal), record.clone());
@@ -744,7 +745,7 @@ impl ArchiveRepo for MemoryStore {
             .get_mut(&(tenant, export))
             .ok_or(StoreError::LeaseLost)?;
         writer(row, fence, now)?;
-        row.lease_until = now + chrono::Duration::seconds(120);
+        row.lease_until = now + Duration::seconds(120);
         Ok(())
     }
     async fn artifact_visible(

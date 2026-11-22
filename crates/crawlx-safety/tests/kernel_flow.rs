@@ -3,6 +3,7 @@
 
 mod common;
 
+use crawlx_core::time::{Clock as _, Duration};
 use common::{config, kernel, kernel_with_clock, manual_clock, verified_sinks, Case, PROFILES, SEED};
 use crawlx_core::action::{BrowserAction, PointerButton};
 use crawlx_core::config::{DestructiveActions, LaunchProfile, SafetyProfile};
@@ -11,7 +12,6 @@ use crawlx_core::ids::SafetyDecisionId;
 use crawlx_core::observation::LiveTargetFacts;
 use crawlx_core::repo::SafetyGate;
 use crawlx_core::safety::{ModelHint, RiskClass, SafetyDecision};
-use crawlx_core::time::Clock as _;
 use crawlx_safety::{
     AdjudicateOptions, Adjudication, ApprovalError, ApprovalStore, AuditEntry, AuditError, AuditSink,
     InMemoryApprovalStore, KernelError, MemoryAuditLog, SafetyDenied, SafetyKernel, SinkSpec, TestSinks,
@@ -258,17 +258,17 @@ fn external_communication_needs_a_verified_sink_in_every_profile() {
 #[test]
 fn unverified_sink_of_the_required_kind_denies() {
     let clock = manual_clock();
-    let verified = clock.now() - chrono::Duration::hours(1);
+    let verified = clock.now() - Duration::hours(1);
     let sinks = TestSinks {
         email: Some(SinkSpec {
             address: "qa@sink.test".into(),
             verified_at: None,
-            expires_at: clock.now() + chrono::Duration::hours(1),
+            expires_at: clock.now() + Duration::hours(1),
         }),
         sms: Some(SinkSpec {
             address: "+15550100".into(),
             verified_at: Some(verified),
-            expires_at: clock.now() + chrono::Duration::hours(1),
+            expires_at: clock.now() + Duration::hours(1),
         }),
         webhook: None,
     };
@@ -345,7 +345,7 @@ fn approval_flow_is_single_use_and_bound_to_the_action() {
         "summary must be redacted: {}",
         req.summary
     );
-    assert_eq!(req.expires_at - req.created_at, chrono::Duration::hours(24));
+    assert_eq!(req.expires_at - req.created_at, Duration::hours(24));
 
     // same action again reuses the open request
     let (p, c) = delete_case().build();
@@ -441,7 +441,7 @@ fn parked_adjudication_issues_one_request_per_action_and_ungranted_ignores_store
 fn parked_request_expires_at_the_given_run_deadline() {
     let clock = manual_clock();
     let k = kernel_with_clock(TE, &clock);
-    let deadline = clock.now() + chrono::Duration::hours(2);
+    let deadline = clock.now() + Duration::hours(2);
     let (p, c) = delete_case().build();
     let Adjudication::ApprovalRequired(_, req) = k.adjudicate_parked(p, &c, Some(deadline)) else {
         panic!("expected approval_required")
@@ -480,7 +480,7 @@ fn approval_expires_after_24_hours() {
 #[test]
 fn approval_is_capped_by_the_run_deadline() {
     let clock = manual_clock();
-    let deadline = clock.now() + chrono::Duration::hours(2);
+    let deadline = clock.now() + Duration::hours(2);
     let k = kernel_with_clock(TE, &clock).with_run_deadline(deadline);
     let (p, c) = delete_case().build();
     let Adjudication::ApprovalRequired(_, req) = k.adjudicate(p, &c) else {

@@ -346,6 +346,7 @@ pub async fn create(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crawlx_core::time::Timestamp;
     use super::*;
     use crate::store::ActionSummary;
     use crawlx_core::counters::ActionStatus;
@@ -375,7 +376,7 @@ mod tests {
                 risk_class: None,
                 safety_verdict: None,
             },
-            created_at: chrono::Utc::now(),
+            created_at: Timestamp::now(),
         }
     }
 

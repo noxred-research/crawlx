@@ -3,7 +3,7 @@
 mod common;
 
 use axum::http::{Method, StatusCode};
-use chrono::Utc;
+use crawlx_core::time::Timestamp;
 use common::env;
 use crawlx_core::config::QueryPolicy;
 use crawlx_core::counters::{PlaneCounters, RunStatus, TerminalReason};
@@ -219,7 +219,7 @@ async fn compat_status_cancel_errors_and_idempotency_alias() {
                 html: None,
                 metadata: json!({}),
                 links: vec![],
-                fetched_at: Utc::now(),
+                fetched_at: Timestamp::now(),
                 lane: TrustLane::Diagnostic,
             })
             .await

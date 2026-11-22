@@ -155,10 +155,9 @@ pub fn requires_sink(risk: RiskClass, form_hint: Option<&str>) -> Option<SinkKin
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
-    use chrono::TimeZone as _;
 
     fn t(h: u32) -> Timestamp {
-        chrono::Utc.with_ymd_and_hms(2026, 1, 1, h, 0, 0).unwrap()
+        Timestamp::from_ymd_hms(2026, 1, 1, h, 0, 0).unwrap()
     }
 
     #[test]

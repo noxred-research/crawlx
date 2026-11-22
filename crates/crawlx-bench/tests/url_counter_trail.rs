@@ -13,6 +13,7 @@
 #[path = "support/authorization.rs"]
 mod authorization;
 
+use crawlx_core::time::Duration;
 use crawlx_bench::gym::manifest::FixtureManifest;
 use crawlx_bench::gym::GymServer;
 use crawlx_bench::trail::{verify_trail, TrailReport, TrailStore, TrailViolation};
@@ -38,8 +39,8 @@ fn loopback_record(tenant: TenantId) -> AuthorizationRecord {
         verified_at: Some(now),
         url_prefixes: vec!["http://127.0.0.1".to_owned()],
         authorized_networks: vec!["127.0.0.0/8".parse().unwrap()],
-        valid_from: now - chrono::Duration::days(1),
-        valid_to: now + chrono::Duration::days(1),
+        valid_from: now - Duration::days(1),
+        valid_to: now + Duration::days(1),
         ..sample_record(tenant, now, &[])
     }
 }

@@ -6,9 +6,9 @@
 //! not set. Every other case runs on SQLite, and on MariaDB and PostgreSQL when their test
 //! servers are configured.
 
+use crawlx_core::time::{Duration as TimeDelta, NaiveDateTime, Timestamp};
 use crate::rig::Rig;
 use async_trait::async_trait;
-use chrono::{DateTime, Duration as TimeDelta, Utc};
 use crawlx_core::acquisition::BackendCapabilitiesV1;
 use crawlx_core::config::LaunchProfile;
 use crawlx_core::counters::{RunStatus, TerminalReason};
@@ -170,7 +170,7 @@ enum V<'a> {
     Uuid(Uuid),
     Text(&'a str),
     Bytes(&'a [u8]),
-    Ts(DateTime<Utc>),
+    Ts(Timestamp),
     I64(i64),
 }
 
@@ -234,7 +234,7 @@ impl Raw<'_> {
         let database = self.0.database();
         match kind(self.0) {
             BackendKind::Sqlite => {
-                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .timestamp_micros())
                 .execute(database.sqlite_pool().unwrap())
                 .await
@@ -242,14 +242,14 @@ impl Raw<'_> {
                 .rows_affected()
             }
             BackendKind::MariaDb => {
-                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .naive_utc())
                 .execute(database.mariadb_pool().unwrap())
                 .await
                 .unwrap()
                 .rows_affected()
             }
-            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t)
+            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t)
                 .execute(database.postgres().unwrap().pool())
                 .await
                 .unwrap()
@@ -264,20 +264,20 @@ impl Raw<'_> {
         let database = self.0.database();
         let result = match kind(self.0) {
             BackendKind::Sqlite => {
-                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .timestamp_micros())
                 .execute(database.sqlite_pool().unwrap())
                 .await
                 .map(drop)
             }
             BackendKind::MariaDb => {
-                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .naive_utc())
                 .execute(database.mariadb_pool().unwrap())
                 .await
                 .map(drop)
             }
-            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t)
+            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t)
                 .execute(database.postgres().unwrap().pool())
                 .await
                 .map(drop),
@@ -295,7 +295,7 @@ impl Raw<'_> {
         let database = self.0.database();
         match kind(self.0) {
             BackendKind::Sqlite => {
-                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .timestamp_micros())
                 .fetch_one(database.sqlite_pool().unwrap())
                 .await
@@ -304,7 +304,7 @@ impl Raw<'_> {
                 .unwrap()
             }
             BackendKind::MariaDb => {
-                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .naive_utc())
                 .fetch_one(database.mariadb_pool().unwrap())
                 .await
@@ -312,7 +312,7 @@ impl Raw<'_> {
                 .try_get::<i64, _>(0)
                 .unwrap()
             }
-            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t)
+            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t)
                 .fetch_one(database.postgres().unwrap().pool())
                 .await
                 .unwrap()
@@ -322,37 +322,37 @@ impl Raw<'_> {
     }
 
     /// The first column of the first row as a timestamp.
-    async fn ts(&self, template: &str, args: &[V<'_>]) -> DateTime<Utc> {
+    async fn ts(&self, template: &str, args: &[V<'_>]) -> Timestamp {
         let args = self.bound(template, args);
         use sqlx::Row as _;
         let sql = self.text(template);
         let database = self.0.database();
         match kind(self.0) {
             BackendKind::Sqlite => {
-                let micros = bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                let micros = bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .timestamp_micros())
                 .fetch_one(database.sqlite_pool().unwrap())
                 .await
                 .unwrap()
                 .try_get::<i64, _>(0)
                 .unwrap();
-                DateTime::from_timestamp_micros(micros).unwrap()
+                Timestamp::from_timestamp_micros(micros).unwrap()
             }
             BackendKind::MariaDb => {
-                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .naive_utc())
                 .fetch_one(database.mariadb_pool().unwrap())
                 .await
                 .unwrap()
-                .try_get::<chrono::NaiveDateTime, _>(0)
+                .try_get::<NaiveDateTime, _>(0)
                 .unwrap()
                 .and_utc()
             }
-            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t)
+            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t)
                 .fetch_one(database.postgres().unwrap().pool())
                 .await
                 .unwrap()
-                .try_get::<DateTime<Utc>, _>(0)
+                .try_get::<Timestamp, _>(0)
                 .unwrap(),
         }
     }
@@ -365,7 +365,7 @@ impl Raw<'_> {
         let database = self.0.database();
         match kind(self.0) {
             BackendKind::Sqlite => {
-                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .timestamp_micros())
                 .fetch_one(database.sqlite_pool().unwrap())
                 .await
@@ -374,7 +374,7 @@ impl Raw<'_> {
                 .unwrap()
             }
             BackendKind::MariaDb => {
-                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t
+                bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t
                     .naive_utc())
                 .fetch_one(database.mariadb_pool().unwrap())
                 .await
@@ -382,7 +382,7 @@ impl Raw<'_> {
                 .try_get::<Vec<u8>, _>(0)
                 .unwrap()
             }
-            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: DateTime<Utc>| t)
+            _ => bind_values!(sqlx::query(sqlx::AssertSqlSafe(sql)), args, |t: Timestamp| t)
                 .fetch_one(database.postgres().unwrap().pool())
                 .await
                 .unwrap()
@@ -635,8 +635,8 @@ async fn bootstrap_ownership_is_exclusive_and_takeover_advances_the_fence(rig: &
 
 // ---- renewable use windows --------------------------------------------------------------
 
-fn target(from: DateTime<Utc>, seconds: i64) -> DateTime<Utc> {
-    DateTime::from_timestamp_millis(from.timestamp_millis() + seconds * 1000).unwrap()
+fn target(from: Timestamp, seconds: i64) -> Timestamp {
+    Timestamp::from_timestamp_millis(from.timestamp_millis() + seconds * 1000).unwrap()
 }
 
 async fn redis_connection(url: &str) -> redis::aio::MultiplexedConnection {
@@ -979,7 +979,7 @@ fn origin_name(rig: &Rig, label: &str) -> String {
 }
 
 /// The start the last admitted operation was spaced from: `next_allowed_at - last_spacing_us`.
-async fn last_start(rig: &Rig, origin: &str) -> DateTime<Utc> {
+async fn last_start(rig: &Rig, origin: &str) -> Timestamp {
     let allowed = Raw(rig)
         .ts(
             "SELECT next_allowed_at FROM origin_admission WHERE origin = $1",
@@ -1298,7 +1298,7 @@ fn sealed(
     cipher: &ProfileCipher,
     scope: &ProfileScopeV1,
     generation: u64,
-    now: DateTime<Utc>,
+    now: Timestamp,
     secret: &[u8],
 ) -> Vec<u8> {
     cipher
@@ -1695,7 +1695,7 @@ macro_rules! with_fixture {
     }};
 }
 
-async fn expiry(rig: &Rig) -> DateTime<Utc> {
+async fn expiry(rig: &Rig) -> Timestamp {
     Raw(rig)
         .ts("SELECT expires_at FROM run_secret_authority", &[])
         .await
@@ -1728,7 +1728,7 @@ async fn pending_barrier_is(rig: &Rig, operation: Uuid) -> bool {
 }
 
 /// The later of the durable use deadline and the pending renewal deadline.
-async fn effective_deadline(rig: &Rig) -> DateTime<Utc> {
+async fn effective_deadline(rig: &Rig) -> Timestamp {
     let greatest = if kind(rig) == BackendKind::Sqlite {
         "max"
     } else {
@@ -1751,7 +1751,7 @@ async fn pending(
     lease: &CustodyLease,
     expected: SecretEpoch,
     operation: Uuid,
-    (previous, deadline): (DateTime<Utc>, DateTime<Utc>),
+    (previous, deadline): (Timestamp, Timestamp),
 ) {
     let raw = Raw(rig);
     raw.exec(
@@ -1790,8 +1790,8 @@ async fn remote_renew(
     key: &str,
     expected: SecretEpoch,
     operation: Uuid,
-    previous: DateTime<Utc>,
-    deadline: DateTime<Utc>,
+    previous: Timestamp,
+    deadline: Timestamp,
 ) -> Vec<String> {
     redis::Script::new(include_str!("../../src/custody_redis.lua"))
         .key(key)
@@ -1812,8 +1812,8 @@ async fn historical_applied_receipt(
     redis: &mut redis::aio::MultiplexedConnection,
     key: &str,
     operation: Uuid,
-    previous: DateTime<Utc>,
-    deadline: DateTime<Utc>,
+    previous: Timestamp,
+    deadline: Timestamp,
 ) {
     let _: () = redis::pipe()
         .atomic()
@@ -1866,11 +1866,11 @@ async fn durable(rig: &Rig) -> Durable {
     }
 }
 
-async fn secs_ago(rig: &Rig, seconds: i64) -> DateTime<Utc> {
+async fn secs_ago(rig: &Rig, seconds: i64) -> Timestamp {
     rig.database().db_now().await.unwrap() - TimeDelta::seconds(seconds)
 }
 
-async fn wait_until(rig: &Rig, instant: DateTime<Utc>) {
+async fn wait_until(rig: &Rig, instant: Timestamp) {
     let wait = (instant - rig.database().db_now().await.unwrap())
         .to_std()
         .unwrap_or_default();
@@ -2230,7 +2230,7 @@ async fn renewal_denies_stale_lease_nonpositive_extension_and_run_ceiling(rig: &
     with_fixture!(rig, Duration::from_secs(60), |f| {
         let initial = f.authority.initialize(&f.lease).await.unwrap();
         let previous = expiry(rig).await;
-        let exact = DateTime::from_timestamp_millis(previous.timestamp_millis()).unwrap();
+        let exact = Timestamp::from_timestamp_millis(previous.timestamp_millis()).unwrap();
         for deadline in [exact, exact - TimeDelta::seconds(1), target(previous, 86401)] {
             assert!(f
                 .authority
@@ -2265,7 +2265,7 @@ async fn renewal_denies_stale_lease_nonpositive_extension_and_run_ceiling(rig: &
 }
 
 /// An authorization record of the run valid until `valid_to`, created by a fresh key.
-async fn authorize_run(rig: &Rig, tenant: TenantId, valid_to: DateTime<Utc>) -> Uuid {
+async fn authorize_run(rig: &Rig, tenant: TenantId, valid_to: Timestamp) -> Uuid {
     let key = api_key(rig, tenant).await;
     let record = Uuid::now_v7();
     let from = secs_ago(rig, 3600).await;

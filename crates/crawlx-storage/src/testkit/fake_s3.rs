@@ -10,6 +10,7 @@
 //! [`FakeS3::without_conditional_writes`] was called, which makes it answer `501` instead.
 //! Signatures are not verified.
 
+use crawlx_core::time::{SecondsFormat, Timestamp};
 use crate::s3::{S3Blobs, S3Config, S3ConfigError, Sse};
 use axum::body::Bytes;
 use axum::extract::{Path, Query, Request, State};
@@ -18,7 +19,6 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, put};
 use axum::Router;
-use chrono::Utc;
 use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -52,7 +52,7 @@ impl RequestRecord {
 
 #[derive(Default)]
 struct Inner {
-    objects: BTreeMap<String, (Vec<u8>, chrono::DateTime<Utc>)>,
+    objects: BTreeMap<String, (Vec<u8>, Timestamp)>,
     log: Vec<LogEntry>,
     requests: Vec<RequestRecord>,
     conditional_writes: bool,
@@ -274,7 +274,7 @@ async fn put_object(
                 .into_response();
         }
     }
-    g.objects.insert(key, (body.to_vec(), Utc::now()));
+    g.objects.insert(key, (body.to_vec(), Timestamp::now()));
     (StatusCode::OK, [("etag", "\"fake\"")]).into_response()
 }
 
@@ -331,7 +331,7 @@ async fn list_objects(
         page.push((
             key.clone(),
             bytes.len(),
-            modified.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            modified.to_rfc3339_opts(SecondsFormat::Millis, true),
         ));
     }
     let mut xml = String::from(

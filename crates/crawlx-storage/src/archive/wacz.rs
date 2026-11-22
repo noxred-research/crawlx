@@ -1,5 +1,6 @@
 //! WACZ 1.1.1 package construction and hostile-input validation. No replay or live refetch.
 
+use crawlx_core::time::{FixedDateTime, Timestamp};
 use super::{cdxj, validate_path, warc, ArchiveError, Limits};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -190,7 +191,7 @@ fn read_json<R: Read, T: serde::de::DeserializeOwned>(input: R, max: u64) -> Res
 fn pages<R: BufRead>(
     mut reader: R,
     limits: Limits,
-    targets: &BTreeSet<(String, chrono::DateTime<chrono::Utc>)>,
+    targets: &BTreeSet<(String, Timestamp)>,
 ) -> Result<u64, ArchiveError> {
     let mut count = 0u64;
     let mut first = true;
@@ -228,13 +229,13 @@ fn pages<R: BufRead>(
             .and_then(serde_json::Value::as_str)
             .ok_or(ArchiveError::Invalid("page URL missing"))?;
         url::Url::parse(url).map_err(|_| ArchiveError::Invalid("invalid page URL"))?;
-        let date = chrono::DateTime::parse_from_rfc3339(
+        let date = FixedDateTime::parse_rfc3339(
             row.get("ts")
                 .and_then(serde_json::Value::as_str)
                 .ok_or(ArchiveError::Invalid("page capture date missing"))?,
         )
         .map_err(|_| ArchiveError::Invalid("invalid page capture date"))?
-        .with_timezone(&chrono::Utc);
+        .to_utc();
         if !targets.contains(&(url.to_owned(), date)) {
             return Err(ArchiveError::Invalid("page entry point has no archived resource"));
         }

@@ -7,6 +7,7 @@
 //! with `SQLITE_BUSY_SNAPSHOT` without ever invoking the busy handler, which is why no write
 //! path may use a plain `BEGIN`.
 
+use crawlx_core::time::Timestamp;
 use super::dialect::SqliteDialect;
 use super::strategy::{
     AuditEntry, Concurrency, FenceSeq, FrontierClaim, LockMode, MonitorClaim, OutboxClaim, Query,
@@ -193,9 +194,9 @@ pub(crate) async fn migrate(store: &Store<SqliteBackend>) -> Result<(), StoreErr
 
 /// Host time at the microsecond resolution of stored instants: SQLite runs on one host, so the
 /// database clock is the process clock.
-pub(crate) fn db_now() -> chrono::DateTime<chrono::Utc> {
-    let now = chrono::Utc::now();
-    chrono::DateTime::from_timestamp_micros(now.timestamp_micros()).unwrap_or(now)
+pub(crate) fn db_now() -> Timestamp {
+    let now = Timestamp::now();
+    Timestamp::from_timestamp_micros(now.timestamp_micros()).unwrap_or(now)
 }
 
 /// Exclusive claim on a SQLite database file by a worker process, held until dropped.

@@ -6,7 +6,7 @@
 //! from the origin to the far corner traverses the full label-setting loop.
 #![allow(missing_docs, clippy::unwrap_used, clippy::expect_used)]
 
-use chrono::{DateTime, Duration, TimeZone, Utc};
+use crawlx_core::time::{Timestamp, Duration};
 use crawlx_core::hash::Digest;
 use crawlx_core::identity::ElementIdentityHash;
 use crawlx_core::{ActionContextId, CrawlRunId, StateClusterId, TrustLane};
@@ -18,8 +18,8 @@ use uuid::Uuid;
 const SIDE: u32 = 50;
 const REPS: u32 = 2;
 
-fn t0() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2026, 3, 1, 9, 0, 0).unwrap()
+fn t0() -> Timestamp {
+    Timestamp::from_ymd_hms(2026, 3, 1, 9, 0, 0).unwrap()
 }
 
 fn cluster(r: u32, c: u32) -> StateClusterId {

@@ -294,6 +294,7 @@ pub fn is_third_party(page_origin: &str, request_url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crawlx_core::time::Timestamp;
     use super::*;
     use crawlx_core::traffic::TrafficOrigin;
 
@@ -323,7 +324,7 @@ mod tests {
             third_party: false,
             late: false,
             protocol: None,
-            started_at: chrono::DateTime::default(),
+            started_at: Timestamp::default(),
             finished_at: None,
         }
     }

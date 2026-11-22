@@ -1,14 +1,13 @@
 //! Immutable retained generations share the request result transaction on memory and PostgreSQL.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::{Duration, Utc};
+use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::config::RetentionMode;
 use crawlx_core::hash::Digest;
 use crawlx_core::orchestration::{OrchestrationConfigV1, RequestBatchV1, RequestCommitRepo, RequestCommitV1};
 use crawlx_core::repo::{CrawlRun, FrontierRepo, FrontierStatus, PageRecord, PageRepo, RunRepo, Sensitivity};
 use crawlx_core::request::RequestEnvelopeV1;
 use crawlx_core::secret::{ArtifactSink, Redactor};
-use crawlx_core::time::ManualClock;
 use crawlx_core::traffic::TrustLane;
 use crawlx_core::{Clock, StoreError, TenantId, WorkerId};
 use crawlx_storage::artifacts::ArtifactIndex;
@@ -250,7 +249,7 @@ where
 
 #[tokio::test]
 async fn memory_generations_survive_projection_replacement_and_reject_uncommitted_results() {
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let repo = Arc::new(MemoryStore::with_clock(clock.clone()));
     exercise(repo, clock, None, TenantId::new()).await;
 }
@@ -273,7 +272,7 @@ async fn postgres_generations_survive_projection_replacement_and_reject_uncommit
     pg.migrate().await.unwrap();
     let tenant = TenantId::new();
     pg.ensure_tenant(tenant, "page-history").await.unwrap();
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     exercise(Arc::new(pg.clone()), clock, Some(&pg), tenant).await;
     let captures: i64 = sqlx::query_scalar("SELECT count(*) FROM page_captures")
         .fetch_one(pg.pool())
@@ -285,7 +284,7 @@ async fn postgres_generations_survive_projection_replacement_and_reject_uncommit
         .await
         .is_err());
     crawlx_storage::retention::RetentionSweeper::new(pg.clone())
-        .sweep(Utc::now())
+        .sweep(Timestamp::now())
         .await
         .unwrap();
     let captures: i64 = sqlx::query_scalar("SELECT count(*) FROM page_captures")
@@ -293,7 +292,7 @@ async fn postgres_generations_survive_projection_replacement_and_reject_uncommit
         .await
         .unwrap();
     assert_eq!(captures, 0);
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let zdr_pg = pg
         .clone()
         .with_delivery_buffer(Arc::new(crawlx_storage::DeliveryBuffer::with_defaults(
@@ -349,7 +348,7 @@ async fn zdr_contract<R: RunRepo + FrontierRepo + RequestCommitRepo + PageRepo>(
 
 #[tokio::test]
 async fn zdr_history_refuses_even_when_latest_delivery_projection_exists() {
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let repo = MemoryStore::with_clock(clock.clone());
     repo.set_dataset_delivery(Arc::new(crawlx_storage::DeliveryBuffer::with_defaults(
         clock.clone(),
@@ -720,7 +719,7 @@ where
 
 #[tokio::test]
 async fn memory_observed_epochs_are_fenced_bounded_and_keep_first_canonical() {
-    let now = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let now = Timestamp::from_timestamp(1_800_000_000, 0).unwrap();
     let repo = MemoryStore::with_clock(Arc::new(ManualClock::new(now)));
     observed_contract(&repo, TenantId::new(), now).await;
 }
@@ -743,7 +742,7 @@ async fn postgres_observed_epochs_are_fenced_bounded_and_keep_first_canonical() 
     pg.migrate().await.unwrap();
     let tenant = TenantId::new();
     pg.ensure_tenant(tenant, "observed-history").await.unwrap();
-    observed_contract(&pg, tenant, Utc::now()).await;
+    observed_contract(&pg, tenant, Timestamp::now()).await;
     let legacy = sqlx::query(
         "UPDATE url_frontier SET via='link' WHERE via='interaction' AND request_envelope IS NOT NULL",
     )
@@ -760,7 +759,7 @@ async fn postgres_observed_epochs_are_fenced_bounded_and_keep_first_canonical() 
         .await
         .unwrap();
     assert_eq!(restored, 4);
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let buffer = Arc::new(crawlx_storage::DeliveryBuffer::with_defaults(clock.clone()));
     let volatile = pg.clone().with_delivery_buffer(buffer.clone());
     let (run, ids) = observed_zdr_contract(&volatile, tenant, clock.now()).await;
@@ -896,7 +895,7 @@ where
 
 #[tokio::test]
 async fn memory_observed_zdr_renditions_expire_with_existing_custody() {
-    let now = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let now = Timestamp::from_timestamp(1_800_000_000, 0).unwrap();
     let clock = Arc::new(ManualClock::new(now));
     let buffer = Arc::new(crawlx_storage::DeliveryBuffer::with_defaults(clock.clone()));
     let repo = MemoryStore::with_clock(clock);
@@ -1066,7 +1065,7 @@ where
 
 #[tokio::test]
 async fn memory_late_observed_receipts_require_early_capture_and_live_uncancelled_session() {
-    let now = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let now = Timestamp::from_timestamp(1_800_000_000, 0).unwrap();
     let repo = MemoryStore::with_clock(Arc::new(ManualClock::new(now)));
     late_observed_receipt_contract(&repo, TenantId::new(), now).await;
 }
@@ -1075,7 +1074,7 @@ async fn memory_late_observed_receipts_require_early_capture_and_live_uncancelle
 async fn memory_observed_capture_uses_completed_login_credit_not_reserved_allowance() {
     use crawlx_core::orchestration::{ObservedAppendV1, ObservedRequestV1};
     use crawlx_core::repo::EventRepo;
-    let now = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let now = Timestamp::from_timestamp(1_800_000_000, 0).unwrap();
     let clock = Arc::new(ManualClock::new(now));
     let repo = MemoryStore::with_clock(clock.clone());
     let (run, lease) = observed_receipt_fixture(&repo, TenantId::new(), now).await;

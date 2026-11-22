@@ -1,6 +1,7 @@
 //! Committed edge races and final-package revocation retain physical erasure closure.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crawlx_core::time::{Duration as SpanDuration, FixedDateTime, Timestamp};
 use super::*;
 use crawlx_core::archive_catalog::ArchiveRepo;
 use crawlx_storage::testkit::archive_races;
@@ -74,9 +75,9 @@ async fn revoked(
 async fn memory_package_revocation_tombstones_published_dependents() {
     let root = tempfile::tempdir().unwrap();
     let clock = Arc::new(ManualClock::new(
-        chrono::DateTime::parse_from_rfc3339("2026-11-06T00:00:00Z")
+        FixedDateTime::parse_rfc3339("2026-11-06T00:00:00Z")
             .unwrap()
-            .with_timezone(&chrono::Utc),
+            .to_utc(),
     ));
     let memory = Arc::new(MemoryStore::with_clock(clock.clone()));
     let mut stores = Stores::over_memory(memory.clone(), root.path()).await.unwrap();
@@ -104,7 +105,7 @@ struct PgFixture {
 async fn pg_fixture() -> Option<PgFixture> {
     let url = std::env::var("CRAWLX_TEST_DATABASE_URL").ok()?;
     let root = tempfile::tempdir().unwrap();
-    let now = chrono::DateTime::from_timestamp_millis(chrono::Utc::now().timestamp_millis()).unwrap();
+    let now = Timestamp::from_timestamp_millis(Timestamp::now().timestamp_millis()).unwrap();
     let clock = Arc::new(ManualClock::new(now));
     let pg = Pg::connect(
         &url,
@@ -272,7 +273,7 @@ async fn postgres_erase_waiting_for_dependency_commit_refreshes_closure_and_eras
         dependent.id,
         dependent.config.output.archive.as_ref().unwrap().clone(),
         dependent.created_at,
-        Some(dependent.created_at + chrono::Duration::days(1)),
+        Some(dependent.created_at + SpanDuration::days(1)),
         TerminalReason::FrontierExhausted,
     );
     fixture.stores.archives.begin(&pending).await.unwrap();

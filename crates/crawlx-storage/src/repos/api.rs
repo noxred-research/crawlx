@@ -14,6 +14,7 @@
 
 #![deny(clippy::disallowed_methods)]
 
+use crawlx_core::time::Duration;
 use crate::backend::strategy::{Row, WebhookClaim};
 use crate::backend::{Dialect, LockMode, PgBackend, RowLock};
 use crate::codec::conv;
@@ -632,7 +633,7 @@ impl<B: Tenancy> ApiRepo<B> {
                 )?
                 .execute(tx.conn())
                 .await?;
-            let expires = now + chrono::Duration::hours(IDEMPOTENCY_TTL_HOURS);
+            let expires = now + Duration::hours(IDEMPOTENCY_TTL_HOURS);
             let inserted = scope
                 .query(
                     "idempotency_keys",

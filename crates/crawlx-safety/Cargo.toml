@@ -10,7 +10,6 @@ description = "crawlx: independent hard safety kernel"
 
 [dependencies]
 crawlx-core = { path = "../crawlx-core" }
-chrono.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 url.workspace = true

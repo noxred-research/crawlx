@@ -2,11 +2,10 @@
 //! killed holders are reaped, and the round-robin barrier holds under random interleavings.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::Utc;
+use crawlx_core::time::{Duration as SpanDuration, ManualClock, Timestamp};
 use crawlx_core::counters::ActionStatus;
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::repo::{ActionJournal, CrawlRun, CrawlSession, FrontierRepo, RunRepo, SessionStatus};
-use crawlx_core::time::ManualClock;
 use crawlx_core::Clock as _;
 use crawlx_core::{CrawlRunId, StateClusterId, StoreError, TenantId, WorkerId};
 use crawlx_scheduler::{Reaper, ReaperConfig, RunPlanner, Scheduler, TurnBarrier};
@@ -28,7 +27,7 @@ struct Fixture {
 }
 
 async fn fixture(roles: &[&str], runs_per_role: u8) -> Fixture {
-    let clock = ManualClock::new(Utc::now());
+    let clock = ManualClock::new(Timestamp::now());
     let store = Arc::new(MemoryStore::with_clock(Arc::new(clock.clone())));
     let cfg = create_crawl("https://example.test/", roles, runs_per_role);
     let run = crawl_run(TenantId::new(), cfg.clone());
@@ -184,7 +183,7 @@ async fn url_leases_expire_back_to_pending_then_fail() {
 
 #[tokio::test]
 async fn lease_next_rotates_across_runs() {
-    let clock = ManualClock::new(Utc::now());
+    let clock = ManualClock::new(Timestamp::now());
     let store = Arc::new(MemoryStore::with_clock(Arc::new(clock)));
     let mut runs = Vec::new();
     for _ in 0..2 {
@@ -314,7 +313,7 @@ proptest! {
         let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
         let names: Vec<String> = (0..n_roles).map(|i| format!("r{i}")).collect();
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        let clock = ManualClock::new(Utc::now());
+        let clock = ManualClock::new(Timestamp::now());
         let store = Arc::new(MemoryStore::with_clock(Arc::new(clock.clone())));
         let cfg = create_crawl("https://example.test/", &refs, runs);
         let run = crawl_run(TenantId::new(), cfg.clone());
@@ -371,7 +370,7 @@ proptest! {
                     if !held.is_empty() {
                         let idx = usize::from(i) % held.len();
                         let killed = held.remove(idx);
-                        store.expire_session_lease(killed.session.id, clock.now() - chrono::Duration::seconds(1));
+                        store.expire_session_lease(killed.session.id, clock.now() - SpanDuration::seconds(1));
                         rt.block_on(store.reap(clock.now())).unwrap();
                     }
                 }

@@ -194,6 +194,7 @@ impl EligibilityRankingV1 {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crate::time::Duration;
     use super::*;
 
     fn u(s: &str) -> Url {
@@ -251,7 +252,7 @@ mod tests {
         assert!(policy
             .key(
                 now,
-                Some(now + chrono::Duration::seconds(1)),
+                Some(now + Duration::seconds(1)),
                 Some(200),
                 7,
                 500,

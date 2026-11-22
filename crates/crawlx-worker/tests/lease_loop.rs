@@ -3,6 +3,7 @@
 
 mod common;
 
+use crawlx_core::time::Duration as SpanDuration;
 use crawlx_browser::fake::{FakeAxSpec, FakeEffect, FakePage, FakeScript};
 use crawlx_browser::FakeBackend;
 use crawlx_core::config::CrawlMode;
@@ -1000,7 +1001,7 @@ async fn a_recovering_session_reconciles_its_unknown_actions_before_exploring() 
     )
     .await
     .unwrap();
-    store.expire_session_lease(session, SystemClock.now() - chrono::Duration::hours(1));
+    store.expire_session_lease(session, SystemClock.now() - SpanDuration::hours(1));
 
     run_with(
         cfg(dir.path()),

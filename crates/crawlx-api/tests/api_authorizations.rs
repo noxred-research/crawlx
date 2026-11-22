@@ -4,6 +4,7 @@
 //! that reference a record, and the deployment lists. Every scenario runs on the in-memory store
 //! and, when `CRAWLX_TEST_DATABASE_URL` is set, again on PostgreSQL in its own schema.
 
+use crawlx_core::time::Duration;
 use axum::body::Body;
 #[allow(
     clippy::disallowed_types,
@@ -575,8 +576,8 @@ async fn a_body_that_is_not_a_valid_record_is_422_invalid_request_with_details()
 
         // a window that already ended
         let mut past = r.clone();
-        past.valid_from = SystemClock.now() - chrono::Duration::days(10);
-        past.valid_to = SystemClock.now() - chrono::Duration::days(1);
+        past.valid_from = SystemClock.now() - Duration::days(10);
+        past.valid_to = SystemClock.now() - Duration::days(1);
         let (s, _, v) = h.post("/v1/authorizations", &body_of(&past)).await;
         assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
         expect(&v, "/validTo", "out_of_range");
@@ -1000,8 +1001,8 @@ async fn a_record_that_was_never_verified_is_refused_at_admission() {
     // an expired or not yet valid window is refused too, even when verified
     let mut late = r.clone();
     late.id = AuthorizationRecordId::new();
-    late.valid_from = SystemClock.now() + chrono::Duration::days(1);
-    late.valid_to = SystemClock.now() + chrono::Duration::days(2);
+    late.valid_from = SystemClock.now() + Duration::days(1);
+    late.valid_to = SystemClock.now() + Duration::days(2);
     api.add_authorization(late.clone());
     let (s, _, v) = h
         .post("/v1/crawls", &crawl_body(&format!("{APP}/"), late.id))

@@ -16,8 +16,8 @@
 //! * P6 `isolation_proofs_fail_without_the_guard` (feature `unscoped-for-test`): with the guard
 //!   off, P2 fails. Run it with `--features unscoped-for-test` (the other cases skip then).
 
+use crawlx_core::time::{Duration, Timestamp};
 use crate::rig::Rig;
-use chrono::Utc;
 use crawlx_core::hash::Digest;
 use crawlx_core::{ApprovalId, CrawlRunId, StoreError, TenantId};
 use crawlx_storage::tenant_tables::{self, TenantKey};
@@ -73,7 +73,7 @@ fn guard_off() -> bool {
 const ENGINE_EXTRAS: &[&str] = &["audit_chain_head", "crawlx_locks", "crawlx_sequences"];
 
 async fn seed_intel(operator: &Handle, tenant: TenantId) -> Result<IntelRows, StoreError> {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let rows = IntelRows {
         job: Uuid::now_v7(),
         thread: Uuid::now_v7(),
@@ -98,7 +98,7 @@ async fn seed_intel(operator: &Handle, tenant: TenantId) -> Result<IntelRows, St
                 created_at: now,
                 updated_at: now,
                 finished_at: None,
-                expires_at: now + chrono::Duration::days(1),
+                expires_at: now + Duration::days(1),
             })
             .await?;
         store
@@ -144,7 +144,7 @@ async fn seed_intel(operator: &Handle, tenant: TenantId) -> Result<IntelRows, St
                 error: None,
                 started_at: now,
                 finished_at: None,
-                expires_at: now + chrono::Duration::days(7),
+                expires_at: now + Duration::days(7),
             })
             .await?;
         store
@@ -375,8 +375,8 @@ async fn tenant_run(
                 store
                     .usage_totals(
                         tenant,
-                        Utc::now() - chrono::Duration::hours(1),
-                        Utc::now() + chrono::Duration::hours(1)
+                        Timestamp::now() - Duration::hours(1),
+                        Timestamp::now() + Duration::hours(1)
                     )
                     .await
                     .unwrap()
@@ -474,7 +474,7 @@ async fn state_cluster_membership_follows_the_tenant_of_its_state(rig: &Rig) {
 async fn cross_tenant_sweep(w: &World) {
     let (a, b) = (&w.a, &w.b);
     let ai = &w.a_intel;
-    let now = Utc::now();
+    let now = Timestamp::now();
     crawlx_storage::tenant::scope(b.tenant, async {
         with_handle!(&w.harness.request, |store| async {
             let api = ApiRepo::new(store.clone());
@@ -681,8 +681,8 @@ async fn cross_tenant_sweep(w: &World) {
                 store
                     .usage_totals(
                         a.tenant,
-                        now - chrono::Duration::hours(1),
-                        now + chrono::Duration::hours(1)
+                        now - Duration::hours(1),
+                        now + Duration::hours(1)
                     )
                     .await
                     .map_or(0, |t| t.credits),
@@ -796,7 +796,7 @@ async fn missing_scope_fails_closed(rig: &Rig) {
     }
     let w = world(rig).await;
     let (a, ai) = (&w.a, &w.a_intel);
-    let now = Utc::now();
+    let now = Timestamp::now();
     // the request handle, no scope: every statement of the request surface is refused
     with_handle!(&w.harness.request, |store| async {
         let api = ApiRepo::new(store.clone());
@@ -876,7 +876,7 @@ async fn writes_cannot_forge_another_tenant(rig: &Rig) {
     let w = world(rig).await;
     let (a, b) = (&w.a, &w.b);
     let (ai, bi) = (&w.a_intel, &w.b_intel);
-    let now = Utc::now();
+    let now = Timestamp::now();
     let tenant_scope = b.tenant;
     crawlx_storage::tenant::scope(tenant_scope, async {
         with_handle!(&w.harness.request, |store| async {
@@ -910,7 +910,7 @@ async fn writes_cannot_forge_another_tenant(rig: &Rig) {
                     body: &body,
                     body_digest: &[5; 32],
                     valid_from: now,
-                    valid_to: now + chrono::Duration::days(1),
+                    valid_to: now + Duration::days(1),
                     created_by: b.key,
                     verified_at: now,
                     verification: &verification,

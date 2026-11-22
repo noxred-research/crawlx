@@ -27,6 +27,7 @@
 //! secret enumeration and live-output ownership boundaries are integrated.
 //! This module provides neither a plaintext fallback nor production closure.
 
+use crawlx_core::time::Duration as SpanDuration;
 use super::{database_now, denied, frag, locally_live, no_exposures, random_uuid, run_lock};
 use crate::backend::strategy::{Conn, FenceSeq};
 use crate::backend::{BackendKind, PgBackend, WriteTx};
@@ -153,7 +154,7 @@ pub enum BootstrapClaim {
 pub struct BootstrapAuthority<B: Sql> {
     store: Store<B>,
     authorizer: Arc<dyn BootstrapProducerAuthorizer>,
-    ttl: chrono::Duration,
+    ttl: SpanDuration,
 }
 
 /// Bootstrap ownership over PostgreSQL.
@@ -174,7 +175,7 @@ impl<B: Sql> BootstrapAuthority<B> {
                 "bootstrap lease TTL must be between one millisecond and five minutes",
             ));
         }
-        let ttl = chrono::Duration::from_std(ttl).map_err(|_| denied("bootstrap lease TTL out of range"))?;
+        let ttl = SpanDuration::from_std(ttl).map_err(|_| denied("bootstrap lease TTL out of range"))?;
         Ok(Self {
             store,
             authorizer,

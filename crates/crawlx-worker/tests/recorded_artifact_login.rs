@@ -3,6 +3,7 @@
 
 mod common;
 
+use crawlx_core::time::Duration;
 use async_trait::async_trait;
 use crawlx_browser::fake::{FakeAxSpec, FakeEffect, FakePage, FakeScript};
 use crawlx_browser::FakeBackend;
@@ -331,7 +332,7 @@ async fn contract_and_actor(mut f: Fixture) {
     // another run of the same tenant, without changing either run's config.
     let mut source = f.rc.stores.runs.get(f.rc.run).await.unwrap();
     source.id = CrawlRunId::new();
-    source.created_at = f.clock.now() - chrono::Duration::hours(23);
+    source.created_at = f.clock.now() - Duration::hours(23);
     source.config.retention.days = 1;
     source.config_digest = source.config.digest().unwrap();
     f.rc.stores.runs.create(&source, None).await.unwrap();
@@ -447,7 +448,7 @@ async fn contract_and_actor(mut f: Fixture) {
             reject(&mut f, artifact_spec(&forged)).await;
         }
     }
-    let until = f.clock.now() + chrono::Duration::hours(1);
+    let until = f.clock.now() + Duration::hours(1);
     let expires =
         f.rc.stores
             .artifacts
@@ -461,13 +462,13 @@ async fn contract_and_actor(mut f: Fixture) {
             .await
             .unwrap();
     let original_time = f.clock.now();
-    *f.clock.0.lock() = until + chrono::Duration::seconds(1);
+    *f.clock.0.lock() = until + Duration::seconds(1);
     let expired_spec = artifact_spec(&descriptor(&f, &expires));
     reject(&mut f, expired_spec).await;
     *f.clock.0.lock() = original_time;
     // The source run can expire after target creation while its artifact row is
     // still retained. Descriptor labels and target lifetime cannot extend it.
-    *f.clock.0.lock() = source.created_at + chrono::Duration::days(1);
+    *f.clock.0.lock() = source.created_at + Duration::days(1);
     reject(&mut f, artifact_spec(&good_descriptor)).await;
     *f.clock.0.lock() = original_time;
     let deleted = put(&f, FLOW.as_bytes(), Sensitivity::Content).await;

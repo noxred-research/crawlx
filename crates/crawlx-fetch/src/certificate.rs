@@ -12,7 +12,7 @@
 //! to the validity period and the issuer/subject names, rejects indefinite lengths and
 //! high tag numbers, and never reads past the slice it was given.
 
-use chrono::{DateTime, NaiveDate, Utc};
+use crawlx_core::time::{Timestamp, NaiveDate};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -56,9 +56,9 @@ pub struct PeerCertificate {
     /// Lower-case hex SHA-256 of the DER encoding.
     pub sha256: String,
     /// Start of the validity period.
-    pub not_before: DateTime<Utc>,
+    pub not_before: Timestamp,
     /// End of the validity period.
-    pub not_after: DateTime<Utc>,
+    pub not_after: Timestamp,
     /// Issuer and subject names are byte-identical (a self-issued certificate).
     pub self_issued: bool,
     /// Length of the DER encoding.
@@ -69,7 +69,7 @@ impl PeerCertificate {
     /// The certificate was inside its validity period at `now`. This is evidence of the
     /// dates only; chain, name and revocation checks belong to the TLS verifier.
     #[must_use]
-    pub fn valid_at(&self, now: DateTime<Utc>) -> bool {
+    pub fn valid_at(&self, now: Timestamp) -> bool {
         self.not_before <= now && now <= self.not_after
     }
 }
@@ -254,7 +254,7 @@ fn two(bytes: &[u8]) -> Option<u32> {
 }
 
 /// `UTCTime` (`YYMMDDHHMMSSZ`, years 1950..=2049) or `GeneralizedTime` (`YYYYMMDDHHMMSSZ`).
-fn parse_time(tag: u8, content: &[u8]) -> Option<DateTime<Utc>> {
+fn parse_time(tag: u8, content: &[u8]) -> Option<Timestamp> {
     let (year, rest) = match tag {
         0x17 if content.len() == 13 => {
             let yy = two(&content[..2])?;

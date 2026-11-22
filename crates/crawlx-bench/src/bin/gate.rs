@@ -12,6 +12,7 @@
 //! Issuing a gate requires `CRAWLX_GATE_KEYS_FILE` and `CRAWLX_GATE_KEY_ID` (or the
 //! corresponding `--keys-file` / `--key-id` flags). Evidence is copied beside the gate.
 
+use crawlx_core::time::Timestamp;
 use crawlx_bench::gates::{evaluate_g1, evaluate_g3, gate_file, G1Report, G3Report, GateVerdict};
 use crawlx_strategies::registry::{scope_digest, Gate, GateKeys, GATE_KEYS_FILE_ENV, GATE_KEY_ID_ENV};
 use std::path::{Path, PathBuf};
@@ -97,7 +98,7 @@ fn commit_from_env_or_git() -> Option<String> {
 }
 
 fn today_utc() -> String {
-    chrono::Utc::now().format("%Y-%m-%d").to_string()
+    Timestamp::now().date_naive().to_string()
 }
 
 fn evaluate(gate: Gate, bytes: &[u8]) -> Result<GateVerdict, String> {

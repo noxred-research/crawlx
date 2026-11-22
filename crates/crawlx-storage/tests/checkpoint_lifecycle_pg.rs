@@ -1,6 +1,7 @@
 //! Terminal checkpoint revocation preserves structural custody through physical erasure.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crawlx_core::time::Duration;
 use crawlx_core::counters::{RunStatus, TerminalReason};
 use crawlx_core::repo::{ArtifactStore, CheckpointRecord, CheckpointRepo, RunRepo, Sensitivity};
 use crawlx_core::{CheckpointId, TenantId};
@@ -47,7 +48,7 @@ async fn terminal_postgres_recovery_erases_ciphertext_without_deleting_checkpoin
         .seal(&context, Zeroizing::new(plaintext.to_vec()))
         .await
         .unwrap();
-    let deadline = now + chrono::Duration::minutes(1);
+    let deadline = now + Duration::minutes(1);
     let artifact = store
         .put_until(
             run.id,

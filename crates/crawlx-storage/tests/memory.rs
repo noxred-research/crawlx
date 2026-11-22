@@ -1,13 +1,12 @@
 //! `MemoryStore` / `InMemoryJournal` honor the same contracts as the PostgreSQL repositories.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::Utc;
+use crawlx_core::time::{Duration, ManualClock, Timestamp};
 use crawlx_core::counters::{ActionStatus, ReconcileResolution, RunStatus, TerminalReason};
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::observation::{ActionReceipt, SettleReport};
 use crawlx_core::repo::*;
 use crawlx_core::safety::SafetyDecision;
-use crawlx_core::time::ManualClock;
 use crawlx_core::traffic::{Fidelity, TrafficEvent, TrafficOrigin, TrustLane};
 use crawlx_core::{Clock, NetworkEpochId, StateClusterId, StoreError, TenantId, WorkerId};
 use crawlx_storage::testkit::{
@@ -77,7 +76,7 @@ fn legacy_session_json_defaults_to_browser_without_using_launch_state() {
 #[tokio::test]
 #[allow(clippy::field_reassign_with_default)] // BufferLimits is non-exhaustive outside its crate.
 async fn literal_controls_stay_volatile_and_expire_for_runs_and_replays() {
-    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let clock = Arc::new(ManualClock::new(Timestamp::now()));
     let store = MemoryStore::with_clock(clock.clone());
     let mut limits = crawlx_storage::BufferLimits::default();
     limits.ttl = std::time::Duration::from_secs(1);
@@ -247,7 +246,7 @@ async fn t1_t2_round_trip_in_memory() {
     );
 
     let after = new_state(session, cluster, false, 2, epoch(4));
-    let now = Utc::now();
+    let now = Timestamp::now();
     store
         .finish(
             id,
@@ -350,7 +349,7 @@ async fn failed_t2_leaves_nothing_behind() {
     store.intend(id, session, epoch(0)).await.unwrap();
     // a non-new cluster that does not exist makes the after-state write fail: T2 is all-or-nothing
     let bad = new_state(session, StateClusterId::new(), false, 3, epoch(1));
-    let now = Utc::now();
+    let now = Timestamp::now();
     let res = store
         .finish(
             id,
@@ -388,7 +387,7 @@ async fn traffic_without_an_epoch_needs_an_explicit_reason_in_memory() {
         .await
         .unwrap();
     store.intend(id, session, epoch(0)).await.unwrap();
-    let now = Utc::now();
+    let now = Timestamp::now();
     let event = |reason| TrafficEvent {
         seq: 1,
         epoch_id: None,
@@ -477,7 +476,7 @@ async fn status_machine_holds_and_unknown_requires_reconcile() {
                         after_state: None,
                         traffic: vec![],
                         error: None,
-                        finished_at: Utc::now()
+                        finished_at: Timestamp::now()
                     }
                 )
                 .await,
@@ -487,11 +486,11 @@ async fn status_machine_holds_and_unknown_requires_reconcile() {
     );
     journal.intend(id, session, epoch(0)).await.unwrap();
     assert!(
-        journal.mark_unknown(Utc::now()).await.unwrap().is_empty(),
+        journal.mark_unknown(Timestamp::now()).await.unwrap().is_empty(),
         "live lease: nothing to flip"
     );
-    store.expire_session_lease(session, Utc::now() - chrono::Duration::seconds(1));
-    assert_eq!(journal.mark_unknown(Utc::now()).await.unwrap(), vec![id]);
+    store.expire_session_lease(session, Timestamp::now() - Duration::seconds(1));
+    assert_eq!(journal.mark_unknown(Timestamp::now()).await.unwrap(), vec![id]);
     assert!(
         matches!(
             journal.intend(id, session, epoch(0)).await,
@@ -505,14 +504,14 @@ async fn status_machine_holds_and_unknown_requires_reconcile() {
             Reconciliation {
                 resolution: ReconcileResolution::NotApplied,
                 evidence: serde_json::json!({}),
-                reconciled_at: Utc::now(),
+                reconciled_at: Timestamp::now(),
             },
         )
         .await
         .unwrap();
     assert_eq!(store.eligible_actions(run.id, None).len(), 1);
     // the reaped session is `running` with an expired lease only until the reaper runs
-    store.reap(Utc::now()).await.unwrap();
+    store.reap(Timestamp::now()).await.unwrap();
     store
         .claim_session(run.id, WorkerId::new(), false)
         .await
@@ -606,7 +605,7 @@ async fn edges_need_a_ledger_context_and_upsert_by_key() {
     let store = MemoryStore::new();
     let (run, _) = running(&store).await;
     let p = proposal("anonymous", StateClusterId::new(), 1);
-    let now = Utc::now();
+    let now = Timestamp::now();
     let edge = EdgeRecord {
         id: crawlx_core::EdgeId::new(),
         run: run.id,
@@ -709,7 +708,7 @@ async fn apply_split_counts_one_state_split() {
                 similarity: 1.0,
             }],
         }],
-        decided_at: Utc::now(),
+        decided_at: Timestamp::now(),
     };
     let splits = Metrics::global().counter(names::STATES_SPLITS);
     let before = splits.get(&[]);
@@ -761,7 +760,7 @@ async fn outcome_counts_tally_the_rows_by_outcome() {
         after_state: None,
         traffic: vec![],
         error: None,
-        finished_at: Utc::now(),
+        finished_at: Timestamp::now(),
     };
     let mut ids = Vec::new();
     for n in 1..=6 {
@@ -790,8 +789,8 @@ async fn outcome_counts_tally_the_rows_by_outcome() {
     for id in &ids[3..] {
         journal.intend(*id, session, epoch(0)).await.unwrap();
     }
-    store.expire_session_lease(session, Utc::now() - chrono::Duration::seconds(1));
-    assert_eq!(journal.mark_unknown(Utc::now()).await.unwrap().len(), 3);
+    store.expire_session_lease(session, Timestamp::now() - Duration::seconds(1));
+    assert_eq!(journal.mark_unknown(Timestamp::now()).await.unwrap().len(), 3);
     for (id, resolution) in [
         (ids[4], ReconcileResolution::Applied),
         (ids[5], ReconcileResolution::NotApplied),
@@ -802,7 +801,7 @@ async fn outcome_counts_tally_the_rows_by_outcome() {
                 Reconciliation {
                     resolution,
                     evidence: serde_json::json!({}),
-                    reconciled_at: Utc::now(),
+                    reconciled_at: Timestamp::now(),
                 },
             )
             .await
@@ -900,7 +899,7 @@ async fn a_leased_row_is_open_and_a_released_row_is_pending_again_in_memory() {
 /// stalled holder can touch nothing, whoever leases the row next.
 #[tokio::test]
 async fn a_frontier_lease_is_renewed_and_finished_only_under_its_fencing_token_in_memory() {
-    let clock = ManualClock::new(Utc::now());
+    let clock = ManualClock::new(Timestamp::now());
     let store = MemoryStore::with_clock(Arc::new(clock.clone())).with_ttls(
         std::time::Duration::from_secs(30),
         std::time::Duration::from_secs(60),

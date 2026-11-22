@@ -1,6 +1,7 @@
 //! Dedicated bootstrap ownership against PostgreSQL and optional volatile Redis.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crawlx_core::time::Timestamp;
 use async_trait::async_trait;
 use crawlx_core::counters::RunStatus;
 use crawlx_core::custody::{CustodyLease, CustodySource, RunSecretAuthority};
@@ -206,7 +207,7 @@ async fn expiry_never_revives_old_fence_and_takeover_keeps_progress() {
     assert!(f.first.complete(&first, 3).await.is_err());
     let next = f.second.checkpoint(&next, 4).await.unwrap();
     assert_eq!(next.progress(), 4);
-    let completed: Option<chrono::DateTime<chrono::Utc>> =
+    let completed: Option<Timestamp> =
         sqlx::query_scalar("SELECT completed_at FROM run_bootstrap_producers WHERE run_id=$1")
             .bind(f.run.0)
             .fetch_one(f.pg.pool())

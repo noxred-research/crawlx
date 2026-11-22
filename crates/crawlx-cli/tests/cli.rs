@@ -4,6 +4,7 @@
 #[path = "support/site.rs"]
 mod site;
 
+use crawlx_core::time::Timestamp;
 use clap::Parser as _;
 use crawlx_core::{Clock, SystemClock, TenantId};
 use crawlx_policy::testkit::sample_record;
@@ -449,7 +450,7 @@ fn authored_field_report(dir: &Path) -> std::path::PathBuf {
         html: None,
         metadata: serde_json::json!({"custom_fields": {"email": ["a@example.test"]}}),
         links: Vec::new(),
-        fetched_at: chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+        fetched_at: Timestamp::from_timestamp(1_700_000_000, 0).unwrap(),
         lane: TrustLane::Diagnostic,
     };
     let report = dir.join("report.json");

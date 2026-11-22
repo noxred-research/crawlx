@@ -12,7 +12,7 @@
 //! `CRAWLX_TEST_DATABASE_URL`.
 #![allow(missing_docs, clippy::unwrap_used, clippy::expect_used)]
 
-use chrono::Utc;
+use crawlx_core::time::Timestamp;
 use crawlx_core::counters::ActionStatus;
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::observation::{ActionReceipt, SettleReport};
@@ -84,7 +84,7 @@ async fn t1<S: Store>(store: &S, run: crawlx_core::CrawlRunId, s: Session, n: u3
 
 /// A succeeded outcome reaching every T2 statement: receipt, after-state, two traffic events.
 fn outcome(s: Session, n: u32) -> OutcomeRecord {
-    let now = Utc::now();
+    let now = Timestamp::now();
     OutcomeRecord {
         status: ActionStatus::Succeeded,
         receipt: Some(ActionReceipt {

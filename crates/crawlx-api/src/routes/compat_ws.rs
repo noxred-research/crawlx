@@ -505,6 +505,7 @@ async fn watch(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use crawlx_core::time::Timestamp;
     use super::*;
 
     fn counts(status: &'static str) -> Counts {
@@ -545,7 +546,7 @@ mod tests {
             seq: 1,
             kind: kind.to_owned(),
             payload,
-            at: chrono::Utc::now(),
+            at: Timestamp::now(),
         };
         assert_eq!(page_id(&event("page", json!({"pageId": 7}))), Some(7));
         assert_eq!(page_id(&event("page", json!({}))), None);

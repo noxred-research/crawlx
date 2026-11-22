@@ -1,12 +1,12 @@
 //! Fixtures for tests and harnesses of this crate and of downstream crates: a complete, valid
 //! [`AuthorizationRecord`] to adjust field by field, so a new record field is added in one place.
 
+use crawlx_core::time::{Duration, Timestamp};
 use crate::authorization::{AuthorizationRecord, Authorizer, Evidence, LegalReferences};
 use crawlx_core::config::SafetyProfile;
 use crawlx_core::hash::Digest;
 use crawlx_core::ids::{AuthorizationRecordId, TenantId};
 use crawlx_core::safety::RiskClass;
-use crawlx_core::time::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A record for `tenant` covering `origins`, valid from an hour before `now` for 30 days, with
@@ -30,8 +30,8 @@ pub fn sample_record(tenant: TenantId, now: Timestamp, origins: &[&str]) -> Auth
         url_prefixes: Vec::new(),
         excluded_paths: Vec::new(),
         authorized_networks: Vec::new(),
-        valid_from: now - chrono::Duration::hours(1),
-        valid_to: now + chrono::Duration::days(30),
+        valid_from: now - Duration::hours(1),
+        valid_to: now + Duration::days(30),
         profile_cap: SafetyProfile::AuthorizedSecurityTest,
         permitted_risk_classes: RiskClass::PERMITTABLE.into_iter().collect::<BTreeSet<_>>(),
         approval_required: BTreeSet::new(),

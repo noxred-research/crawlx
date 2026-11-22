@@ -3,6 +3,7 @@
 
 mod common;
 
+use crawlx_core::time::{Duration as SpanDuration, Timestamp};
 use async_trait::async_trait;
 use common::{canonical, proposal_for, RigCore, SEED};
 use crawlx_browser::fake::{FakeAxSpec, FakeEffect, FakePage, FakeScript};
@@ -279,11 +280,11 @@ async fn actor_with_bounds(
         config.context.session_binding = Some(crawlx_core::session_binding::SessionBindingV1::new(
             identity,
             1,
-            crawlx_core::Clock::now(clock.as_ref()) + chrono::Duration::from_std(ttl).unwrap(),
+            crawlx_core::Clock::now(clock.as_ref()) + SpanDuration::from_std(ttl).unwrap(),
         ));
     }
     config.execution_deadline = execution_ttl
-        .map(|ttl| crawlx_core::Clock::now(clock.as_ref()) + chrono::Duration::from_std(ttl).unwrap());
+        .map(|ttl| crawlx_core::Clock::now(clock.as_ref()) + SpanDuration::from_std(ttl).unwrap());
     let pooled = core
         .rc
         .pool
@@ -624,8 +625,8 @@ struct BindingClock {
 
 impl crawlx_core::Clock for BindingClock {
     fn now(&self) -> crawlx_core::Timestamp {
-        chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap()
-            + chrono::Duration::from_std(self.started.elapsed()).unwrap()
+        Timestamp::from_timestamp(1_800_000_000, 0).unwrap()
+            + SpanDuration::from_std(self.started.elapsed()).unwrap()
     }
 }
 

@@ -1,6 +1,7 @@
 //! Retained, tenant/run-scoped URL graph persistence over existing producer custody.
 //! SQL remains here; the row lock and the database clock come from the engine's dialect.
 
+use crawlx_core::time::Duration;
 use crate::backend::strategy::Conn;
 use crate::backend::{Dialect, RowLock};
 use crate::codec::digest;
@@ -54,7 +55,7 @@ pub(crate) fn retained_deadline(
     if mode == RetentionMode::Zdr || !(1..=365).contains(&days) {
         return Err(denied());
     }
-    let duration = chrono::Duration::try_days(days).ok_or_else(denied)?;
+    let duration = Duration::try_days(days).ok_or_else(denied)?;
     let end = created.checked_add_signed(duration).ok_or_else(denied)?;
     let end = expires.map_or(end, |expiry| expiry.min(end));
     if end <= now {

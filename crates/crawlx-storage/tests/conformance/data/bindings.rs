@@ -6,6 +6,7 @@
 //!
 //! Binding metadata has no in-memory twin, so these cases run on the database engines.
 
+use crawlx_core::time::Duration;
 use super::reports::{exec, on_zdr_db, scalar_bytes, scalar_i64, tenant_of, Bind};
 use crate::rig::Rig;
 use crawlx_core::counters::{ActionStatus, ReconcileResolution, RunStatus};
@@ -229,7 +230,7 @@ async fn anonymous_binding_fixture<R: Binder>(
         .bind_session(
             &lease,
             identity,
-            repo.now().await.unwrap() + chrono::Duration::minutes(1),
+            repo.now().await.unwrap() + Duration::minutes(1),
         )
         .await
         .unwrap();
@@ -245,7 +246,7 @@ async fn login_credit<R: Binder>(rig: &Rig, repo: &R, tenant: TenantId) {
     let (lease, other) = fixture(repo, tenant).await;
     let run = RunRepo::get(repo, lease.session.run).await.unwrap();
     let raw_deadline = run.started_at.unwrap_or(run.created_at)
-        + chrono::Duration::seconds(i64::from(run.config.limits.duration_seconds));
+        + Duration::seconds(i64::from(run.config.limits.duration_seconds));
     let digest = Digest::of("fixture", b"login-clock");
     let budget = |credit, allowance| {
         serde_json::json!({
@@ -262,7 +263,7 @@ async fn login_credit<R: Binder>(rig: &Rig, repo: &R, tenant: TenantId) {
         rig,
         "UPDATE crawl_events SET created_at=$1 WHERE run_id=$2 AND seq=$3",
         &[
-            Bind::Ts(repo.now().await.unwrap() - chrono::Duration::seconds(2)),
+            Bind::Ts(repo.now().await.unwrap() - Duration::seconds(2)),
             Bind::Uuid(run.id.0),
             Bind::I64(i64::try_from(first).unwrap()),
         ],
@@ -273,22 +274,22 @@ async fn login_credit<R: Binder>(rig: &Rig, repo: &R, tenant: TenantId) {
         .unwrap();
     let identity = SessionIdentityV1::new(tenant, &lease.session, digest, digest, digest, digest, None);
     let binding = repo
-        .bind_session(&lease, identity, raw_deadline + chrono::Duration::days(1))
+        .bind_session(&lease, identity, raw_deadline + Duration::days(1))
         .await
         .unwrap();
     assert_eq!(
         binding.expires_at,
-        raw_deadline + chrono::Duration::milliseconds(11_000)
+        raw_deadline + Duration::milliseconds(11_000)
     );
     // Another slot cannot borrow the first slot's active reservation.
     let identity = SessionIdentityV1::new(tenant, &other.session, digest, digest, digest, digest, None);
     let binding = repo
-        .bind_session(&other, identity, raw_deadline + chrono::Duration::days(1))
+        .bind_session(&other, identity, raw_deadline + Duration::days(1))
         .await
         .unwrap();
     assert_eq!(
         binding.expires_at,
-        raw_deadline + chrono::Duration::milliseconds(1_000)
+        raw_deadline + Duration::milliseconds(1_000)
     );
     EventRepo::append(
         repo,
@@ -303,7 +304,7 @@ async fn login_credit<R: Binder>(rig: &Rig, repo: &R, tenant: TenantId) {
     .unwrap();
     let identity = SessionIdentityV1::new(tenant, &other.session, digest, digest, digest, digest, None);
     let error = repo
-        .bind_session(&other, identity, raw_deadline + chrono::Duration::days(1))
+        .bind_session(&other, identity, raw_deadline + Duration::days(1))
         .await
         .unwrap_err();
     assert!(error.to_string().contains("invalid durable login clock"));
@@ -317,8 +318,8 @@ async fn fenced_recovery_can_reserve_relogin_past_the_previous_exploration_deadl
 async fn recovery<R: Binder>(rig: &Rig, repo: &R, tenant: TenantId) {
     let (lease, _) = fixture(repo, tenant).await;
     let run = RunRepo::get(repo, lease.session.run).await.unwrap();
-    let raw = repo.now().await.unwrap() + chrono::Duration::seconds(10);
-    let started = raw - chrono::Duration::seconds(i64::from(run.config.limits.duration_seconds));
+    let raw = repo.now().await.unwrap() + Duration::seconds(10);
+    let started = raw - Duration::seconds(i64::from(run.config.limits.duration_seconds));
     exec(
         rig,
         "UPDATE crawl_runs SET started_at=$1 WHERE run_id=$2",
@@ -336,14 +337,14 @@ async fn recovery<R: Binder>(rig: &Rig, repo: &R, tenant: TenantId) {
         .await
         .unwrap();
     let mut old = repo
-        .bind_session(&lease, identity.clone(), raw + chrono::Duration::seconds(20))
+        .bind_session(&lease, identity.clone(), raw + Duration::seconds(20))
         .await
         .unwrap();
     let version = old.state_version;
     old.state_version = old.state_version.checked_add(1).unwrap();
     old.expires_at = raw;
     repo.update_session_binding(&lease, version, &old).await.unwrap();
-    assert_eq!(old.lifetime_expires_at, Some(raw + chrono::Duration::seconds(20)));
+    assert_eq!(old.lifetime_expires_at, Some(raw + Duration::seconds(20)));
     // A later fenced holder reserves relogin after the previous actor narrowed to raw.
     EventRepo::append(repo, run.id, "session.budget", reservation)
         .await
@@ -360,19 +361,19 @@ async fn recovery<R: Binder>(rig: &Rig, repo: &R, tenant: TenantId) {
         .bind_session(
             &replacement,
             identity.clone(),
-            raw + chrono::Duration::seconds(20),
+            raw + Duration::seconds(20),
         )
         .await
         .unwrap();
     assert_eq!(renewed.generation, old.generation);
-    assert_eq!(renewed.expires_at, raw + chrono::Duration::seconds(20));
+    assert_eq!(renewed.expires_at, raw + Duration::seconds(20));
     assert_eq!(renewed.lifetime_expires_at, old.lifetime_expires_at);
     assert!(
         renewed
             .eligible(
                 &identity,
                 replacement.fencing_token,
-                raw + chrono::Duration::seconds(1),
+                raw + Duration::seconds(1),
                 SessionLimits::default(),
             )
             .is_ok(),
@@ -380,13 +381,13 @@ async fn recovery<R: Binder>(rig: &Rig, repo: &R, tenant: TenantId) {
     );
     let version = renewed.state_version;
     renewed.state_version = renewed.state_version.checked_add(1).unwrap();
-    renewed.expires_at = raw + chrono::Duration::seconds(5);
+    renewed.expires_at = raw + Duration::seconds(5);
     repo.update_session_binding(&replacement, version, &renewed)
         .await
         .unwrap();
     let mut changed_cap = renewed.clone();
     changed_cap.state_version = changed_cap.state_version.checked_add(1).unwrap();
-    changed_cap.lifetime_expires_at = Some(raw + chrono::Duration::seconds(21));
+    changed_cap.lifetime_expires_at = Some(raw + Duration::seconds(21));
     assert!(
         repo.update_session_binding(&replacement, renewed.state_version, &changed_cap)
             .await
@@ -410,12 +411,12 @@ async fn independent_failures<R: Binder>(rig: &Rig, repo: &R, tenant: TenantId) 
     let digest = Digest::of("fixture", b"expiry-cause");
     let identity = SessionIdentityV1::new(tenant, &lease.session, digest, digest, digest, digest, None);
     let mut binding = repo
-        .bind_session(&lease, identity, now + chrono::Duration::minutes(1))
+        .bind_session(&lease, identity, now + Duration::minutes(1))
         .await
         .unwrap();
     let version = binding.state_version;
     binding.state_version = binding.state_version.checked_add(1).unwrap();
-    binding.expires_at = now - chrono::Duration::seconds(1);
+    binding.expires_at = now - Duration::seconds(1);
     repo.update_session_binding(&lease, version, &binding)
         .await
         .unwrap();
@@ -438,7 +439,7 @@ async fn independent_failures<R: Binder>(rig: &Rig, repo: &R, tenant: TenantId) 
         .seal(
             &profile_scope,
             1,
-            now + chrono::Duration::minutes(1),
+            now + Duration::minutes(1),
             ProfileFiles::new(BTreeMap::new(), false).unwrap(),
         )
         .unwrap();
@@ -456,12 +457,12 @@ async fn independent_failures<R: Binder>(rig: &Rig, repo: &R, tenant: TenantId) 
         Some(profile),
     );
     let mut profiled = repo
-        .bind_session(&other, identity, now + chrono::Duration::minutes(1))
+        .bind_session(&other, identity, now + Duration::minutes(1))
         .await
         .unwrap();
     let version = profiled.state_version;
     profiled.state_version = profiled.state_version.checked_add(1).unwrap();
-    profiled.expires_at = now - chrono::Duration::seconds(1);
+    profiled.expires_at = now - Duration::seconds(1);
     repo.update_session_binding(&other, version, &profiled)
         .await
         .unwrap();
@@ -633,7 +634,7 @@ async fn replacement<R: Binder>(repo: &R, tenant: TenantId) {
             &lease,
             &binding,
             binding.identity.clone(),
-            binding.expires_at + chrono::Duration::seconds(1),
+            binding.expires_at + Duration::seconds(1),
         )
         .await
         .is_err(),
@@ -642,7 +643,7 @@ async fn replacement<R: Binder>(repo: &R, tenant: TenantId) {
     for status in [ActionStatus::Intended, ActionStatus::Unknown] {
         if status == ActionStatus::Unknown {
             assert_eq!(
-                repo.mark_unknown(now + chrono::Duration::days(1)).await.unwrap(),
+                repo.mark_unknown(now + Duration::days(1)).await.unwrap(),
                 vec![action]
             );
         }
@@ -689,7 +690,7 @@ async fn replacement<R: Binder>(repo: &R, tenant: TenantId) {
             &lease,
             &binding,
             binding.identity.clone(),
-            binding.expires_at + chrono::Duration::seconds(1),
+            binding.expires_at + Duration::seconds(1),
         )
         .await
         .is_err(),
@@ -879,7 +880,7 @@ async fn keeps_profile<R: Binder>(rig: &Rig, repo: &R, tenant: TenantId) {
         .seal(
             &profile_scope,
             1,
-            now + chrono::Duration::minutes(1),
+            now + Duration::minutes(1),
             ProfileFiles::new(
                 BTreeMap::from([("Default/Cookies".into(), b"strict-profile-secret".to_vec())]),
                 false,
