@@ -14,6 +14,7 @@ pub mod feed;
 pub mod feed_stream;
 pub mod fingerprint;
 pub mod frontier;
+pub mod host_checks;
 pub mod links;
 pub mod params;
 pub mod path_climb;

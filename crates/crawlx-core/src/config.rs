@@ -833,6 +833,11 @@ pub struct Scope {
     /// homepage) that add candidate URLs next to the seed. Absent adds none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seeding: Option<crate::discovery::SeedSourcesV1>,
+    /// Opt-in host checks: one bounded request per check to the seed origin, recorded as facts in
+    /// the run report and a `host_check` event (default none; sorted, deduplicated). Every
+    /// request passes scope, robots, the egress policy, authorization and the origin governor.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub host_checks: Vec<crate::host_checks::HostCheck>,
 }
 
 impl Scope {
@@ -893,6 +898,7 @@ impl Default for Scope {
             hops: None,
             queue_cost: None,
             seeding: None,
+            host_checks: Vec::new(),
         }
     }
 }
@@ -2850,6 +2856,8 @@ impl CreateCrawl {
         cs.budget = cs.budget.clamp(1, 1000);
         s.filter_page_types.sort_unstable();
         s.filter_page_types.dedup();
+        s.host_checks.sort_unstable();
+        s.host_checks.dedup();
     }
 
     /// Bounds of the surface-discovery options (`scope.hostScopePattern`, `dynamic.interaction*`,

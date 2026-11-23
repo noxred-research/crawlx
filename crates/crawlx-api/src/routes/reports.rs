@@ -1025,6 +1025,7 @@ fn event_name(kind: &str) -> &'static str {
         "started" => "started",
         "cancelled" => "cancelled",
         "request.rate_limited" => "request.rate_limited",
+        crawlx_core::host_checks::HOST_CHECK_EVENT => "host_check",
         _ => "other",
     }
 }

@@ -72,6 +72,14 @@ project is pre-1.0; minor versions may contain breaking changes.
   directives are ignored without error. Record only: no URL is skipped or requested differently because of
   the header, and there is no new configuration key. The `robots` metadata object also gains `nosnippet` and
   `noimageindex` (meta robots `nosnippet` and `noimageindex` are now read; both default to `false`).
+- Host checks: opt-in `scope.hostChecks` (default empty, nothing sent). `soft_404` makes one request to a random
+  path that no page links to on the seed origin and records the status class: a 2xx answer is `soft_404`, 404
+  and 410 are `not_soft_404`, every other status and a missing answer are `inconclusive`. The path is
+  derived from the run seed and the origin, so a run repeated under the same seed asks the same question. The
+  request is admitted like any other fetch (authorization, scope, `robots.txt`, the egress policy and the origin
+  governor, so `Crawl-delay` and the politeness limits apply); a refusal sends nothing and is recorded as
+  `inconclusive` with its reason. The result is a `host_check` event, a `host_checks` list in the run report
+  (`report.json`) and an `events` report class. It records a fact, never a finding or a score.
 
 ### Fixed
 

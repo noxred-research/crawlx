@@ -215,6 +215,8 @@ enum OperationalReportEvent {
     Cancelled,
     #[serde(rename = "request.rate_limited")]
     RequestRateLimited,
+    #[serde(rename = "host_check")]
+    HostCheck,
     #[serde(rename = "other")]
     Other,
 }

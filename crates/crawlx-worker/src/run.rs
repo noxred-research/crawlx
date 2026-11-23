@@ -402,6 +402,9 @@ pub struct RunReport {
     /// Native HEAD observations, without fabricated document or body output.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub head_responses: Vec<serde_json::Value>,
+    /// Facts recorded by the opt-in `scope.hostChecks` probes, in the order they ran.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub host_checks: Vec<crawlx_core::host_checks::HostCheckRecord>,
     /// Browser processes the run's pool launched; `0` for every `mode = static` run.
     pub browser_launches: usize,
     #[serde(skip)]
@@ -3520,6 +3523,7 @@ pub async fn build_report(stores: &Stores, run: CrawlRunId) -> Result<RunReport,
         .into_iter()
         .partition(|session| session.kind == crawlx_core::repo::SessionKind::HttpCoordinator);
     let mut head_responses = Vec::new();
+    let mut host_checks = Vec::new();
     let mut after = 0;
     let mut partial_blocked: BTreeMap<String, u64> = BTreeMap::new();
     let mut partial_scope = crawlx_core::config::RobotsScope::Document;
@@ -3532,6 +3536,10 @@ pub async fn build_report(stores: &Stores, run: CrawlRunId) -> Result<RunReport,
             after = event.seq;
             if event.kind == "head_response" {
                 head_responses.push(event.payload);
+            } else if event.kind == crawlx_core::host_checks::HOST_CHECK_EVENT {
+                if let Ok(record) = serde_json::from_value(event.payload) {
+                    host_checks.push(record);
+                }
             } else if event.kind == crate::browser_evidence::PARTIAL_EVENT {
                 if let Ok(partial) =
                     serde_json::from_value::<crate::browser_evidence::ObservationPartialEvent>(event.payload)
@@ -3560,6 +3568,7 @@ pub async fn build_report(stores: &Stores, run: CrawlRunId) -> Result<RunReport,
         pages,
         page_contents,
         head_responses,
+        host_checks,
         browser_launches: 0,
         failures,
         resume: None,

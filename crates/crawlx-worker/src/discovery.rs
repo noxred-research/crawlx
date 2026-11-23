@@ -25,10 +25,10 @@ use std::io::Read;
 mod memo;
 
 /// Live run authority used by budgeted robots acquisition for discovery resources.
-struct DiscoveryHopAdmission<'a> {
-    runner: &'a UrlPlaneRunner,
+pub(super) struct DiscoveryHopAdmission<'a> {
+    pub(super) runner: &'a UrlPlaneRunner,
     /// The resource is a sitemap document: the extension filter does not apply to its hops.
-    sitemap_document: bool,
+    pub(super) sitemap_document: bool,
 }
 
 #[async_trait::async_trait]
