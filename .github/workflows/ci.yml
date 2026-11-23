@@ -488,7 +488,9 @@ jobs:
     # browser plane and nightly. Also the CDP-surface probe and the SIGKILL chaos
     # suite, which needs PostgreSQL for the journal the recovery worker reconciles.
     runs-on: [self-hosted, noxred]
-    timeout-minutes: 60
+    # 90, not 60: the full suite through the chaos step takes ~60 min on the noxred runners
+    # (PR #100 run 59m53s; main cda8ef29 cancelled at 60m20s inside the chaos step).
+    timeout-minutes: 90
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true'
     permissions:
