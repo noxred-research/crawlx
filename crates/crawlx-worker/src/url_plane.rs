@@ -629,6 +629,26 @@ pub(crate) fn header_pairs(headers: &http::HeaderMap) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The `X-Robots-Tag` directives that apply to the crawler whose robots user agent is
+/// `robots_user_agent`, or `None` when the response carries no such header. Record only: the
+/// directives change nothing about what is crawled.
+fn x_robots_tag_directives(
+    headers: &http::HeaderMap,
+    robots_user_agent: &str,
+) -> Option<crawlx_extract::RobotsMeta> {
+    if !headers.contains_key("x-robots-tag") {
+        return None;
+    }
+    let token = crawlx_policy::robots::product_token(robots_user_agent);
+    Some(crawlx_extract::robots_header::parse_x_robots_tag(
+        headers
+            .get_all("x-robots-tag")
+            .iter()
+            .map(http::HeaderValue::as_bytes),
+        &token,
+    ))
+}
+
 fn response_body_capture_metadata(response: &FetchResponse) -> Option<serde_json::Value> {
     let header = |name: &str| response.headers.get(name).and_then(|value| value.to_str().ok());
     let outcome = header("x-crawlx-stream-body-capture")?;
@@ -4459,6 +4479,11 @@ impl UrlPlaneRunner {
                 "tag": src.tag, "attribute": src.attribute, "source": src.source,
             });
         }
+        if let Some(directives) =
+            x_robots_tag_directives(&resp.headers, &self.fetcher.config().robots_user_agent())
+        {
+            record.metadata["x_robots_tag"] = serde_json::json!(directives);
+        }
         if let Some(hop) = self.hop_metadata(&queued.envelope) {
             record.metadata["request"]["hop"] = hop;
         }
@@ -5902,10 +5927,21 @@ impl UrlPlaneRunner {
                 "itemPipeline",
                 "extensions",
                 "url_list",
+                "x_robots_tag",
             ] {
                 if let Some(v) = record.metadata.get(key) {
                     obj.insert(key.to_owned(), v.clone());
                 }
+            }
+            if let Some(header) = record
+                .metadata
+                .get("x_robots_tag")
+                .and_then(|v| serde_json::from_value::<crawlx_extract::RobotsMeta>(v.clone()).ok())
+            {
+                obj.insert(
+                    "robots_effective".to_owned(),
+                    serde_json::json!(doc.metadata.robots.union(header)),
+                );
             }
             if self.crawl.extract.page_type {
                 obj.insert("page_type".to_owned(), serde_json::json!(doc.page_type));

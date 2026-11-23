@@ -63,6 +63,15 @@ project is pre-1.0; minor versions may contain breaking changes.
   other URL-bearing attribute (the unexplained lone `GET /p/` 404 of the benchmark fixture came from
   `<base href="/p/">`). The behaviour is unchanged, now documented in `docs/reference.md` and pinned by
   `crates/crawlx-cli/tests/base_href_request.rs`.
+- Static plane: the `X-Robots-Tag` response header is read and recorded in page metadata. When a response carries
+  the header, the page metadata gains `x_robots_tag` (the `noindex`, `nofollow`, `noarchive`, `nosnippet` and
+  `noimageindex` directives it sets for this crawler) and, for document pages, `robots_effective` (those merged
+  with the page's robots meta element). Directive names are case-insensitive, `none` means `noindex` and
+  `nofollow`, repeated header lines are combined (8 KiB cap), a `<token>: directives` line applies only for `*`
+  or the configured robots user agent's product token, and `unavailable_after`, `max-snippet` and unknown
+  directives are ignored without error. Record only: no URL is skipped or requested differently because of
+  the header, and there is no new configuration key. The `robots` metadata object also gains `nosnippet` and
+  `noimageindex` (meta robots `nosnippet` and `noimageindex` are now read; both default to `false`).
 
 ### Fixed
 

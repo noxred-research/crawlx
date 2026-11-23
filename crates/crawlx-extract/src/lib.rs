@@ -24,6 +24,7 @@
 //!   classification extractors (ported with attribution where
 //!   noted in the module docs);
 //! * [`json_links`] lists the same-origin URLs a JSON endpoint response names (`scope.jsonEndpoints`);
+//! * [`robots_header`] reads the `X-Robots-Tag` response header into the same [`RobotsMeta`] directives as the robots meta element (recorded only);
 //! * [`form_fill`] fills a static form for submission (the `-aff`/`-fc` compatibility flags),
 //!   [`kb`] builds the `knowledgebase` record (endpoint and form classes,
 //!   the `-kb`/`-kb-endpoints` compatibility flags) and [`secret_validation`] plans and
@@ -95,6 +96,7 @@ pub mod pipeline;
 pub mod readability;
 pub mod recipe;
 pub mod regex_builtins;
+pub mod robots_header;
 pub mod secret_validation;
 pub mod secrets;
 pub mod serialize;

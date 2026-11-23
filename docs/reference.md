@@ -844,6 +844,36 @@ Plain HTTP is reserved for explicitly authorized owned-loopback fixtures.
 Endpoint userinfo, query strings and fragments are forbidden; provider transport errors
 remove URLs before entering diagnostics.
 
+## `X-Robots-Tag` in page metadata
+
+A static-plane page record carries the response's `X-Robots-Tag` directives as a recorded fact. Nothing is
+skipped, deferred or re-ranked because of them: the crawl requests exactly the URLs it requested before, and
+a later change may choose to act on the record.
+
+When the response has at least one `X-Robots-Tag` header, the page metadata gains:
+
+- `x_robots_tag`: the directives the header sets for this crawler, as booleans `noindex`, `nofollow`,
+  `noarchive`, `nosnippet`, `noimageindex`. This is recorded for every such response, parsed as a
+  document or not.
+- `robots_effective` (document pages only): the union of `x_robots_tag` and the same five directives of the
+  page's robots meta element (`robots`, which already merged `<meta name="robots">` and
+  `<meta name="crawlx">`).
+
+A response without the header gets neither key. The `robots` metadata object gains `nosnippet` and
+`noimageindex` (meta `nosnippet` and `noimageindex` were not read before; both default to `false`).
+
+Reading rules (`crawlx_extract::robots_header`): directive names are case-insensitive and separated by
+commas; `none` sets `noindex` and `nofollow`; every header line is combined, up to 8 KiB in total, and a
+directive cut by that cap is dropped rather than read as a shorter name. A line that starts with
+`<token>:` is scoped to one crawler and applies only when `<token>` is `*` or the product token of the
+configured robots user agent (`fetch.robotsUserAgent`, else `fetch.userAgent`; `crawlx/1.0` gives
+`crawlx`), compared case-insensitively; other scopes are ignored. A prefix that is itself a directive name
+(`unavailable_after: <date>`) is a directive with a value, not a scope. Directives with no flag
+(`unavailable_after`, `max-snippet`, `notranslate`, `index`, `follow`, `all`, unknown names) are ignored
+without error. Bytes in the header that are not UTF-8 are replaced before reading, so they cannot hide
+the directives around them. Pages the parser refuses and recovers with a metadata-only scan, and pages
+from the browser plane, do not carry these keys.
+
 ## Dynamic page records
 
 Dynamic-only runs publish page records from settled browser observations, not from a
