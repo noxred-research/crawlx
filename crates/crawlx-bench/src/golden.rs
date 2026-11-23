@@ -141,11 +141,25 @@ fn url_path(url: &str) -> String {
     crate::oracle::discovery::frame_path_of(url)
 }
 
+/// The browser's own favicon lookup. Chromium requests it on its own schedule after the load
+/// event, so it lands in the entry page's epoch on one machine and in the first click's epoch on
+/// a slower one; it is not a page request and stays out of the signature's network digest.
+const FAVICON_OPERATION: &str = "GET /favicon.ico";
+
 fn derive(
     bundle: &ObservationBundle,
     manifest: &FixtureManifest,
     discovery: &Discovery,
 ) -> (StateSignature, BTreeMap<String, String>) {
+    let without_favicon;
+    let bundle = if bundle.network.operations.iter().any(|op| op == FAVICON_OPERATION) {
+        let mut copy = bundle.clone();
+        copy.network.operations.retain(|op| op != FAVICON_OPERATION);
+        without_favicon = copy;
+        &without_favicon
+    } else {
+        bundle
+    };
     let masks = MaskBuilder::build(bundle, &[], &MaskConfig::default());
     let signature = Fingerprinter::default().fingerprint(bundle, &masks);
     let page = Some(bundle.url.url.clone());
@@ -176,6 +190,10 @@ async fn observe_step(
 ) -> Result<(GoldenStep, Discovery), BenchError> {
     ctx.settle(QuiescencePolicy::default()).await?;
     let bundle = ctx.observe(ObservationSpec::default()).await?;
+    eprintln!(
+        "golden step {index}: network operations {:?}",
+        bundle.network.operations
+    );
     let discovery = CandidateDiscovery::discover_report(&bundle, &DiscoveryConfig::default());
     let (signature, identities) = derive(&bundle, manifest, &discovery);
     let step = GoldenStep {
