@@ -489,7 +489,7 @@ jobs:
               scratch="$(mktemp -d)"
               trap "rm -rf -- \"\$scratch\"" EXIT
               tar -xf - -C "$scratch"
-              bash "$scratch/ci/schema-snapshot.sh" --through 0008 "$scratch/v008.sql" >&2
+              TMPDIR="$scratch" bash "$scratch/ci/schema-snapshot.sh" --through 0008 "$scratch/v008.sql" >&2
               cat "$scratch/v008.sql"
             ' > "$snapshot"
           git diff --no-index --exit-code crates/crawlx-storage/schema/v008.sql "$snapshot"
