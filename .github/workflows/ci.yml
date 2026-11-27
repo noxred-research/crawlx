@@ -477,9 +477,22 @@ jobs:
       - run: cargo test -p crawlx-storage --features chaos --test pg_faults -- --nocapture
       - name: Regenerate the v008 snapshot and diff (nightly)
         if: github.event_name == 'schedule'
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: |
-          ci/schema-snapshot.sh --through 0008 /tmp/v008.sql
-          git diff --no-index --exit-code crates/crawlx-storage/schema/v008.sql /tmp/v008.sql
+          set -euo pipefail
+          snapshot="$(mktemp "$RUNNER_TEMP/v008.sql.XXXXXX")"
+          trap 'rm -f -- "$snapshot"' EXIT
+          tar -cf - ci/schema-snapshot.sh crates/crawlx-storage/migrations |
+            docker exec -i --user postgres --env CRAWLX_TEST_DATABASE_URL "$POSTGRES_CONTAINER" bash -c '
+              set -euo pipefail
+              scratch="$(mktemp -d)"
+              trap "rm -rf -- \"\$scratch\"" EXIT
+              tar -xf - -C "$scratch"
+              bash "$scratch/ci/schema-snapshot.sh" --through 0008 "$scratch/v008.sql" >&2
+              cat "$scratch/v008.sql"
+            ' > "$snapshot"
+          git diff --no-index --exit-code crates/crawlx-storage/schema/v008.sql "$snapshot"
 
   browser:
     # Pinned Chromium suite: the exact Chrome for Testing archive
