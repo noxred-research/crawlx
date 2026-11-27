@@ -18,11 +18,11 @@
 #
 # `crates/crawlx-storage/schema/vNNNN.sql` is the committed snapshot of the previous
 # release; `migrations_apply_on_top_of_the_previous_release_snapshot` (tests/pg_faults.rs)
-# loads it and runs the embedded migrator on top. Regenerate with the same major pg_dump
-# version as the CI postgres service (ci.yml `schema-snapshot`), then `git diff`.
+# loads it and runs the embedded migrator on top. Regenerate with a pg_dump that matches
+# the PostgreSQL server's minor version, then `git diff`. Nightly CI regenerates the
+# snapshot inside the PostgreSQL service container (ci.yml `schema-snapshot`).
 #
-# Requires: psql, pg_dump (>= server major), sha384sum, CRAWLX_TEST_DATABASE_URL (a role
-# with CREATEDB).
+# Requires: psql, matching pg_dump, sha384sum, CRAWLX_TEST_DATABASE_URL (a role with CREATEDB).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -36,7 +36,7 @@ while [ $# -gt 0 ]; do
             shift 2
             ;;
         -h | --help)
-            sed -n '2,24p' "$0"
+            sed -n '2,25p' "$0"
             exit 0
             ;;
         *)
